@@ -1,0 +1,15 @@
+node_modules
+server/node_modules
+dist
+server/dist
+server/logs
+.git
+.gitignore
+*.md
+docs/
+coverage/
+test-results/
+playwright-report/
+.env.local
+.env.*.local
+.DS_Store

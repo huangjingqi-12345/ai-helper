@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Build
+dist/
+server/dist/
+
+# Environment
+.env.local
+.env.*.local
+
+# Logs
+*.log
+server/logs/
+
+# Editor
+.vscode/
+!.vscode/extensions.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+test-results/
+playwright-report/
+
+# Docker
+docker/frontend/dist/
+
+# SQLite database
+server/data/
+*.db
+*.db-wal
+*.db-shm
