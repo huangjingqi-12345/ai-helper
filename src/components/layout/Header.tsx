@@ -42,8 +42,8 @@ export function Header(): JSX.Element {
           <div className="w-7 h-7 rounded-md bg-gradient-to-br from-px-purple to-px-blue flex items-center justify-center shadow-[0_0_18px_rgba(114,13,215,0.38)]">
             <span className="text-white font-mono text-xs font-bold">Px</span>
           </div>
-          <span className="font-mono font-bold text-text-primary text-sm">Px 信欣健康</span>
-          <span className="text-xs text-text-muted">极简版 · 行为洞察</span>
+          <span className="font-mono font-bold text-text-primary text-sm">Px Lite</span>
+          <span className="text-xs text-text-muted">患教运营 · 行为洞察</span>
         </div>
         <div className="text-text-muted text-xs">|</div>
         <div className="text-xs text-text-secondary">
@@ -122,7 +122,7 @@ export function Header(): JSX.Element {
                   ))}
                   <div className="border-t border-border my-1" />
                   <button
-                    onClick={() => showToast('已演示退出登录', 'info')}
+                    onClick={() => showToast('已退出登录', 'info')}
                     className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-accent-red hover:bg-bg-tertiary transition-colors text-left"
                   >
                     <LogOut size={14} />
@@ -135,7 +135,7 @@ export function Header(): JSX.Element {
         </div>
 
         <button
-          onClick={() => showToast('全局搜索为演示入口，请在列表页使用搜索框。', 'info')}
+          onClick={() => showToast('请在列表页使用搜索框进行精确搜索。', 'info')}
           className="p-2 rounded-lg hover:bg-bg-tertiary text-text-muted hover:text-text-primary transition-colors"
         >
           <Search size={16} />
@@ -160,7 +160,7 @@ export function Header(): JSX.Element {
           </>
         )}
         <Badge color="purple" className="text-[10px]">
-          {APP_VERSION.includes('DEMO') ? APP_VERSION : `${APP_VERSION} · DEMO`}
+          {APP_VERSION}
         </Badge>
       </div>
     </header>

@@ -1,4 +1,4 @@
-# Px Lite 极简版平台 — Feature Catalog
+# Px Lite 药企患教内容运营与行为洞察平台 — Feature Catalog
 
 > Last Updated: 2026-05-12
 > Priority: P0 (Critical) | P1 (Important) | P2 (Nice-to-have)
@@ -20,7 +20,7 @@
 - [ ] Active page is visually highlighted in sidebar
 - [ ] Header shows logo, breadcrumb, user controls
 - [ ] Breadcrumb updates on page navigation
-- [ ] Version badge "V0.1 · DEMO" visible in header
+- [ ] Version badge "V1.0 · LOCAL" visible in header
 - [ ] User info displayed at sidebar bottom (系统管理员 / 华东区域 · admin)
 - [ ] Sidebar description panel shows current page context
 - [ ] Responsive: sidebar collapses on smaller screens

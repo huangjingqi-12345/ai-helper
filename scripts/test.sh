@@ -8,7 +8,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-echo "🧪 Px Lite 极简版平台 — Test Suite"
+echo "🧪 Px Lite 药企患教内容运营与行为洞察平台 — Test Suite"
 echo "========================================"
 
 FAILED=0
@@ -59,7 +59,7 @@ fi
 # Stop temporary server if we started one
 if [ "$SERVER_RUNNING" = false ] && [ -n "$TEST_SERVER_PID" ]; then
   kill $TEST_SERVER_PID 2>/dev/null
-  wait $TEST_SERVER_PID 2>/dev/null
+  wait $TEST_SERVER_PID 2>/dev/null || true
 fi
 
 # Summary

@@ -14,7 +14,7 @@ import { formatDateOnly, formatNumber } from '@/utils/formatters';
 export function ContentDetail(): JSX.Element {
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  const { selectedItem, loading, error, fetchById, clearSelected } = useContentStore();
+  const { selectedItem, loading, error, fetchById, clearSelected, update } = useContentStore();
 
   useEffect(() => {
     fetchById(id);
@@ -50,8 +50,16 @@ export function ContentDetail(): JSX.Element {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => showToast('已演示编辑入口', 'info')}><Edit3 className="w-4 h-4" />编辑</Button>
-          <Button size="sm" onClick={() => showToast('已演示发布', 'success')}><Send className="w-4 h-4" />发布</Button>
+          <Button variant="secondary" size="sm" onClick={async () => {
+            await update(item.id, { content: item.content });
+            showToast('已创建/保存新的草稿版本', 'success');
+            void fetchById(item.id);
+          }}><Edit3 className="w-4 h-4" />编辑</Button>
+          <Button size="sm" onClick={async () => {
+            await update(item.id, { status: 'published' });
+            showToast('内容已发布并写入审计记录', 'success');
+            void fetchById(item.id);
+          }}><Send className="w-4 h-4" />发布</Button>
         </div>
       </div>
 

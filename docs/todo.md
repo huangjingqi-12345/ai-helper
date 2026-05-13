@@ -1,4 +1,4 @@
-# Px Lite 极简版平台 — Master TODO
+# Px Lite 药企患教内容运营与行为洞察平台 — Master TODO
 
 > Last updated: 2026-05-12
 > Status Legend: ⬜ Pending | 🟡 In Progress | ✅ Done | ❌ Blocked

@@ -47,7 +47,7 @@ const PIPELINE_OPTIONS = [
 ];
 
 export function ContentWorkshop(): JSX.Element {
-  const { items, total, loading, error, filter, setFilter, fetchList } = useContentStore();
+  const { items, total, loading, error, filter, setFilter, fetchList, create } = useContentStore();
   const { log } = useLogger('ContentWorkshop');
   const navigate = useNavigate();
   const location = useLocation();
@@ -291,9 +291,20 @@ export function ContentWorkshop(): JSX.Element {
               />
             </div>
           </div>
-          <Button size="sm" onClick={() => {
+          <Button size="sm" onClick={async () => {
             log.action('Create content clicked');
-            showToast('已演示新建内容入口', 'info');
+            try {
+              await create({
+                projectId: filter.projectId || 'proj-hf',
+                title: `新建患教内容 ${new Date().toLocaleDateString('zh-CN')}`,
+                type: 'article',
+                content: '请在详情页补充正文、来源与合规清单后提交审批。',
+                tags: ['待完善'],
+              });
+              showToast('已创建草稿内容', 'success');
+            } catch {
+              showToast('创建内容失败', 'error');
+            }
           }}>
             <Plus className="w-4 h-4" />
             新建内容

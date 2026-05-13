@@ -35,7 +35,7 @@ export function Overview(): JSX.Element {
           <h1 className="text-2xl font-bold text-text-primary">患者教育内容运营总览</h1>
           <p className="text-sm text-text-secondary max-w-2xl">
           {isOps
-            ? '按项目维度展示各项目下的内容触达、阅读与互动效果。当前为极简版，不含 AE 管理与归因模块。'
+            ? '按项目维度展示各项目下的内容触达、阅读与互动效果；不含 AE 管理、归因模块或临床决策支持。'
             : '药企视图：按项目维度展示该租户名下各项目的脱敏聚合数据（k-匿名），不可下钻。'}
           </p>
         <div className="flex items-center gap-3 text-xs text-text-muted">

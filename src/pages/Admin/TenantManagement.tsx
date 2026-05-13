@@ -232,7 +232,7 @@ function TenantDetail({ tenant, onToggle }: { tenant: TenantRow; onToggle: () =>
         </div>
       </div>
       <div>
-        <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-medium text-text-primary">关联账号 · {tenant.accounts} 人</h3><Button size="sm" variant="secondary" onClick={() => showToast('请前往账号管理完成邀请（演示模式）', 'info')}>邀请账号</Button></div>
+        <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-medium text-text-primary">关联账号 · {tenant.accounts} 人</h3><Button size="sm" variant="secondary" onClick={() => showToast('请前往账号管理完成邀请', 'info')}>邀请账号</Button></div>
         <div className="grid grid-cols-2 gap-2">
           {accountNames.map((account) => <div key={account} className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-xs text-text-secondary">{account}<span className="float-right text-accent-green">已激活</span></div>)}
         </div>

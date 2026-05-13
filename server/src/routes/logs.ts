@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { logger } from '../utils/logger.js';
+import { requirePermission } from '../middleware/auth.js';
 
 const router = Router();
 
 // Frontend log ingestion endpoint
-router.post('/', (req, res) => {
+router.post('/', requirePermission('logs:write'), (req, res) => {
   const entries = Array.isArray(req.body) ? req.body : [req.body];
   entries.forEach((entry: Record<string, unknown>) => {
     const level = (entry.level as string || 'INFO').toLowerCase();

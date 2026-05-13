@@ -1,4 +1,4 @@
-# Px Lite 极简版平台 — Bug Tracking Log
+# Px Lite 药企患教内容运营与行为洞察平台 — Bug Tracking Log
 
 > Last Updated: 2026-05-12
 > Severity: 🔴 Critical | 🟠 High | 🟡 Medium | 🟢 Low

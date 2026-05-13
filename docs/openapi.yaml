@@ -1,0 +1,85 @@
+openapi: 3.0.3
+info:
+  title: Px Lite Production API
+  version: 1.0.0
+  description: Pharma patient-education operations and aggregate analytics API with no automated content-judgment capability.
+servers:
+  - url: /api
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+paths:
+  /auth/me:
+    get:
+      summary: Current authenticated user and permissions
+      responses:
+        '200':
+          description: Authenticated user context
+  /tenants/current:
+    get:
+      summary: Server-resolved current tenant context
+      responses:
+        '200':
+          description: Current tenant, isolation mode, and aggregate-only policy
+  /ingest/aggregate-metrics:
+    post:
+      summary: Ingest aggregate-only daily behavior metrics
+      description: Patient-level events and PII are not accepted.
+      responses:
+        '201':
+          description: Aggregate rows accepted
+  /imports/content-csv:
+    post:
+      summary: Import content rows from CSV
+      responses:
+        '201':
+          description: Content import completed
+        '207':
+          description: Content import partially completed with row-level errors
+  /imports/metrics-csv:
+    post:
+      summary: Import aggregate metrics from CSV
+      responses:
+        '201':
+          description: Metrics import completed
+  /exports:
+    post:
+      summary: Create an aggregate-only export job
+      description: Export is blocked when k-anonymity threshold checks fail.
+      responses:
+        '201':
+          description: Export job created
+        '400':
+          description: Export blocked or invalid request
+  /exports/{id}:
+    get:
+      summary: Get export job status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Export job status
+  /exports/{id}/download:
+    get:
+      summary: Download aggregate-only CSV export
+      description: Download links are time-limited, permissioned, k-anonymity checked, watermarked, and audited.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Watermarked CSV file
+        '410':
+          description: Download link expired

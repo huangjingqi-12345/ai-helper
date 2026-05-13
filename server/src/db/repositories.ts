@@ -1,7 +1,25 @@
 import { dbAll, dbGet, dbRun, DB_DRIVER } from './connection.js';
+import { createHash, randomUUID } from 'crypto';
+import type { AuthUser } from '../middleware/auth.js';
 
 const jsonCast = DB_DRIVER === 'postgres' ? '::jsonb' : '';
 const boolValue = (value: boolean): boolean | number => (DB_DRIVER === 'postgres' ? value : value ? 1 : 0);
+const kAnonymityDefault = 50;
+
+type QueryScope = Pick<AuthUser, 'tenantId' | 'tenantType' | 'permissions' | 'id' | 'name'>;
+
+function isPxAdmin(scope?: QueryScope): boolean {
+  return !scope || scope.permissions.includes('*') || scope.tenantType === 'ops';
+}
+
+function tenantCondition(alias: string, scope?: QueryScope): { sql: string; params: unknown[] } {
+  if (isPxAdmin(scope)) return { sql: '', params: [] };
+  return { sql: `${alias}.tenant_id = ?`, params: [scope!.tenantId] };
+}
+
+function contentHash(input: unknown): string {
+  return createHash('sha256').update(JSON.stringify(input ?? null)).digest('hex');
+}
 
 function toCamel(row: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -60,22 +78,41 @@ function mapContentRow(row: Record<string, unknown>) {
 }
 
 // === Overview ===
-export async function getOverviewStats() {
+export async function getOverviewStats(scope?: QueryScope) {
+  if (!isPxAdmin(scope)) {
+    const row = await dbGet<Record<string, unknown>>(`
+      SELECT
+        COUNT(*) as project_count,
+        SUM(published_count) || '/' || SUM(content_count) as published_content,
+        COALESCE(SUM(push_count), 0) as push_count,
+        COALESCE(SUM(read_users), 0) as read_users,
+        COALESCE(SUM(read_count), 0) as read_count,
+        COALESCE(SUM(interaction_count), 0) as interaction_count,
+        MAX(updated_at) as last_updated
+      FROM projects
+      WHERE tenant_id = ?
+    `, [scope!.tenantId]);
+    return row ? toCamel(row) : { lastUpdated: new Date().toISOString() };
+  }
   const row = await dbGet<Record<string, unknown>>('SELECT * FROM overview_stats WHERE id = 1');
   return row ? toCamel(row) : { lastUpdated: new Date().toISOString() };
 }
 
-export async function getOverviewProjects() {
-  const rows = await dbAll<Record<string, unknown>>('SELECT * FROM projects ORDER BY read_count DESC, updated_at DESC');
+export async function getOverviewProjects(scope?: QueryScope) {
+  const tenant = tenantCondition('projects', scope);
+  const where = tenant.sql ? `WHERE ${tenant.sql}` : '';
+  const rows = await dbAll<Record<string, unknown>>(`SELECT * FROM projects ${where} ORDER BY read_count DESC, updated_at DESC`, tenant.params);
   return rows.map(toCamel);
 }
 
 // === Content ===
-export async function getContentList(filters: { status?: string; type?: string; projectId?: string; pipelineStage?: string; priority?: string; search?: string; page: number; pageSize: number }) {
+export async function getContentList(filters: { status?: string; type?: string; projectId?: string; pipelineStage?: string; priority?: string; search?: string; page: number; pageSize: number; scope?: QueryScope }) {
   const conditions: string[] = [];
   const params: unknown[] = [];
   const normalizedStatus = filters.status === 'offline' ? 'archived' : filters.status;
+  const tenant = tenantCondition('c', filters.scope);
 
+  if (tenant.sql) { conditions.push(tenant.sql); params.push(...tenant.params); }
   if (normalizedStatus) { conditions.push('c.status = ?'); params.push(normalizedStatus); }
   if (filters.type) { conditions.push('c.type = ?'); params.push(filters.type); }
   if (filters.projectId) { conditions.push('c.project_id = ?'); params.push(filters.projectId); }
@@ -107,28 +144,65 @@ export async function getContentList(filters: { status?: string; type?: string; 
   };
 }
 
-export async function getContentById(id: string) {
+export async function getContentById(id: string, scope?: QueryScope) {
+  const tenant = tenantCondition('c', scope);
+  const tenantSql = tenant.sql ? `AND ${tenant.sql}` : '';
   const row = await dbGet<Record<string, unknown>>(`
     SELECT c.*, p.name AS project_name
     FROM content c
     LEFT JOIN projects p ON p.id = c.project_id
     WHERE LOWER(c.id) = LOWER(?)
-  `, [id]);
+    ${tenantSql}
+  `, [id, ...tenant.params]);
   return row ? mapContentRow(row) : null;
 }
 
-export async function createContent(data: Record<string, unknown>) {
+async function createContentVersion(contentId: string, data: Record<string, unknown>, user?: QueryScope, changeNote = 'content saved') {
+  const row = await dbGet<{ max_version: number | string | null }>('SELECT MAX(version_no) as max_version FROM content_versions WHERE content_id = ?', [contentId]);
+  const versionNo = Number(row?.max_version ?? 0) + 1;
+  const now = new Date().toISOString();
+  const checklist = {
+    classification: data.classification || 'patient_education',
+    diseaseArea: data.diseaseArea || data.projectName || 'unassigned',
+    brandMention: Boolean(data.brandMention ?? false),
+    sourceAttached: Boolean(data.sourceAttached ?? false),
+    piReference: data.piReference || null,
+    prohibitedClaimChecked: Boolean(data.prohibitedClaimChecked ?? false),
+  };
+  await dbRun(`
+    INSERT INTO content_versions (content_id, version_no, title, body, excerpt, editor_user_id, change_note, workflow_state, compliance_checklist, immutable_hash, approved_by, approved_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, ?, ?)
+  `, [
+    contentId,
+    versionNo,
+    String(data.title || '未命名内容'),
+    String(data.content || data.body || ''),
+    typeof data.excerpt === 'string' ? data.excerpt : null,
+    user?.id ?? null,
+    changeNote,
+    String(data.workflowState || 'draft'),
+    JSON.stringify(checklist),
+    contentHash({ contentId, versionNo, title: data.title, body: data.content || data.body, checklist }),
+    null,
+    null,
+    now,
+  ]);
+}
+
+export async function createContent(data: Record<string, unknown>, scope?: QueryScope) {
   const rows = await dbAll<{ id: string }>("SELECT id FROM content WHERE id LIKE 'CNT-%'");
   const nextNumber = Math.max(100, ...rows.map((item) => Number(item.id.replace(/\D/g, '')) || 100)) + 1;
   const id = `CNT-${nextNumber}`;
   const now = new Date().toISOString();
   const projectId = String(data.projectId || 'proj-hf');
+  const tenantId = scope?.tenantId || 'T-PX';
 
   await dbRun(`
-    INSERT INTO content (id, tenant_id, project_id, title, type, status, pipeline_stage, priority, author, excerpt, content, tags, push_count, read_users, read_count, like_count, dislike_count, bookmark_count, share_count, created_at, updated_at)
-    VALUES (?, 'T-PX', ?, ?, ?, 'draft', 'requirement_submitted', 'P2', ?, ?, ?, ?${jsonCast}, 0, 0, 0, 0, 0, 0, 0, ?, ?)
+    INSERT INTO content (id, tenant_id, project_id, title, type, status, workflow_state, pipeline_stage, priority, author, excerpt, content, tags, push_count, read_users, read_count, like_count, dislike_count, bookmark_count, share_count, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'draft', 'draft', 'requirement_submitted', 'P2', ?, ?, ?, ?${jsonCast}, 0, 0, 0, 0, 0, 0, 0, ?, ?)
   `, [
     id,
+    tenantId,
     projectId,
     String(data.title || '未命名内容'),
     String(data.type || 'article'),
@@ -140,12 +214,16 @@ export async function createContent(data: Record<string, unknown>) {
     now,
   ]);
 
-  return getContentById(id);
+  await createContentVersion(id, data, scope, 'initial draft created');
+  return getContentById(id, scope);
 }
 
-export async function updateContent(id: string, data: Record<string, unknown>) {
-  const existing = await dbGet('SELECT id FROM content WHERE LOWER(id) = LOWER(?)', [id]);
+export async function updateContent(id: string, data: Record<string, unknown>, scope?: QueryScope) {
+  const tenant = tenantCondition('content', scope);
+  const existing = await dbGet<Record<string, unknown>>(`SELECT * FROM content WHERE LOWER(id) = LOWER(?) ${tenant.sql ? `AND ${tenant.sql}` : ''}`, [id, ...tenant.params]);
   if (!existing) return null;
+  const existingState = String(existing.workflow_state || existing.status || 'draft');
+  const createNewDraftAfterLock = ['approved_locked', 'published'].includes(existingState);
 
   const updates: string[] = [];
   const params: unknown[] = [];
@@ -174,24 +252,61 @@ export async function updateContent(id: string, data: Record<string, unknown>) {
     params.push(JSON.stringify(data.tags.map(String)));
   }
 
-  if (updates.length === 0) return getContentById(id);
+  if (updates.length === 0) return getContentById(id, scope);
+  if (createNewDraftAfterLock) {
+    updates.push('workflow_state = ?');
+    params.push('draft');
+    updates.push('status = ?');
+    params.push('draft');
+  }
   updates.push('updated_at = ?');
   params.push(new Date().toISOString(), id);
 
-  await dbRun(`UPDATE content SET ${updates.join(', ')} WHERE LOWER(id) = LOWER(?)`, params);
-  return getContentById(id);
+  const updateTenant = tenantCondition('content', scope);
+  await dbRun(
+    `UPDATE content SET ${updates.join(', ')} WHERE LOWER(id) = LOWER(?) ${updateTenant.sql ? `AND ${updateTenant.sql}` : ''}`,
+    [...params, ...updateTenant.params]
+  );
+  await createContentVersion(id, { ...existing, ...data, workflowState: createNewDraftAfterLock ? 'draft' : existingState }, scope, createNewDraftAfterLock ? 'new draft created after approved lock' : 'content updated');
+  return getContentById(id, scope);
 }
 
-export async function deleteContent(id: string): Promise<boolean> {
-  const result = await dbRun('DELETE FROM content WHERE LOWER(id) = LOWER(?)', [id]);
+export async function deleteContent(id: string, scope?: QueryScope): Promise<boolean> {
+  const tenant = tenantCondition('content', scope);
+  const result = await dbRun(`DELETE FROM content WHERE LOWER(id) = LOWER(?) ${tenant.sql ? `AND ${tenant.sql}` : ''}`, [id, ...tenant.params]);
   return result.changes > 0;
 }
 
 // === Behavior ===
-export async function getBehaviorSummary() {
-  const stats = await getOverviewStats() as Record<string, unknown>;
-  const readTrend = await getBehaviorTrends('reads');
-  const interactionTrend = await getBehaviorTrends('interactions');
+export async function getBehaviorSummary(scope?: QueryScope) {
+  const stats = await getOverviewStats(scope) as Record<string, unknown>;
+  if (!isPxAdmin(scope)) {
+    const daily = await dbAll<Record<string, unknown>>(`
+      SELECT metric_date, SUM(read_count) as read_count, SUM(interaction_count) as interaction_count
+      FROM behavior_daily_metrics
+      WHERE tenant_id = ?
+      GROUP BY metric_date
+      ORDER BY metric_date ASC
+    `, [scope!.tenantId]);
+    const totals = daily.reduce<{ reads: number; interactions: number }>((acc, row) => ({
+      reads: acc.reads + asNumber(row.read_count),
+      interactions: acc.interactions + asNumber(row.interaction_count),
+    }), { reads: 0, interactions: 0 });
+    return {
+      pushCount: asNumber(stats.pushCount),
+      readUsers: asNumber(stats.readUsers),
+      totalReads: totals.reads,
+      totalInteractions: totals.interactions,
+      avgReadDuration: 0,
+      readTrend: daily.map((row) => ({ date: String(row.metric_date), value: asNumber(row.read_count) })),
+      interactionTrend: daily.map((row) => ({ date: String(row.metric_date), value: asNumber(row.interaction_count) })),
+      topContent: [],
+      byDisease: [],
+      aggregateOnly: true,
+    };
+  }
+  const readTrend = await getBehaviorTrends('reads', scope);
+  const interactionTrend = await getBehaviorTrends('interactions', scope);
   const topRows = await dbAll<Record<string, unknown>>(`
     SELECT btc.content_id, btc.title, btc.reads, btc.interactions, c.push_count, c.read_users, p.disease
     FROM behavior_top_content btc
@@ -228,17 +343,30 @@ export async function getBehaviorSummary() {
   };
 }
 
-export async function getBehaviorTrends(type: string) {
+export async function getBehaviorTrends(type: string, scope?: QueryScope) {
   const normalizedType = type === 'interactions' ? 'interactions' : 'reads';
+  if (!isPxAdmin(scope)) {
+    const metricColumn = normalizedType === 'interactions' ? 'interaction_count' : 'read_count';
+    const rows = await dbAll<Record<string, unknown>>(`
+      SELECT metric_date as date, SUM(${metricColumn}) as value
+      FROM behavior_daily_metrics
+      WHERE tenant_id = ?
+      GROUP BY metric_date
+      ORDER BY metric_date ASC
+    `, [scope!.tenantId]);
+    return rows.map((row) => ({ date: String(row.date), value: asNumber(row.value) }));
+  }
   const rows = await dbAll<Record<string, unknown>>('SELECT date, value FROM behavior_trends WHERE type = ? ORDER BY id ASC', [normalizedType]);
   return rows.map((row) => ({ date: String(row.date), value: asNumber(row.value) }));
 }
 
 // === Distribution strategies ===
-export async function getStrategies(filters: { status?: string; projectId?: string; page: number; pageSize: number }) {
+export async function getStrategies(filters: { status?: string; projectId?: string; page: number; pageSize: number; scope?: QueryScope }) {
   const conditions: string[] = [];
   const params: unknown[] = [];
+  const tenant = tenantCondition('distribution_strategies', filters.scope);
 
+  if (tenant.sql) { conditions.push(tenant.sql); params.push(...tenant.params); }
   if (filters.status) { conditions.push('status = ?'); params.push(filters.status); }
   if (filters.projectId) { conditions.push('project_id = ?'); params.push(filters.projectId); }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -282,30 +410,35 @@ export async function getStrategies(filters: { status?: string; projectId?: stri
   return { data: mapped, total, totalPages: Math.ceil(total / filters.pageSize) };
 }
 
-export async function createStrategy(data: Record<string, unknown>) {
+export async function createStrategy(data: Record<string, unknown>, scope?: QueryScope) {
   const countRow = await dbGet<{ cnt: number | string }>('SELECT COUNT(*) as cnt FROM distribution_strategies');
   const count = Number(countRow?.cnt ?? 0);
   const id = `str-${String(count + 1).padStart(3, '0')}`;
   const now = new Date().toISOString();
   const ta = data.targetAudience as Record<string, unknown> | undefined || {};
   const sch = data.schedule as Record<string, unknown> | undefined || {};
+  const tenantId = scope?.tenantId || 'T-PX';
 
   await dbRun(`
-    INSERT INTO distribution_strategies (id, name, project_id, target_regions, target_diseases, target_patient_count, content_ids, schedule_type, schedule_start_date, schedule_end_date, schedule_frequency, status, metrics_pushed, metrics_delivered, metrics_opened, metrics_read, created_at, updated_at)
-    VALUES (?, ?, ?, ?${jsonCast}, ?${jsonCast}, ?, ?${jsonCast}, ?, ?, ?, ?, 'draft', 0, 0, 0, 0, ?, ?)
+    INSERT INTO distribution_strategies (id, tenant_id, name, project_id, target_regions, target_diseases, target_patient_count, content_ids, schedule_type, schedule_start_date, schedule_end_date, schedule_frequency, status, metrics_pushed, metrics_delivered, metrics_opened, metrics_read, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?${jsonCast}, ?${jsonCast}, ?, ?${jsonCast}, ?, ?, ?, ?, 'draft', 0, 0, 0, 0, ?, ?)
   `, [
-    id, data.name, data.projectId,
+    id, tenantId, data.name, data.projectId,
     JSON.stringify(ta.regions || []), JSON.stringify(ta.diseases || []), ta.patientCount || 0,
     JSON.stringify(data.contentIds || []),
     sch.type || 'immediate', sch.startDate || null, sch.endDate || null, sch.frequency || null,
     now, now,
   ]);
 
-  return getStrategyById(id);
+  return getStrategyById(id, scope);
 }
 
-async function getStrategyById(id: string) {
-  const row = await dbGet<Record<string, unknown>>('SELECT * FROM distribution_strategies WHERE id = ?', [id]);
+async function getStrategyById(id: string, scope?: QueryScope) {
+  const tenant = tenantCondition('distribution_strategies', scope);
+  const row = await dbGet<Record<string, unknown>>(
+    `SELECT * FROM distribution_strategies WHERE id = ? ${tenant.sql ? `AND ${tenant.sql}` : ''}`,
+    [id, ...tenant.params]
+  );
   if (!row) return null;
   const r = toCamel(row);
   parseJsonFields(r, ['targetRegions', 'targetDiseases', 'contentIds']);
@@ -323,8 +456,12 @@ async function getStrategyById(id: string) {
   };
 }
 
-export async function updateStrategy(id: string, data: Record<string, unknown>) {
-  const existing = await dbGet('SELECT id FROM distribution_strategies WHERE id = ?', [id]);
+export async function updateStrategy(id: string, data: Record<string, unknown>, scope?: QueryScope) {
+  const tenant = tenantCondition('distribution_strategies', scope);
+  const existing = await dbGet(
+    `SELECT id FROM distribution_strategies WHERE id = ? ${tenant.sql ? `AND ${tenant.sql}` : ''}`,
+    [id, ...tenant.params]
+  );
   if (!existing) return null;
 
   const updates: string[] = [];
@@ -346,13 +483,18 @@ export async function updateStrategy(id: string, data: Record<string, unknown>) 
   updates.push('updated_at = ?');
   params.push(new Date().toISOString(), id);
 
-  await dbRun(`UPDATE distribution_strategies SET ${updates.join(', ')} WHERE id = ?`, params);
-  return getStrategyById(id);
+  await dbRun(
+    `UPDATE distribution_strategies SET ${updates.join(', ')} WHERE id = ? ${tenant.sql ? `AND ${tenant.sql}` : ''}`,
+    [...params, ...tenant.params]
+  );
+  return getStrategyById(id, scope);
 }
 
-export async function getDistributionProjects(filters: { status?: string; priority?: string; search?: string; page: number; pageSize: number }) {
+export async function getDistributionProjects(filters: { status?: string; priority?: string; search?: string; page: number; pageSize: number; scope?: QueryScope }) {
   const conditions: string[] = [];
   const params: unknown[] = [];
+  const tenant = tenantCondition('distribution_projects', filters.scope);
+  if (tenant.sql) { conditions.push(tenant.sql); params.push(...tenant.params); }
   if (filters.status) { conditions.push('status = ?'); params.push(filters.status); }
   if (filters.priority) { conditions.push('priority = ?'); params.push(filters.priority); }
   if (filters.search) {
@@ -372,8 +514,9 @@ export async function getDistributionProjects(filters: { status?: string; priori
   };
 }
 
-export async function getDistributionProjectById(id: string) {
-  const row = await dbGet<Record<string, unknown>>('SELECT * FROM distribution_projects WHERE id = ?', [id]);
+export async function getDistributionProjectById(id: string, scope?: QueryScope) {
+  const tenant = tenantCondition('distribution_projects', scope);
+  const row = await dbGet<Record<string, unknown>>(`SELECT * FROM distribution_projects WHERE id = ? ${tenant.sql ? `AND ${tenant.sql}` : ''}`, [id, ...tenant.params]);
   return row ? mapDistributionProjectRow(row) : null;
 }
 
@@ -426,9 +569,13 @@ export async function getDoctorCandidates() {
 }
 
 // === Approval ===
-export async function getApprovalQueue(filters: { status?: string; page: number; pageSize: number }) {
+export async function getApprovalQueue(filters: { status?: string; page: number; pageSize: number; scope?: QueryScope }) {
   const conditions: string[] = [];
   const params: unknown[] = [];
+  if (!isPxAdmin(filters.scope)) {
+    conditions.push('content_id IN (SELECT id FROM content WHERE tenant_id = ?)');
+    params.push(filters.scope!.tenantId);
+  }
 
   if (filters.status) { conditions.push('status = ?'); params.push(filters.status); }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -445,33 +592,46 @@ export async function getApprovalQueue(filters: { status?: string; page: number;
   };
 }
 
-export async function approveItem(id: string, comments?: string) {
-  const existing = await dbGet('SELECT id FROM approval_items WHERE id = ?', [id]);
+export async function approveItem(id: string, comments?: string, user?: QueryScope) {
+  const tenantSql = !isPxAdmin(user) ? 'AND c.tenant_id = ?' : '';
+  const existing = await dbGet(`
+    SELECT ai.id
+    FROM approval_items ai
+    LEFT JOIN content c ON c.id = ai.content_id
+    WHERE ai.id = ? ${tenantSql}
+  `, !isPxAdmin(user) ? [id, user!.tenantId] : [id]);
   if (!existing) return null;
 
   await dbRun(`
-    UPDATE approval_items SET status = 'approved', reviewed_by = '管理员', reviewed_at = ?, comments = ? WHERE id = ?
-  `, [new Date().toISOString(), comments || '审批通过', id]);
+    UPDATE approval_items SET status = 'approved', reviewed_by = ?, reviewed_at = ?, comments = ? WHERE id = ?
+  `, [user?.name || '管理员', new Date().toISOString(), comments || '审批通过', id]);
 
   const row = await dbGet<Record<string, unknown>>('SELECT * FROM approval_items WHERE id = ?', [id]);
   return row ? toCamel(row) : null;
 }
 
-export async function rejectItem(id: string, comments?: string) {
-  const existing = await dbGet('SELECT id FROM approval_items WHERE id = ?', [id]);
+export async function rejectItem(id: string, comments?: string, user?: QueryScope) {
+  const tenantSql = !isPxAdmin(user) ? 'AND c.tenant_id = ?' : '';
+  const existing = await dbGet(`
+    SELECT ai.id
+    FROM approval_items ai
+    LEFT JOIN content c ON c.id = ai.content_id
+    WHERE ai.id = ? ${tenantSql}
+  `, !isPxAdmin(user) ? [id, user!.tenantId] : [id]);
   if (!existing) return null;
 
   await dbRun(`
-    UPDATE approval_items SET status = 'rejected', reviewed_by = '管理员', reviewed_at = ?, comments = ? WHERE id = ?
-  `, [new Date().toISOString(), comments || '审批不通过', id]);
+    UPDATE approval_items SET status = 'rejected', reviewed_by = ?, reviewed_at = ?, comments = ? WHERE id = ?
+  `, [user?.name || '管理员', new Date().toISOString(), comments || '审批不通过', id]);
 
   const row = await dbGet<Record<string, unknown>>('SELECT * FROM approval_items WHERE id = ?', [id]);
   return row ? toCamel(row) : null;
 }
 
-export async function getApprovalTasks(filters: { status?: string; page: number; pageSize: number }) {
+export async function getApprovalTasks(filters: { status?: string; page: number; pageSize: number; scope?: QueryScope }) {
   const conditions: string[] = [];
   const params: unknown[] = [];
+  if (!isPxAdmin(filters.scope)) { conditions.push('t.tenant_id = ?'); params.push(filters.scope!.tenantId); }
   if (filters.status && filters.status !== 'all') { conditions.push('t.status = ?'); params.push(filters.status); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const totalRow = await dbGet<{ cnt: number | string }>(`SELECT COUNT(*) as cnt FROM approval_tasks t ${where}`, params);
@@ -499,8 +659,9 @@ function mapApprovalTaskRow(row: Record<string, unknown>) {
   const task = toCamel(row);
   const status = String(task.status);
   return {
-    id: task.contentId,
+    id: task.id,
     taskId: task.id,
+    contentId: task.contentId,
     title: task.title,
     disease: task.disease,
     author: task.author || task.submittedBy,
@@ -511,25 +672,46 @@ function mapApprovalTaskRow(row: Record<string, unknown>) {
   };
 }
 
-export async function handleApprovalTask(id: string, action: 'approve' | 'reject', comments?: string, rejectReason?: string) {
-  const existing = await dbGet<Record<string, unknown>>('SELECT * FROM approval_tasks WHERE id = ? OR content_id = ?', [id, id]);
+export async function handleApprovalTask(id: string, action: 'approve' | 'reject', comments?: string, rejectReason?: string, user?: QueryScope) {
+  const tenantSql = !isPxAdmin(user) ? 'AND tenant_id = ?' : '';
+  const existing = await dbGet<Record<string, unknown>>(
+    `SELECT * FROM approval_tasks WHERE (id = ? OR content_id = ?) ${tenantSql}`,
+    !isPxAdmin(user) ? [id, id, user!.tenantId] : [id, id]
+  );
   if (!existing) return null;
   const now = new Date().toISOString();
   const nextStatus = action === 'approve' ? 'approved' : 'rejected';
   await dbRun(`
     UPDATE approval_tasks
     SET status = ?, current_node_id = ?, progress_text = ?, sla_due_at = ?, completed_at = ?, updated_at = ?
-    WHERE id = ? OR content_id = ?
-  `, [nextStatus, action === 'approve' ? null : existing.current_node_id, action === 'approve' ? '5/5' : existing.progress_text, action === 'approve' ? '已完成' : '修改中', action === 'approve' ? now : null, now, id, id]);
+    WHERE (id = ? OR content_id = ?) ${tenantSql}
+  `, !isPxAdmin(user)
+    ? [nextStatus, action === 'approve' ? null : existing.current_node_id, action === 'approve' ? '5/5' : existing.progress_text, action === 'approve' ? '已完成' : '修改中', action === 'approve' ? now : null, now, id, id, user!.tenantId]
+    : [nextStatus, action === 'approve' ? null : existing.current_node_id, action === 'approve' ? '5/5' : existing.progress_text, action === 'approve' ? '已完成' : '修改中', action === 'approve' ? now : null, now, id, id]);
 
   await dbRun(`
-    INSERT INTO approval_task_actions (task_id, node_id, action, actor_name, reject_reason, comment, created_at)
-    VALUES (?, ?, ?, '管理员', ?, ?, ?)
-  `, [existing.id, existing.current_node_id ?? null, action, rejectReason ?? null, comments ?? null, now]);
+    INSERT INTO approval_task_actions (task_id, node_id, action, actor_user_id, actor_name, reject_reason, comment, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [existing.id, existing.current_node_id ?? null, action, user?.id ?? null, user?.name || '管理员', rejectReason ?? null, comments ?? null, now]);
 
   await dbRun(`
-    UPDATE approval_items SET status = ?, reviewed_by = '管理员', reviewed_at = ?, comments = ? WHERE content_id = ?
-  `, [nextStatus, now, comments || rejectReason || (action === 'approve' ? '审批通过' : '审批不通过'), existing.content_id]);
+    UPDATE approval_items SET status = ?, reviewed_by = ?, reviewed_at = ?, comments = ? WHERE content_id = ?
+  `, [nextStatus, user?.name || '管理员', now, comments || rejectReason || (action === 'approve' ? '审批通过' : '审批不通过'), existing.content_id]);
+
+  await dbRun(`
+    UPDATE content SET workflow_state = ?, status = ?, updated_at = ? WHERE id = ?
+    ${!isPxAdmin(user) ? 'AND tenant_id = ?' : ''}
+  `, !isPxAdmin(user)
+    ? [action === 'approve' ? 'approved_locked' : 'rejected', action === 'approve' ? 'approved' : 'draft', now, existing.content_id, user!.tenantId]
+    : [action === 'approve' ? 'approved_locked' : 'rejected', action === 'approve' ? 'approved' : 'draft', now, existing.content_id]);
+
+  if (action === 'approve') {
+    await dbRun(`
+      UPDATE content_versions
+      SET workflow_state = 'approved_locked', approved_by = ?, approved_at = ?
+      WHERE content_id = ? AND version_no = (SELECT MAX(version_no) FROM content_versions WHERE content_id = ?)
+    `, [user?.id ?? null, now, existing.content_id, existing.content_id]);
+  }
 
   const row = await dbGet<Record<string, unknown>>(`
     SELECT t.*, c.title, c.author, p.disease, n.node_name
@@ -537,17 +719,19 @@ export async function handleApprovalTask(id: string, action: 'approve' | 'reject
     LEFT JOIN content c ON c.id = t.content_id
     LEFT JOIN projects p ON p.id = t.project_id
     LEFT JOIN approval_flow_nodes n ON n.id = t.current_node_id
-    WHERE t.id = ? OR t.content_id = ?
-  `, [id, id]);
+    WHERE (t.id = ? OR t.content_id = ?) ${!isPxAdmin(user) ? 'AND t.tenant_id = ?' : ''}
+  `, !isPxAdmin(user) ? [id, id, user!.tenantId] : [id, id]);
   return row ? mapApprovalTaskRow(row) : null;
 }
 
 // === Platform base users/settings ===
-export async function getUsers(filters: { page: number; pageSize: number }) {
-  const totalRow = await dbGet<{ cnt: number | string }>('SELECT COUNT(*) as cnt FROM users');
+export async function getUsers(filters: { page: number; pageSize: number; scope?: QueryScope }) {
+  const tenant = tenantCondition('users', filters.scope);
+  const where = tenant.sql ? `WHERE ${tenant.sql}` : '';
+  const totalRow = await dbGet<{ cnt: number | string }>(`SELECT COUNT(*) as cnt FROM users ${where}`, tenant.params);
   const total = Number(totalRow?.cnt ?? 0);
   const offset = (filters.page - 1) * filters.pageSize;
-  const rows = await dbAll<Record<string, unknown>>('SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?', [filters.pageSize, offset]);
+  const rows = await dbAll<Record<string, unknown>>(`SELECT * FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`, [...tenant.params, filters.pageSize, offset]);
 
   return {
     data: rows.map((row) => parseJsonFields(toCamel(row), ['roleLabels'])),
@@ -649,6 +833,23 @@ function mapTenantRow(row: Record<string, unknown>) {
     kAnon: `k-匿 ${asNumber(row.k_anonymity_threshold)}`,
     accounts: asNumber(row.accounts),
     canExport: asBool(row.can_export),
+  };
+}
+
+export async function getTenantByIdPublic(id: string) {
+  const row = await dbGet<Record<string, unknown>>(`
+    SELECT t.id, t.name, t.short_name, t.tenant_type, s.k_anonymity_threshold
+    FROM tenants t
+    LEFT JOIN tenant_scopes s ON s.tenant_id = t.id
+    WHERE t.id = ?
+  `, [id]);
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    shortName: row.short_name,
+    type: row.tenant_type,
+    kAnonymityThreshold: asNumber(row.k_anonymity_threshold, kAnonymityDefault),
   };
 }
 
@@ -776,11 +977,12 @@ export async function getTeamMembers(tenantId: string) {
   }));
 }
 
-export async function updateTeamMemberRole(id: string, role: string) {
-  const existing = await dbGet('SELECT id FROM users WHERE id = ?', [id]);
+export async function updateTeamMemberRole(id: string, role: string, scope?: QueryScope) {
+  const tenant = tenantCondition('users', scope);
+  const existing = await dbGet('SELECT id FROM users WHERE id = ?' + (tenant.sql ? ` AND ${tenant.sql}` : ''), [id, ...tenant.params]);
   if (!existing) return null;
-  await dbRun('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, new Date().toISOString(), id]);
-  const row = await dbGet<Record<string, unknown>>('SELECT * FROM users WHERE id = ?', [id]);
+  await dbRun('UPDATE users SET role = ?, updated_at = ? WHERE id = ?' + (tenant.sql ? ` AND ${tenant.sql}` : ''), [role, new Date().toISOString(), id, ...tenant.params]);
+  const row = await dbGet<Record<string, unknown>>('SELECT * FROM users WHERE id = ?' + (tenant.sql ? ` AND ${tenant.sql}` : ''), [id, ...tenant.params]);
   return row ? { id: row.id, name: row.name, email: row.email, role: row.role, lastLogin: row.last_login || '—' } : null;
 }
 
@@ -794,8 +996,9 @@ export async function createTeamMember(tenantId: string, data: Record<string, un
   return updateTeamMemberRole(id, String(data.role || 'viewer'));
 }
 
-export async function deleteTeamMember(id: string): Promise<boolean> {
-  const result = await dbRun('DELETE FROM users WHERE id = ?', [id]);
+export async function deleteTeamMember(id: string, scope?: QueryScope): Promise<boolean> {
+  const tenant = tenantCondition('users', scope);
+  const result = await dbRun('DELETE FROM users WHERE id = ?' + (tenant.sql ? ` AND ${tenant.sql}` : ''), [id, ...tenant.params]);
   return result.changes > 0;
 }
 
@@ -811,4 +1014,143 @@ export async function getAuditLogs(tenantId?: string) {
     actorName: row.actor_name,
     action: row.action,
   }));
+}
+
+// === Aggregate-only integrations and exports ===
+export interface AggregateMetricInput {
+  projectId?: string;
+  contentId?: string;
+  diseaseId?: string;
+  metricDate: string;
+  pushCount?: number;
+  deliveredCount?: number;
+  readUsers?: number;
+  readCount?: number;
+  likeCount?: number;
+  dislikeCount?: number;
+  bookmarkCount?: number;
+  shareCount?: number;
+  avgReadSec?: number;
+  finishRate?: number;
+}
+
+export async function ingestAggregateMetrics(rows: AggregateMetricInput[], scope: QueryScope) {
+  const now = new Date().toISOString();
+  let inserted = 0;
+
+  for (const row of rows) {
+    const interactionCount = asNumber(row.likeCount) + asNumber(row.dislikeCount) + asNumber(row.bookmarkCount) + asNumber(row.shareCount);
+    await dbRun(`
+      DELETE FROM behavior_daily_metrics
+      WHERE tenant_id = ? AND metric_date = ? AND COALESCE(project_id, '') = COALESCE(?, '') AND COALESCE(content_id, '') = COALESCE(?, '')
+    `, [scope.tenantId, row.metricDate, row.projectId ?? null, row.contentId ?? null]);
+
+    await dbRun(`
+      INSERT INTO behavior_daily_metrics (
+        tenant_id, project_id, content_id, disease_id, metric_date,
+        push_count, delivered_count, read_users, read_count, like_count, dislike_count,
+        bookmark_count, share_count, interaction_count, avg_read_sec, finish_rate, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      scope.tenantId,
+      row.projectId ?? null,
+      row.contentId ?? null,
+      row.diseaseId ?? null,
+      row.metricDate,
+      asNumber(row.pushCount),
+      asNumber(row.deliveredCount),
+      asNumber(row.readUsers),
+      asNumber(row.readCount),
+      asNumber(row.likeCount),
+      asNumber(row.dislikeCount),
+      asNumber(row.bookmarkCount),
+      asNumber(row.shareCount),
+      interactionCount,
+      asNumber(row.avgReadSec),
+      Number(row.finishRate ?? 0),
+      now,
+      now,
+    ]);
+    inserted += 1;
+  }
+
+  return { inserted, aggregateOnly: true };
+}
+
+async function getTenantKAnonymity(scope: QueryScope): Promise<number> {
+  const row = await dbGet<{ k_anonymity_threshold: number | string }>('SELECT k_anonymity_threshold FROM tenant_scopes WHERE tenant_id = ?', [scope.tenantId]);
+  return asNumber(row?.k_anonymity_threshold, kAnonymityDefault);
+}
+
+export async function assertExportAllowed(scope: QueryScope): Promise<{ recordCount: number; minReadUsers: number | null; threshold: number }> {
+  const threshold = await getTenantKAnonymity(scope);
+  const row = await dbGet<{ cnt: number | string; min_read_users: number | string | null }>(
+    'SELECT COUNT(*) as cnt, MIN(read_users) as min_read_users FROM behavior_daily_metrics WHERE tenant_id = ?',
+    [scope.tenantId]
+  );
+  const recordCount = asNumber(row?.cnt);
+  const minReadUsers = row?.min_read_users === null || row?.min_read_users === undefined ? null : asNumber(row.min_read_users);
+  if (recordCount > 0 && minReadUsers !== null && minReadUsers < threshold) {
+    throw new Error(`Export blocked: smallest aggregate cell (${minReadUsers}) is below k-anonymity threshold (${threshold}).`);
+  }
+  return { recordCount, minReadUsers, threshold };
+}
+
+export async function createExportJob(data: Record<string, unknown>, scope: QueryScope) {
+  const guard = await assertExportAllowed(scope);
+  const id = `export-${randomUUID()}`;
+  const rangeDays = Math.max(1, asNumber(data.rangeDays, 14));
+  const scopeValue = String(data.scope || 'all');
+  const now = new Date().toISOString();
+  const watermark = `${scope.tenantId} / ${scope.name} / ${now}`;
+
+  await dbRun(`
+    INSERT INTO behavior_export_jobs (id, tenant_id, requested_by, scope, range_days, project_id, disease_id, status, file_url, record_count, created_at, completed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?)
+  `, [
+    id,
+    scope.tenantId,
+    scope.id,
+    ['all', 'push', 'read', 'interaction'].includes(scopeValue) ? scopeValue : 'all',
+    rangeDays,
+    typeof data.projectId === 'string' ? data.projectId : null,
+    typeof data.diseaseId === 'string' ? data.diseaseId : null,
+    `/api/exports/${id}/download`,
+    guard.recordCount,
+    now,
+    now,
+  ]);
+
+  return { id, status: 'completed', fileUrl: `/api/exports/${id}/download`, watermark, aggregateOnly: true, ...guard };
+}
+
+export async function getExportJob(id: string, scope: QueryScope) {
+  const row = await dbGet<Record<string, unknown>>('SELECT * FROM behavior_export_jobs WHERE id = ? AND tenant_id = ?', [id, scope.tenantId]);
+  return row ? toCamel(row) : null;
+}
+
+export async function getExportMetricRows(job: Record<string, unknown>, scope: QueryScope) {
+  const conditions = ['tenant_id = ?'];
+  const params: unknown[] = [scope.tenantId];
+  if (job.projectId) {
+    conditions.push('project_id = ?');
+    params.push(job.projectId);
+  }
+  if (job.diseaseId) {
+    conditions.push('disease_id = ?');
+    params.push(job.diseaseId);
+  }
+
+  const rows = await dbAll<Record<string, unknown>>(`
+    SELECT metric_date, project_id, content_id, disease_id, push_count, delivered_count, read_users,
+      read_count, like_count, dislike_count, bookmark_count, share_count, interaction_count,
+      avg_read_sec, finish_rate
+    FROM behavior_daily_metrics
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY metric_date DESC, project_id ASC, content_id ASC
+    LIMIT 10000
+  `, params);
+
+  return rows.map(toCamel);
 }

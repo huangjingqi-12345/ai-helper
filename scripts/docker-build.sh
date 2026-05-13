@@ -13,7 +13,7 @@ IMAGE_PREFIX="${DOCKER_REGISTRY:-pxlite}"
 VERSION="${VERSION:-$(date +%Y%m%d-%H%M%S)}"
 LATEST_TAG="latest"
 
-echo "🐳 Px Lite 极简版平台 — Docker Build"
+echo "🐳 Px Lite 药企患教内容运营与行为洞察平台 — Docker Build"
 echo "========================================"
 echo "  Registry: $IMAGE_PREFIX"
 echo "  Version:  $VERSION"

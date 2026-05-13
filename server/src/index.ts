@@ -6,19 +6,25 @@ import apiRoutes from './routes/index.js';
 import { logger } from './utils/logger.js';
 import { seedDatabase } from './db/seed.js';
 import { DB_DRIVER } from './db/connection.js';
+import { validationErrorHandler } from './utils/validation.js';
+import { rateLimit, securityHeaders } from './middleware/security.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
 // Middleware
 app.use(corsMiddleware);
-app.use(express.json());
+app.use(securityHeaders);
+app.use(rateLimit);
+app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || '1mb' }));
+app.use(express.text({ type: ['text/csv', 'application/csv'], limit: process.env.REQUEST_BODY_LIMIT || '1mb' }));
 app.use(requestLogger);
 
 // API routes
 app.use('/api', apiRoutes);
 
-// Error handler (must be last)
+// Error handlers (must be last)
+app.use(validationErrorHandler);
 app.use(errorHandler);
 
 try {

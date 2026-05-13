@@ -2,9 +2,22 @@ import { Router } from 'express';
 import { getApprovalQueue, approveItem, rejectItem, getApprovalTasks, handleApprovalTask } from '../db/repositories.js';
 import { logger } from '../utils/logger.js';
 import { asyncRoute } from './asyncRoute.js';
+import { requirePermission } from '../middleware/auth.js';
+import { appendAuditLog } from '../utils/audit.js';
+import { asObject, enumValue, optionalString } from '../utils/validation.js';
 
 const router = Router();
 
+router.use(requirePermission('approval:read'));
+
+function validateApprovalAction(body: unknown): { action: 'approve' | 'reject'; comments?: string; rejectReason?: string } {
+  const data = asObject(body);
+  return {
+    action: enumValue(data.action ?? 'approve', 'action', ['approve', 'reject'] as const),
+    comments: optionalString(data.comments, 'comments', 2000),
+    rejectReason: optionalString(data.rejectReason, 'rejectReason', 1000),
+  };
+}
 
 router.get('/tasks', asyncRoute(async (req, res) => {
   logger.info({ query: req.query }, 'GET /api/approval/tasks');
@@ -13,6 +26,7 @@ router.get('/tasks', asyncRoute(async (req, res) => {
     status: status as string | undefined,
     page: parseInt(page as string, 10),
     pageSize: parseInt(pageSize as string, 10),
+    scope: req.user!,
   });
   res.json({
     success: true,
@@ -27,10 +41,10 @@ router.get('/tasks', asyncRoute(async (req, res) => {
   });
 }));
 
-router.put('/tasks/:id', asyncRoute(async (req, res) => {
+router.put('/tasks/:id', requirePermission('approval:write'), asyncRoute(async (req, res) => {
   logger.info({ id: String(req.params.id), body: req.body }, 'PUT /api/approval/tasks/:id');
-  const action = req.body.action === 'reject' ? 'reject' : 'approve';
-  const item = await handleApprovalTask(String(req.params.id), action, req.body.comments, req.body.rejectReason);
+  const { action, comments, rejectReason } = validateApprovalAction(req.body);
+  const item = await handleApprovalTask(String(req.params.id), action, comments, rejectReason, req.user!);
   if (!item) {
     return res.status(404).json({
       success: false,
@@ -39,6 +53,7 @@ router.put('/tasks/:id', asyncRoute(async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   }
+  await appendAuditLog(req, { action: action === 'approve' ? 'approval.approve' : 'approval.reject', resourceType: 'approval_task', resourceId: String(req.params.id), after: item, metadata: { rejectReason } });
   res.json({ success: true, data: item, timestamp: new Date().toISOString() });
 }));
 
@@ -50,6 +65,7 @@ router.get('/', asyncRoute(async (req, res) => {
     status: status as string | undefined,
     page: parseInt(page as string, 10),
     pageSize: parseInt(pageSize as string, 10),
+    scope: req.user!,
   });
 
   res.json({
@@ -65,9 +81,9 @@ router.get('/', asyncRoute(async (req, res) => {
   });
 }));
 
-router.post('/:id/approve', asyncRoute(async (req, res) => {
+router.post('/:id/approve', requirePermission('approval:write'), asyncRoute(async (req, res) => {
   logger.info({ id: String(req.params.id) }, 'POST /api/approval/:id/approve');
-  const item = await approveItem(String(req.params.id), req.body.comments);
+  const item = await approveItem(String(req.params.id), req.body.comments, req.user!);
   if (!item) {
     return res.status(404).json({
       success: false,
@@ -76,12 +92,13 @@ router.post('/:id/approve', asyncRoute(async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   }
+  await appendAuditLog(req, { action: 'approval.approve', resourceType: 'approval_item', resourceId: String(req.params.id), after: item });
   res.json({ success: true, data: item, timestamp: new Date().toISOString() });
 }));
 
-router.post('/:id/reject', asyncRoute(async (req, res) => {
+router.post('/:id/reject', requirePermission('approval:write'), asyncRoute(async (req, res) => {
   logger.info({ id: String(req.params.id) }, 'POST /api/approval/:id/reject');
-  const item = await rejectItem(String(req.params.id), req.body.comments);
+  const item = await rejectItem(String(req.params.id), req.body.comments, req.user!);
   if (!item) {
     return res.status(404).json({
       success: false,
@@ -90,15 +107,16 @@ router.post('/:id/reject', asyncRoute(async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   }
+  await appendAuditLog(req, { action: 'approval.reject', resourceType: 'approval_item', resourceId: String(req.params.id), after: item });
   res.json({ success: true, data: item, timestamp: new Date().toISOString() });
 }));
 
-router.put('/:id', asyncRoute(async (req, res) => {
+router.put('/:id', requirePermission('approval:write'), asyncRoute(async (req, res) => {
   logger.info({ id: String(req.params.id), body: req.body }, 'PUT /api/approval/:id');
-  const action = req.body.action;
+  const { action, comments } = validateApprovalAction(req.body);
   const item = action === 'reject'
-    ? await rejectItem(String(req.params.id), req.body.comments)
-    : await approveItem(String(req.params.id), req.body.comments);
+    ? await rejectItem(String(req.params.id), comments, req.user!)
+    : await approveItem(String(req.params.id), comments, req.user!);
   if (!item) {
     return res.status(404).json({
       success: false,
@@ -107,6 +125,7 @@ router.put('/:id', asyncRoute(async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   }
+  await appendAuditLog(req, { action: action === 'approve' ? 'approval.approve' : 'approval.reject', resourceType: 'approval_item', resourceId: String(req.params.id), after: item });
   res.json({ success: true, data: item, timestamp: new Date().toISOString() });
 }));
 

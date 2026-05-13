@@ -15,6 +15,10 @@ apiClient.interceptors.request.use(
   (config) => {
     const method = (config.method || 'GET').toUpperCase();
     const url = config.url || '';
+    const token = import.meta.env.VITE_DEV_AUTH_TOKEN || window.localStorage.getItem('pxlite.authToken');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     logger.api(method, url, { params: config.params as Record<string, unknown> });
     // Attach start time for duration calculation
     (config as unknown as Record<string, unknown>)._startTime = Date.now();

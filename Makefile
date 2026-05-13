@@ -1,5 +1,5 @@
 # ============================================
-# Px Lite 极简版平台 — Makefile
+# Px Lite 药企患教内容运营与行为洞察平台 — Makefile
 # ============================================
 
 .PHONY: help setup dev test test-watch build clean \
@@ -8,7 +8,7 @@
 
 # Default target
 help: ## Show this help message
-	@echo "🚀 Px Lite 极简版平台 — Available Commands"
+	@echo "🚀 Px Lite 药企患教内容运营与行为洞察平台 — Available Commands"
 	@echo "============================================"
 	@echo ""
 	@echo "📦 Setup & Development:"

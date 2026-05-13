@@ -1,22 +1,22 @@
-# Px Lite 极简版平台 — Implementation Plan
+# Px Lite 药企患教内容运营与行为洞察平台 — Implementation Plan
 
 > Version: 1.0
 > Date: 2026-05-12
-> Demo Reference: https://pxlite-5pyii99t.manus.space/
+> Legacy prototype reference: https://pxlite-5pyii99t.manus.space/
 
 ---
 
 ## [Overview]
 
-**Px Lite (极简版平台)** is a simplified patient education content operations platform for pharmaceutical companies in China. It focuses on content delivery, reading/engagement behavior data, and removes AE (Adverse Event) management, attribution capabilities, and complex permission systems found in the full PX platform.
+**Px Lite (药企患教内容运营与行为洞察平台)** is a simplified patient education content operations platform for pharmaceutical companies in China. It focuses on content delivery, reading/engagement behavior data, and removes AE (Adverse Event) management, attribution capabilities, and complex permission systems found in the full PX platform.
 
 **Core Purpose:** Enable pharma companies to manage patient education content, track patient engagement (reads, likes, bookmarks), distribute content via push strategies, and maintain an approval workflow for regulatory compliance.
 
 **Target Users:** Regional operations managers, content editors, and system administrators at pharmaceutical companies in China.
 
 **Canonical URL:** https://px.senzco.com/
-**App Title:** Px Lite 极简版平台
-**Version:** V0.1 · DEMO
+**App Title:** Px Lite 药企患教内容运营与行为洞察平台
+**Version:** V1.0 · LOCAL
 
 ---
 

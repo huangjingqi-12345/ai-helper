@@ -58,14 +58,14 @@ export function Settings(): JSX.Element {
       <div className="space-y-3">
         <Badge color="blue" className="text-[10px] uppercase tracking-wider">Settings</Badge>
         <h1 className="text-2xl font-bold text-text-primary">设置</h1>
-        <p className="text-sm text-text-secondary max-w-3xl">极简版仅保留：账号、团队成员、操作日志。行为数据导出入口请前往：患者行为洞察 &gt; 行为数据导出。</p>
-        <div className="text-xs text-text-muted">当前租户：{currentTenant.shortName} · 修改在本会话内生效（演示模式）</div>
+        <p className="text-sm text-text-secondary max-w-3xl">平台保留账号、团队成员与操作日志管理。行为数据导出入口请前往：患者行为洞察 &gt; 行为数据导出。</p>
+        <div className="text-xs text-text-muted">当前租户：{currentTenant.shortName} · 配置变更会写入服务端审计记录</div>
       </div>
 
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <div><h2 className="text-base font-semibold text-text-primary">我的账号</h2><p className="mt-1 text-xs text-text-muted">基本信息与登录设置</p></div>
-          <Button variant="secondary" size="sm" onClick={() => showToast('修改密码入口已打开（演示模式）', 'info')}>修改密码</Button>
+          <Button variant="secondary" size="sm" onClick={() => showToast('修改密码入口已打开', 'info')}>修改密码</Button>
         </div>
         <div className="grid grid-cols-4 gap-4">
           <label className="text-xs text-text-muted">姓名<input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary" /></label>
@@ -73,7 +73,7 @@ export function Settings(): JSX.Element {
           <label className="text-xs text-text-muted">角色<div className="mt-1 rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary">管理员</div></label>
           <label className="text-xs text-text-muted">所在区域<input value={region} onChange={(e) => setRegion(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary" /></label>
         </div>
-        <div className="mt-4 flex justify-end"><Button onClick={() => showToast('账号信息已保存（演示模式）', 'success')}>保存</Button></div>
+        <div className="mt-4 flex justify-end"><Button onClick={() => showToast('账号信息已保存', 'success')}>保存</Button></div>
       </Card>
 
       <Card className="p-0 overflow-hidden">

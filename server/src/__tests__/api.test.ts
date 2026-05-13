@@ -188,4 +188,72 @@ describe('Backend API Integration Tests', () => {
       expect(data).toHaveProperty('features');
     });
   });
+
+  describe('Production readiness security controls', () => {
+    it('blocks pharma tenants from PX tenant administration routes', async () => {
+      const res = await fetch(`${BASE_URL}/platform/tenants`, {
+        headers: { Authorization: 'Bearer dev-pharma-admin' },
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('ignores request-provided tenant override for pharma users', async () => {
+      const res = await fetch(`${BASE_URL}/platform/team?tenantId=T-PX`, {
+        headers: { Authorization: 'Bearer dev-pharma-admin' },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data.every((member: { email: string }) => member.email.endsWith('@novartis.cn'))).toBe(true);
+    });
+
+    it('keeps pharma viewers read-only on content APIs', async () => {
+      const res = await fetch(`${BASE_URL}/content`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer dev-pharma-viewer',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId: 'proj-hf',
+          title: 'Viewer should not create',
+          type: 'article',
+          content: 'Read-only user cannot create content.',
+        }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('blocks exports when aggregate cells are below the k-anonymity threshold', async () => {
+      const ingestRes = await fetch(`${BASE_URL}/ingest/aggregate-metrics`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer dev-pharma-admin',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rows: [{
+            projectId: 'proj-hf',
+            contentId: 'CNT-k-test',
+            metricDate: '2099-01-01',
+            readUsers: 10,
+            readCount: 12,
+          }],
+        }),
+      });
+      expect(ingestRes.status).toBe(201);
+
+      const exportRes = await fetch(`${BASE_URL}/exports`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer dev-pharma-admin',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ scope: 'all', rangeDays: 30 }),
+      });
+      expect(exportRes.status).toBe(400);
+      const body = await exportRes.json();
+      expect(body.message).toContain('k-anonymity');
+    });
+  });
 });

@@ -5,6 +5,7 @@ import { contentList } from '../data/content.js';
 import { overviewProjects, overviewStats } from '../data/overview.js';
 import { behaviorSummary } from '../data/behavior.js';
 import { distributionProjects, doctorCandidates } from '../data/distributionProjects.js';
+import { runMigrations } from './migrations.js';
 
 const jsonCast = DB_DRIVER === 'postgres' ? '::jsonb' : '';
 const boolValue = (value: boolean): boolean | number => (DB_DRIVER === 'postgres' ? value : value ? 1 : 0);
@@ -29,7 +30,7 @@ async function replaceRowsForSqlite(tables: string[]): Promise<void> {
 
 async function seedTenants(now: string): Promise<void> {
   const tenants = [
-    ['T-PX', 'Px 自营运营组', 'Px Ops', 'ops', 'active', '未签约', '齐晓川', 'ops-admin@px.health', 'Px 平台合规枢纽租户，唯一可见全量明文。', boolValue(true)],
+    ['T-PX', 'Px 自营运营组', 'Px Ops', 'ops', 'active', '未签约', '齐晓川', 'ops-admin@px.health', 'Px 平台合规枢纽租户，可管理全量租户配置与聚合指标。', boolValue(true)],
     ['T-NV', '诺华制药（中国）', '诺华', 'pharma', 'active', 'PXC-2025-A001', '林筱', 'compliance@novartis.cn', '心血管与肿瘤线脱敏聚合数据视图。', boolValue(true)],
     ['T-AZ', '阿斯利康（中国）', '阿斯利康', 'pharma', 'active', 'PXC-2025-A002', '顾承', 'compliance@astrazeneca.cn', '慢病项目脱敏聚合数据视图。', boolValue(true)],
     ['T-MSD', '默沙东（中国）', '默沙东', 'pharma', 'active', 'PXC-2025-A003', '韦珂', 'compliance@msd.cn', '肿瘤项目脱敏聚合查看，不开放导出。', boolValue(false)],
@@ -57,20 +58,20 @@ async function seedTenants(now: string): Promise<void> {
   }
 
   const scopes = [
-    ['scope-T-PX', 'T-PX', [], [], [], 100, 0, boolValue(true), boolValue(true), boolValue(true)],
-    ['scope-T-NV', 'T-NV', ['慢性心力衰竭', '乳腺癌'], ['诺欣妥', '爱博新'], ['华东', '华南'], 50, 50, boolValue(true), boolValue(false), boolValue(true)],
-    ['scope-T-AZ', 'T-AZ', ['慢性心力衰竭', '2型糖尿病', '慢阻肺(COPD)'], ['安达唐', '可定'], ['全国'], 30, 50, boolValue(true), boolValue(false), boolValue(true)],
-    ['scope-T-MSD', 'T-MSD', ['肺癌(NSCLC)', '乳腺癌'], ['可瑞达'], ['华东', '华北'], 20, 100, boolValue(true), boolValue(false), boolValue(false)],
-    ['scope-T-RC', 'T-RC', ['乳腺癌', '肺癌(NSCLC)'], ['赫赛汀', '泰圣奇'], ['华东'], 10, 100, boolValue(true), boolValue(false), boolValue(false)],
-    ['scope-T-LL', 'T-LL', ['2型糖尿病'], ['优泌乐'], ['华东', '华南'], 30, 50, boolValue(true), boolValue(false), boolValue(true)],
-    ['scope-T-SY', 'T-SY', [], [], [], 0, 100, boolValue(true), boolValue(false), boolValue(false)],
+    ['scope-T-PX', 'T-PX', [], [], [], 100, 0, boolValue(true), boolValue(true)],
+    ['scope-T-NV', 'T-NV', ['慢性心力衰竭', '乳腺癌'], ['诺欣妥', '爱博新'], ['华东', '华南'], 50, 50, boolValue(true), boolValue(true)],
+    ['scope-T-AZ', 'T-AZ', ['慢性心力衰竭', '2型糖尿病', '慢阻肺(COPD)'], ['安达唐', '可定'], ['全国'], 30, 50, boolValue(true), boolValue(true)],
+    ['scope-T-MSD', 'T-MSD', ['肺癌(NSCLC)', '乳腺癌'], ['可瑞达'], ['华东', '华北'], 20, 100, boolValue(true), boolValue(false)],
+    ['scope-T-RC', 'T-RC', ['乳腺癌', '肺癌(NSCLC)'], ['赫赛汀', '泰圣奇'], ['华东'], 10, 100, boolValue(true), boolValue(false)],
+    ['scope-T-LL', 'T-LL', ['2型糖尿病'], ['优泌乐'], ['华东', '华南'], 30, 50, boolValue(true), boolValue(true)],
+    ['scope-T-SY', 'T-SY', [], [], [], 0, 100, boolValue(true), boolValue(false)],
   ];
 
   for (const scope of scopes) {
-    const [id, tenantId, diseaseIds, brandIds, regionIds, gray, kAnon, canViewAggregate, canViewPii, canExportCsv] = scope;
+    const [id, tenantId, diseaseIds, brandIds, regionIds, gray, kAnon, canViewAggregate, canExportCsv] = scope;
     await run(`
-      INSERT INTO tenant_scopes (id, tenant_id, disease_ids, brand_ids, region_ids, gray_limit_percent, k_anonymity_threshold, can_view_aggregate_metrics, can_view_patient_pii, can_export_csv, created_at, updated_at)
-      VALUES (?, ?, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tenant_scopes (id, tenant_id, disease_ids, brand_ids, region_ids, gray_limit_percent, k_anonymity_threshold, can_view_aggregate_metrics, can_export_csv, created_at, updated_at)
+      VALUES (?, ?, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         disease_ids = excluded.disease_ids,
         brand_ids = excluded.brand_ids,
@@ -78,10 +79,9 @@ async function seedTenants(now: string): Promise<void> {
         gray_limit_percent = excluded.gray_limit_percent,
         k_anonymity_threshold = excluded.k_anonymity_threshold,
         can_view_aggregate_metrics = excluded.can_view_aggregate_metrics,
-        can_view_patient_pii = excluded.can_view_patient_pii,
         can_export_csv = excluded.can_export_csv,
         updated_at = excluded.updated_at
-    `, [id, tenantId, json(diseaseIds), json(brandIds), json(regionIds), gray, kAnon, canViewAggregate, canViewPii, canExportCsv, now, now]);
+    `, [id, tenantId, json(diseaseIds), json(brandIds), json(regionIds), gray, kAnon, canViewAggregate, canExportCsv, now, now]);
   }
 }
 
@@ -132,14 +132,16 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
   }
 
   for (const item of contentList) {
+    const itemStatus = String(item.status);
     await run(`
-      INSERT INTO content (id, tenant_id, project_id, title, type, status, pipeline_stage, priority, author, excerpt, content, tags, push_count, read_users, read_count, like_count, dislike_count, bookmark_count, share_count, finish_rate, avg_read_sec, expected_date, rejection_note, created_at, updated_at, published_at)
-      VALUES (?, 'T-PX', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO content (id, tenant_id, project_id, title, type, status, workflow_state, pipeline_stage, priority, author, excerpt, content, tags, push_count, read_users, read_count, like_count, dislike_count, bookmark_count, share_count, finish_rate, avg_read_sec, expected_date, rejection_note, created_at, updated_at, published_at)
+      VALUES (?, 'T-PX', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         project_id = excluded.project_id,
         title = excluded.title,
         type = excluded.type,
         status = excluded.status,
+        workflow_state = excluded.workflow_state,
         pipeline_stage = excluded.pipeline_stage,
         priority = excluded.priority,
         author = excluded.author,
@@ -165,6 +167,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
       item.title,
       item.type,
       item.status,
+      itemStatus === 'published' ? 'published' : itemStatus === 'approved' ? 'approved_locked' : 'draft',
       item.pipelineStage,
       item.priority,
       item.author,
@@ -186,6 +189,33 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
       item.updatedAt,
       item.publishedAt ?? null,
     ]);
+
+    const versionCount = await dbGet<{ cnt: number | string }>('SELECT COUNT(*) as cnt FROM content_versions WHERE content_id = ?', [item.id]);
+    if (Number(versionCount?.cnt ?? 0) === 0) {
+      await run(`
+        INSERT INTO content_versions (content_id, version_no, title, body, excerpt, editor_user_id, change_note, workflow_state, compliance_checklist, immutable_hash, approved_by, approved_at, created_at)
+        VALUES (?, 1, ?, ?, ?, ?, 'seeded baseline content version', ?, ?${jsonCast}, ?, ?, ?, ?)
+      `, [
+        item.id,
+        item.title,
+        item.content,
+        item.excerpt ?? null,
+        item.author,
+        itemStatus === 'published' ? 'published' : 'draft',
+        json({
+          classification: 'patient_education',
+          diseaseArea: item.projectName,
+          brandMention: false,
+          sourceAttached: false,
+          piReference: null,
+          prohibitedClaimChecked: false,
+        }),
+        `seed-${item.id}`,
+        itemStatus === 'published' ? 'seed' : null,
+        itemStatus === 'published' ? item.publishedAt ?? item.updatedAt : null,
+        item.createdAt,
+      ]);
+    }
   }
 
   await run('DELETE FROM behavior_trends');
@@ -304,7 +334,7 @@ async function seedApproval(now: string): Promise<void> {
   await replaceRowsForSqlite(['approval_task_actions', 'approval_tasks', 'approval_flow_nodes', 'approval_flows', 'approval_items']);
 
   const flows = [
-    ['flow-1', 'T-PX', 'PX 默认审批流', '医生制作 → DX 小编 → AI 预审 → PX 运营 → 药企医学 → 药企市场部 → 发布', 'active', 'submitter', '2026-04-20T00:00:00Z', now],
+    ['flow-1', 'T-PX', 'PX 默认审批流', '医生制作 → DX 小编 → 系统预检 → PX 运营 → 药企医学 → 药企市场部 → 发布', 'active', 'submitter', '2026-04-20T00:00:00Z', now],
     ['flow-2', 'T-PX', 'PX 快速流（品牌通识类）', '品牌通识内容快速审核链路', 'inactive', 'previous', '2026-03-15T00:00:00Z', now],
     ['flow-nv-standard', 'T-NV', '诺华 · 标准审批流', '诺华医学与市场审核链路', 'active', 'submitter', '2026-04-18T00:00:00Z', now],
     ['flow-az-standard', 'T-AZ', '阿斯利康 · 标准审批流', '阿斯利康医学审核链路', 'active', 'submitter', '2026-04-18T00:00:00Z', now],
@@ -326,7 +356,7 @@ async function seedApproval(now: string): Promise<void> {
 
   const flowNodes: Array<[string, string, number, string, string, number, string]> = [
     ['flow-1-node-1', 'flow-1', 1, 'DX 小编审核', 'dx_editor', 24, 'remind_only'],
-    ['flow-1-node-2', 'flow-1', 2, 'AI 预审', 'ai_review', 2, 'auto_pass'],
+    ['flow-1-node-2', 'flow-1', 2, '系统预检', 'system_precheck', 2, 'auto_pass'],
     ['flow-1-node-3', 'flow-1', 3, 'PX 运营审核', 'px_ops', 24, 'remind_only'],
     ['flow-1-node-4', 'flow-1', 4, '药企医学审核', 'pharma_med', 48, 'escalate'],
     ['flow-1-node-5', 'flow-1', 5, '药企市场部', 'pharma_mkt', 48, 'remind_only'],
@@ -483,8 +513,8 @@ async function seedAccountsAndLogs(now: string): Promise<void> {
   }
 
   const settings: Record<string, unknown> = {
-    siteName: 'Px 信欣健康 · 极简版平台',
-    version: 'V0.1 · DEMO',
+    siteName: 'Px Lite · 药企患教内容运营与行为洞察平台',
+    version: 'V1.0 · LOCAL',
     region: '中国',
     database: DB_DRIVER,
     behaviorAvgReadDuration: behaviorSummary.avgReadDuration,
@@ -505,7 +535,7 @@ async function seedAccountsAndLogs(now: string): Promise<void> {
 
   await run(`
     INSERT INTO team_settings (id, tenant_id, site_name, default_region, feature_flags, created_at, updated_at)
-    VALUES ('team-T-PX', 'T-PX', 'Px 信欣健康 · 极简版平台', '华东区域', ?${jsonCast}, ?, ?)
+    VALUES ('team-T-PX', 'T-PX', 'Px Lite · 药企患教内容运营与行为洞察平台', '华东区域', ?${jsonCast}, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       site_name = excluded.site_name,
       default_region = excluded.default_region,
@@ -516,6 +546,11 @@ async function seedAccountsAndLogs(now: string): Promise<void> {
 
 export async function seedDatabase(): Promise<void> {
   await initializeSchema();
+  await runMigrations();
+  if (process.env.NODE_ENV === 'production' && process.env.RUN_DEMO_SEED !== 'true') {
+    logger.info({ driver: DB_DRIVER }, 'Production mode: schema initialized; demo seed data skipped.');
+    return;
+  }
   const now = new Date().toISOString();
 
   logger.info({ driver: DB_DRIVER, demoResetEnabled }, 'Seeding fake demo data...');

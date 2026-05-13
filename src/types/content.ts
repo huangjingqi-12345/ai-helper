@@ -10,6 +10,17 @@ export type PipelineStage =
   | 'published';
 
 export type ContentPriority = 'P0' | 'P1' | 'P2';
+export type ContentWorkflowState =
+  | 'draft'
+  | 'system_precheck'
+  | 'px_content_review'
+  | 'pharma_medical_review'
+  | 'pharma_marketing_review'
+  | 'approved_locked'
+  | 'scheduled'
+  | 'published'
+  | 'archived'
+  | 'rejected';
 
 export interface Content {
   id: string;
@@ -17,6 +28,7 @@ export interface Content {
   title: string;
   type: ContentType;
   status: ContentStatus;
+  workflowState?: ContentWorkflowState;
   pipelineStage: PipelineStage;
   priority: ContentPriority;
   author: string;

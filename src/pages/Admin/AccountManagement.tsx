@@ -236,7 +236,7 @@ function AccountDetail({ account, onToggle2fa }: { account: AccountRow; onToggle
         <InfoBox label="账号创建" value="2025-09-01 09:00" />
         <InfoBox label="状态" value={statusLabel(account.status)} />
       </div>
-      <button onClick={onToggle2fa} className="inline-flex items-center gap-2 text-xs text-text-secondary hover:text-text-primary">{account.has2fa ? <ToggleRight className="h-5 w-5 text-accent-green" /> : <ToggleLeft className="h-5 w-5 text-text-muted" />} 切换二步验证（演示）</button>
+      <button onClick={onToggle2fa} className="inline-flex items-center gap-2 text-xs text-text-secondary hover:text-text-primary">{account.has2fa ? <ToggleRight className="h-5 w-5 text-accent-green" /> : <ToggleLeft className="h-5 w-5 text-text-muted" />} 切换二步验证</button>
       <div>
         <h3 className="mb-2 text-sm font-medium text-text-primary">角色分配（按租户视图）</h3>
         <div className="grid grid-cols-2 gap-2">{account.roles.map((role) => <div key={role} className="rounded-lg border border-border bg-bg-tertiary p-3 text-xs"><div className="text-text-primary">{role}</div><div className="mt-1 text-text-muted">{account.view} · 多角色会合并为最宽松字段权限。</div></div>)}</div>
@@ -357,14 +357,12 @@ function permissionMatrix(view: '运营视图' | '药企视图', roles: string[]
   const canManagePlatform = roles.includes('运营 · 平台管理员');
   const canExport = isOps || roles.includes('药企 · 合规');
   return [
-    { group: '患者数据', field: '患者真实姓名敏感', permission: isOps ? '明文' : '不可见' },
-    { group: '患者数据', field: '患者手机号敏感', permission: isOps ? '明文' : '不可见' },
-    { group: '患者数据', field: '患者所在地区', permission: isOps ? '明文' : '脱敏聚合' },
+    { group: '身份字段', field: '姓名 / 手机 / 证件 / 就诊识别', permission: '不可见' },
+    { group: '行为', field: '项目 / 内容 / 日期聚合指标', permission: '脱敏聚合' },
+    { group: '行为', field: '低于 k-匿名阈值的小样本单元', permission: '不可见' },
     { group: '内容', field: '内容草稿', permission: isOps ? '明文' : '脱敏聚合' },
     { group: '内容', field: '审核流转记录', permission: isOps ? '明文' : '脱敏聚合' },
     { group: '内容', field: '分发与触达', permission: isOps ? '明文' : '脱敏聚合' },
-    { group: '行为', field: '聚合行为指标', permission: isOps ? '明文' : '脱敏聚合' },
-    { group: '行为', field: '个体行为下钻敏感', permission: isOps ? '明文' : '不可见' },
     { group: '行为', field: '数据导出敏感', permission: canExport ? (isOps ? '明文' : '脱敏聚合') : '不可见' },
     { group: '选题需求', field: '提交需求', permission: isOps ? '不可见' : '明文' },
     { group: '选题需求', field: '审批/受理', permission: isOps ? '明文' : '脱敏聚合' },

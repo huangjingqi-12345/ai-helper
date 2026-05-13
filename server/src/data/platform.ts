@@ -82,8 +82,8 @@ export const users = [
 ];
 
 export const platformSettings = {
-  siteName: 'Px Lite 极简版平台',
-  version: 'V0.1',
+  siteName: 'Px Lite · 药企患教内容运营与行为洞察平台',
+  version: 'V1.0',
   region: '中国',
   features: {
     contentWorkshop: true,

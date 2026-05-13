@@ -22,6 +22,7 @@ export interface ApprovalFilter {
 export interface ApprovalTask {
   id: string;
   taskId?: string;
+  contentId: string;
   title: string;
   disease: string;
   author: string;

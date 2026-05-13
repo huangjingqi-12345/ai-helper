@@ -15,7 +15,7 @@ const filterGroups = {
   标签: ['KOL', '写作活跃', '病例丰富', '科普达人', '学术活跃', '新晋'],
 };
 
-const flowNodes = ['DX 小编审核', 'AI 预审', 'PX 运营审核', '药企医学审核', '药企市场部审核'];
+const flowNodes = ['DX 小编审核', '系统预检', 'PX 运营审核', '药企医学审核', '药企市场部审核'];
 const defaultFilters = Object.fromEntries(Object.entries(filterGroups).map(([label, values]) => [label, [values[0]]])) as Record<string, string[]>;
 
 export function DistributionProjectDetail(): JSX.Element {
@@ -164,7 +164,7 @@ export function DistributionProjectDetail(): JSX.Element {
               </Button>
               <Button
                 size="sm"
-                onClick={() => showToast('医生分发策略已保存（演示模式）', 'success')}
+                onClick={() => showToast('医生分发策略已保存', 'success')}
               >
                 <Save className="w-3.5 h-3.5" />保存策略
               </Button>

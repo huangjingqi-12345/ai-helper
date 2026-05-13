@@ -1,6 +1,6 @@
-# Px Lite 极简版平台 — UI Requirements
+# Px Lite 药企患教内容运营与行为洞察平台 — UI Requirements
 
-> Reference Demo: https://pxlite-5pyii99t.manus.space/
+> Legacy prototype reference: https://pxlite-5pyii99t.manus.space/
 > Last Updated: 2026-05-12
 
 ---
@@ -84,16 +84,16 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ [Logo] Px Lite 极简版·行为洞察  │  Breadcrumb  │  [Px Ops ▼] [🔍] [🔔] [V0.1·DEMO] │
+│ [Logo] Px Lite·行为洞察  │  Breadcrumb  │  [Px Ops ▼] [🔍] [🔔] [V1.0] │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 **Elements:**
-- Left: Logo icon + "Px Lite" (JetBrains Mono) + "极简版 · 行为洞察" subtitle
+- Left: Logo icon + "Px Lite" (JetBrains Mono) + "患教运营 · 行为洞察" subtitle
 - Center: Breadcrumb (e.g., "Px Lite / 总览")
 - Right: "Px Ops" dropdown, search icon, notification bell, version badge
 
-**Version Badge:** Pill-shaped, semi-transparent background, "V0.1 · DEMO" in small text
+**Version Badge:** Pill-shaped, semi-transparent background, "V1.0 · LOCAL" in small text
 
 ### 2.3 Sidebar
 

@@ -142,7 +142,7 @@ export function Sidebar(): JSX.Element {
         <h3 className="text-[10px] uppercase tracking-widest text-text-muted font-medium mb-2">说明</h3>
         <p className="text-xs text-text-muted leading-relaxed">
           {isOps
-            ? PAGE_DESCRIPTIONS[activeKey] || '运营视图 Ops View。合规枢纽：唯一可见患者明文：全部生产 / 触达能力'
+            ? PAGE_DESCRIPTIONS[activeKey] || '运营视图 Ops View。合规枢纽：管理内容生产、触达配置与聚合行为指标'
             : '药企视图 Pharma View。仅可见脱敏聚合数据 · k-匿名 · 不可下钻到个体'}
         </p>
       </div>
@@ -173,7 +173,7 @@ export function Sidebar(): JSX.Element {
               <button
                 onClick={() => {
                   setUserMenuOpen(false);
-                  showToast('已演示退出登录', 'info');
+                  showToast('已退出登录', 'info');
                 }}
                 className="block w-full px-4 py-3 text-left text-xs text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-accent-red"
               >

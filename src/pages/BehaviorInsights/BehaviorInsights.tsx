@@ -10,6 +10,7 @@ import { showToast } from '@/components/ui/Toast';
 import { useBehaviorStore } from '@/stores/useBehaviorStore';
 import { useLogger } from '@/hooks/useLogger';
 import { formatNumber } from '@/utils/formatters';
+import { createExportJob } from '@/api/endpoints/exports';
 
 export function BehaviorInsights(): JSX.Element {
   const { summary, loading, error, fetchSummary } = useBehaviorStore();
@@ -118,8 +119,8 @@ export function BehaviorInsights(): JSX.Element {
         <div className="grid grid-cols-[1fr_220px_220px_auto] gap-4">
           <div>
             <h2 className="text-base font-semibold text-text-primary">行为数据导出</h2>
-            <p className="mt-1 text-xs text-text-muted">仅导出脱敏后的行为数据（推送 / 阅读 / 互动：赞·踩·藏）。不包含任何临床与身份字段。</p>
-            <p className="mt-3 text-xs text-text-muted">患者姓名、手机、身份证、就诊识别等均不导出；仅以脱敏代号 P-XXXX 表示。合规记录会追加一条“导出”日志。</p>
+            <p className="mt-1 text-xs text-text-muted">仅导出项目 / 内容 / 日期维度的聚合行为数据（推送 / 阅读 / 互动：赞·踩·藏）。不包含任何临床与身份字段。</p>
+            <p className="mt-3 text-xs text-text-muted">患者姓名、手机、身份证、就诊识别等均不采集、不存储、不导出；小样本单元会按 k-匿名阈值阻断。合规记录会追加一条“导出”日志。</p>
             <p className="mt-2 text-xs text-accent-blue">预估记录量：~ 235 条。</p>
           </div>
           <div>
@@ -149,7 +150,16 @@ export function BehaviorInsights(): JSX.Element {
             </div>
             <div className="mt-1 text-[10px] text-text-muted">可选近 7 / 14 / 30 / 90 天；默认近 14 天。</div>
           </div>
-          <div className="flex items-end"><Button onClick={() => { log.action('Export behavior CSV', { exportScope, exportRange }); showToast('导出任务已创建（演示模式）', 'success'); }}><Download className="w-4 h-4" />导出 CSV</Button></div>
+          <div className="flex items-end"><Button onClick={async () => {
+            log.action('Export behavior CSV', { exportScope, exportRange });
+            try {
+              const res = await createExportJob({ scope: exportScope, rangeDays: Number(exportRange), diseaseId: selectedDisease || undefined });
+              showToast(`导出任务已创建：${res.data.id}`, 'success');
+            } catch (error) {
+              log.error('Export behavior CSV failed', error);
+              showToast('导出被合规规则阻止或服务不可用', 'error');
+            }
+          }}><Download className="w-4 h-4" />导出 CSV</Button></div>
         </div>
       </Card>
     </div>

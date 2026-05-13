@@ -9,8 +9,12 @@ import {
 } from '../db/repositories.js';
 import { logger } from '../utils/logger.js';
 import { asyncRoute } from './asyncRoute.js';
+import { requirePermission } from '../middleware/auth.js';
+import { appendAuditLog } from '../utils/audit.js';
 
 const router = Router();
+
+router.use(requirePermission('distribution:read'));
 
 router.get('/projects', asyncRoute(async (req, res) => {
   logger.info({ query: req.query }, 'GET /api/distribution/projects');
@@ -21,6 +25,7 @@ router.get('/projects', asyncRoute(async (req, res) => {
     search: search as string | undefined,
     page: parseInt(page as string, 10),
     pageSize: parseInt(pageSize as string, 10),
+    scope: req.user!,
   });
 
   res.json({
@@ -38,7 +43,7 @@ router.get('/projects', asyncRoute(async (req, res) => {
 
 router.get('/projects/:id', asyncRoute(async (req, res) => {
   logger.info({ id: String(req.params.id) }, 'GET /api/distribution/projects/:id');
-  const project = await getDistributionProjectById(String(req.params.id));
+  const project = await getDistributionProjectById(String(req.params.id), req.user!);
   if (!project) {
     return res.status(404).json({ success: false, data: null, message: 'Distribution project not found', timestamp: new Date().toISOString() });
   }
@@ -60,6 +65,7 @@ router.get('/', asyncRoute(async (req, res) => {
     projectId: projectId as string | undefined,
     page: parseInt(page as string, 10),
     pageSize: parseInt(pageSize as string, 10),
+    scope: req.user!,
   });
 
   res.json({
@@ -75,15 +81,16 @@ router.get('/', asyncRoute(async (req, res) => {
   });
 }));
 
-router.post('/', asyncRoute(async (req, res) => {
+router.post('/', requirePermission('distribution:write'), asyncRoute(async (req, res) => {
   logger.info({ body: req.body }, 'POST /api/distribution');
-  const newStrategy = await createStrategy(req.body);
+  const newStrategy = await createStrategy(req.body, req.user!);
+  await appendAuditLog(req, { action: 'distribution.create', resourceType: 'distribution_strategy', resourceId: String((newStrategy as Record<string, unknown> | null)?.id ?? ''), after: newStrategy });
   res.status(201).json({ success: true, data: newStrategy, timestamp: new Date().toISOString() });
 }));
 
-router.put('/:id', asyncRoute(async (req, res) => {
+router.put('/:id', requirePermission('distribution:write'), asyncRoute(async (req, res) => {
   logger.info({ id: String(req.params.id), body: req.body }, 'PUT /api/distribution/:id');
-  const updated = await updateStrategy(String(req.params.id), req.body);
+  const updated = await updateStrategy(String(req.params.id), req.body, req.user!);
   if (!updated) {
     return res.status(404).json({
       success: false,
@@ -92,6 +99,7 @@ router.put('/:id', asyncRoute(async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   }
+  await appendAuditLog(req, { action: 'distribution.update', resourceType: 'distribution_strategy', resourceId: String(req.params.id), after: updated });
   res.json({ success: true, data: updated, timestamp: new Date().toISOString() });
 }));
 

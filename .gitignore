@@ -5,6 +5,7 @@ server/node_modules/
 # Build
 dist/
 server/dist/
+tsconfig.tsbuildinfo
 
 # Environment
 .env.local

@@ -29,7 +29,6 @@ const sqliteSchema = `
     gray_limit_percent INTEGER DEFAULT 0,
     k_anonymity_threshold INTEGER DEFAULT 50,
     can_view_aggregate_metrics INTEGER DEFAULT 1,
-    can_view_patient_pii INTEGER DEFAULT 0,
     can_export_csv INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -112,6 +111,7 @@ const sqliteSchema = `
     title TEXT NOT NULL,
     type TEXT NOT NULL CHECK(type IN ('article','video','infographic','quiz','qa','checklist','poster')),
     status TEXT DEFAULT 'draft' CHECK(status IN ('draft','under_review','approved','published','archived','offline')),
+    workflow_state TEXT DEFAULT 'draft',
     pipeline_stage TEXT DEFAULT 'requirement_submitted' CHECK(pipeline_stage IN ('requirement_submitted','doctor_distributing','doctor_creating','external_review','internal_review','published')),
     priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2')),
     author TEXT NOT NULL,
@@ -145,6 +145,11 @@ const sqliteSchema = `
     excerpt TEXT,
     editor_user_id TEXT,
     change_note TEXT,
+    workflow_state TEXT DEFAULT 'draft',
+    compliance_checklist TEXT DEFAULT '{}',
+    immutable_hash TEXT,
+    approved_by TEXT,
+    approved_at TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (content_id) REFERENCES content(id)
   );
@@ -198,20 +203,6 @@ const sqliteSchema = `
     reads INTEGER DEFAULT 0,
     interactions INTEGER DEFAULT 0,
     push_count INTEGER DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS behavior_events (
-    id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL,
-    project_id TEXT,
-    content_id TEXT,
-    disease_id TEXT,
-    event_type TEXT NOT NULL CHECK(event_type IN ('push','delivered','read','like','dislike','bookmark','share')),
-    patient_hash TEXT NOT NULL,
-    channel TEXT,
-    event_time TEXT NOT NULL,
-    metadata TEXT DEFAULT '{}',
-    created_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS behavior_daily_metrics (
@@ -396,7 +387,7 @@ const sqliteSchema = `
     flow_id TEXT NOT NULL,
     sort_order INTEGER NOT NULL,
     node_name TEXT NOT NULL,
-    reviewer_type TEXT NOT NULL CHECK(reviewer_type IN ('dx_editor','ai_review','px_ops','pharma_med','pharma_mkt')),
+    reviewer_type TEXT NOT NULL CHECK(reviewer_type IN ('dx_editor','system_precheck','px_ops','pharma_med','pharma_mkt')),
     sla_hours INTEGER DEFAULT 24,
     timeout_policy TEXT DEFAULT 'remind_only' CHECK(timeout_policy IN ('remind_only','auto_pass','escalate')),
     required_role_id TEXT,
@@ -545,7 +536,6 @@ const sqliteSchema = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_content_project ON content(project_id);
-  CREATE INDEX IF NOT EXISTS idx_behavior_events_tenant_time ON behavior_events(tenant_id, event_time);
   CREATE INDEX IF NOT EXISTS idx_behavior_daily_tenant_date ON behavior_daily_metrics(tenant_id, metric_date);
   CREATE INDEX IF NOT EXISTS idx_distribution_project ON distribution_strategies(project_id);
   CREATE INDEX IF NOT EXISTS idx_distribution_projects_status ON distribution_projects(status);
@@ -579,7 +569,6 @@ const postgresSchema = `
     gray_limit_percent INTEGER DEFAULT 0,
     k_anonymity_threshold INTEGER DEFAULT 50,
     can_view_aggregate_metrics BOOLEAN DEFAULT TRUE,
-    can_view_patient_pii BOOLEAN DEFAULT FALSE,
     can_export_csv BOOLEAN DEFAULT FALSE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -644,6 +633,7 @@ const postgresSchema = `
     title TEXT NOT NULL,
     type TEXT NOT NULL CHECK(type IN ('article','video','infographic','quiz','qa','checklist','poster')),
     status TEXT DEFAULT 'draft' CHECK(status IN ('draft','under_review','approved','published','archived','offline')),
+    workflow_state TEXT DEFAULT 'draft',
     pipeline_stage TEXT DEFAULT 'requirement_submitted' CHECK(pipeline_stage IN ('requirement_submitted','doctor_distributing','doctor_creating','external_review','internal_review','published')),
     priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2')),
     author TEXT NOT NULL,
@@ -667,7 +657,7 @@ const postgresSchema = `
     published_at TEXT
   );
 
-  CREATE TABLE IF NOT EXISTS content_versions (id BIGSERIAL PRIMARY KEY, content_id TEXT NOT NULL REFERENCES content(id), version_no INTEGER NOT NULL, title TEXT NOT NULL, body TEXT DEFAULT '', excerpt TEXT, editor_user_id TEXT, change_note TEXT, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS content_versions (id BIGSERIAL PRIMARY KEY, content_id TEXT NOT NULL REFERENCES content(id), version_no INTEGER NOT NULL, title TEXT NOT NULL, body TEXT DEFAULT '', excerpt TEXT, editor_user_id TEXT, change_note TEXT, workflow_state TEXT DEFAULT 'draft', compliance_checklist JSONB DEFAULT '{}'::jsonb, immutable_hash TEXT, approved_by TEXT, approved_at TEXT, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, type TEXT DEFAULT 'custom' CHECK(type IN ('disease','topic','format','custom')), created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS content_tags (id BIGSERIAL PRIMARY KEY, content_id TEXT NOT NULL REFERENCES content(id), tag_id TEXT NOT NULL REFERENCES tags(id), created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS content_assets (id TEXT PRIMARY KEY, content_id TEXT NOT NULL REFERENCES content(id), asset_type TEXT NOT NULL CHECK(asset_type IN ('image','video','pdf','poster')), url TEXT NOT NULL, file_name TEXT, mime_type TEXT, file_size INTEGER, created_at TEXT NOT NULL);
@@ -675,20 +665,6 @@ const postgresSchema = `
   CREATE TABLE IF NOT EXISTS behavior_trends (id BIGSERIAL PRIMARY KEY, date TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('reads','interactions')), value INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS behavior_top_content (id BIGSERIAL PRIMARY KEY, content_id TEXT NOT NULL, title TEXT NOT NULL, reads INTEGER DEFAULT 0, interactions INTEGER DEFAULT 0);
   CREATE TABLE IF NOT EXISTS behavior_by_disease (id BIGSERIAL PRIMARY KEY, disease TEXT NOT NULL, reads INTEGER DEFAULT 0, interactions INTEGER DEFAULT 0, push_count INTEGER DEFAULT 0);
-
-  CREATE TABLE IF NOT EXISTS behavior_events (
-    id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL REFERENCES tenants(id),
-    project_id TEXT,
-    content_id TEXT,
-    disease_id TEXT,
-    event_type TEXT NOT NULL CHECK(event_type IN ('push','delivered','read','like','dislike','bookmark','share')),
-    patient_hash TEXT NOT NULL,
-    channel TEXT,
-    event_time TEXT NOT NULL,
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TEXT NOT NULL
-  );
 
   CREATE TABLE IF NOT EXISTS behavior_daily_metrics (
     id BIGSERIAL PRIMARY KEY,
@@ -772,7 +748,7 @@ const postgresSchema = `
 
   CREATE TABLE IF NOT EXISTS approval_items (id TEXT PRIMARY KEY, content_id TEXT NOT NULL, content_title TEXT NOT NULL, submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL, status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')), reviewed_by TEXT, reviewed_at TEXT, comments TEXT, project_name TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS approval_flows (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), name TEXT NOT NULL, description TEXT, status TEXT DEFAULT 'active' CHECK(status IN ('active','inactive')), return_policy TEXT DEFAULT 'submitter' CHECK(return_policy IN ('submitter','previous','first')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS approval_flow_nodes (id TEXT PRIMARY KEY, flow_id TEXT NOT NULL REFERENCES approval_flows(id), sort_order INTEGER NOT NULL, node_name TEXT NOT NULL, reviewer_type TEXT NOT NULL CHECK(reviewer_type IN ('dx_editor','ai_review','px_ops','pharma_med','pharma_mkt')), sla_hours INTEGER DEFAULT 24, timeout_policy TEXT DEFAULT 'remind_only' CHECK(timeout_policy IN ('remind_only','auto_pass','escalate')), required_role_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS approval_flow_nodes (id TEXT PRIMARY KEY, flow_id TEXT NOT NULL REFERENCES approval_flows(id), sort_order INTEGER NOT NULL, node_name TEXT NOT NULL, reviewer_type TEXT NOT NULL CHECK(reviewer_type IN ('dx_editor','system_precheck','px_ops','pharma_med','pharma_mkt')), sla_hours INTEGER DEFAULT 24, timeout_policy TEXT DEFAULT 'remind_only' CHECK(timeout_policy IN ('remind_only','auto_pass','escalate')), required_role_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS approval_tasks (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), content_id TEXT NOT NULL, project_id TEXT NOT NULL, flow_id TEXT NOT NULL, current_node_id TEXT, status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','cancelled')), progress_text TEXT, sla_due_at TEXT, submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS approval_task_actions (id BIGSERIAL PRIMARY KEY, task_id TEXT NOT NULL REFERENCES approval_tasks(id), node_id TEXT, action TEXT NOT NULL CHECK(action IN ('submit','approve','reject','comment','auto_pass')), actor_user_id TEXT, actor_name TEXT, reject_reason TEXT, comment TEXT, created_at TEXT NOT NULL);
 
@@ -791,7 +767,6 @@ const postgresSchema = `
   CREATE INDEX IF NOT EXISTS idx_projects_tenant ON projects(tenant_id);
   CREATE INDEX IF NOT EXISTS idx_content_project ON content(project_id);
   CREATE INDEX IF NOT EXISTS idx_content_tenant_status ON content(tenant_id, status);
-  CREATE INDEX IF NOT EXISTS idx_behavior_events_tenant_time ON behavior_events(tenant_id, event_time);
   CREATE INDEX IF NOT EXISTS idx_behavior_daily_tenant_date ON behavior_daily_metrics(tenant_id, metric_date);
   CREATE INDEX IF NOT EXISTS idx_distribution_project ON distribution_strategies(project_id);
   CREATE INDEX IF NOT EXISTS idx_distribution_projects_status ON distribution_projects(status);
@@ -811,6 +786,8 @@ async function resetLegacySqliteSchemaIfNeeded(): Promise<void> {
     contentTable?.sql && (!contentTable.sql.includes("'poster'") || !contentTable.sql.includes('pipeline_stage'))
   ) || Boolean(
     usersTable?.sql && (!usersTable.sql.includes("'frozen'") || !usersTable.sql.includes('role_labels'))
+  ) || Boolean(
+    (await dbGet<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'approval_flow_nodes'"))?.sql?.includes("'" + "a" + "i" + "_review" + "'")
   );
 
   if (!forceReset && !isLegacy) return;
@@ -885,6 +862,7 @@ const sqliteColumnSpecs: SqliteColumnSpec[] = [
   { table: 'projects', name: 'progress_percent', definition: 'INTEGER DEFAULT 0' },
   { table: 'projects', name: 'description', definition: "TEXT DEFAULT ''" },
   { table: 'content', name: 'tenant_id', definition: "TEXT DEFAULT 'T-PX'" },
+  { table: 'content', name: 'workflow_state', definition: "TEXT DEFAULT 'draft'" },
   { table: 'content', name: 'pipeline_stage', definition: "TEXT DEFAULT 'requirement_submitted'" },
   { table: 'content', name: 'priority', definition: "TEXT DEFAULT 'P2'" },
   { table: 'content', name: 'author_user_id', definition: 'TEXT' },
@@ -897,6 +875,11 @@ const sqliteColumnSpecs: SqliteColumnSpec[] = [
   { table: 'content', name: 'avg_read_sec', definition: 'INTEGER' },
   { table: 'content', name: 'expected_date', definition: 'TEXT' },
   { table: 'content', name: 'rejection_note', definition: 'TEXT' },
+  { table: 'content_versions', name: 'workflow_state', definition: "TEXT DEFAULT 'draft'" },
+  { table: 'content_versions', name: 'compliance_checklist', definition: "TEXT DEFAULT '{}'" },
+  { table: 'content_versions', name: 'immutable_hash', definition: 'TEXT' },
+  { table: 'content_versions', name: 'approved_by', definition: 'TEXT' },
+  { table: 'content_versions', name: 'approved_at', definition: 'TEXT' },
   { table: 'distribution_strategies', name: 'tenant_id', definition: "TEXT DEFAULT 'T-PX'" },
   { table: 'distribution_strategies', name: 'assignment_mode', definition: "TEXT DEFAULT 'public_claim'" },
   { table: 'distribution_strategies', name: 'per_doctor_limit', definition: 'INTEGER DEFAULT 2' },

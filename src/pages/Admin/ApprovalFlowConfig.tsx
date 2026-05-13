@@ -11,7 +11,7 @@ import type { TenantOption } from '@/stores/useTenantStore';
 
 const REVIEWER_OPTIONS = [
   { value: 'dx_editor', label: 'DX 小编审核' },
-  { value: 'ai_review', label: 'AI 预审' },
+  { value: 'system_precheck', label: '系统预检' },
   { value: 'px_ops', label: 'PX 运营审核' },
   { value: 'pharma_med', label: '药企医学审核' },
   { value: 'pharma_mkt', label: '药企市场部' },
@@ -118,12 +118,12 @@ export function ApprovalFlowConfig(): JSX.Element {
       <div className="space-y-3">
         <Badge color="blue" className="text-[10px] uppercase tracking-wider">平台管理 · 审批流配置</Badge>
         <h1 className="text-2xl font-bold text-text-primary">自定义审批流</h1>
-        <p className="text-sm text-text-secondary">编排「医生制作 → DX 小编 → AI 预审 → PX 运营 → 药企医学 → 药企市场部 → 发布」全链路，可按业务自由增删节点、设置超时与打回策略。不同租户可独立配置。</p>
+        <p className="text-sm text-text-secondary">编排「医生制作 → DX 小编 → 系统预检 → PX 运营 → 药企医学 → 药企市场部 → 发布」全链路，可按业务自由增删节点、设置超时与打回策略。不同租户可独立配置。</p>
       </div>
 
       <div className="flex items-center gap-4">
         <span className="text-xs text-text-muted px-3 py-1.5 bg-bg-tertiary rounded-lg">Px Ops 共 {flows.length} 个审批流</span>
-        <span className="text-xs text-text-muted px-3 py-1.5 bg-bg-tertiary rounded-lg">修改本会话内生效（演示模式）</span>
+        <span className="text-xs text-text-muted px-3 py-1.5 bg-bg-tertiary rounded-lg">配置变更将写入审计记录</span>
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-text-muted">选择租户</span>
           <Select options={selectOptions} value={selectedTenant} onChange={setSelectedTenant} />

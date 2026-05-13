@@ -2,12 +2,15 @@ import { Router } from 'express';
 import { getOverviewStats, getOverviewProjects } from '../db/repositories.js';
 import { logger } from '../utils/logger.js';
 import { asyncRoute } from './asyncRoute.js';
+import { requirePermission } from '../middleware/auth.js';
 
 const router = Router();
 
-router.get('/', asyncRoute(async (_req, res) => {
+router.use(requirePermission('overview:read'));
+
+router.get('/', asyncRoute(async (req, res) => {
   logger.info('GET /api/overview');
-  const stats = await getOverviewStats();
+  const stats = await getOverviewStats(req.user!);
   res.json({
     success: true,
     data: stats || { lastUpdated: new Date().toISOString() },
@@ -15,9 +18,9 @@ router.get('/', asyncRoute(async (_req, res) => {
   });
 }));
 
-router.get('/projects', asyncRoute(async (_req, res) => {
+router.get('/projects', asyncRoute(async (req, res) => {
   logger.info('GET /api/overview/projects');
-  const projects = await getOverviewProjects();
+  const projects = await getOverviewProjects(req.user!);
   res.json({
     success: true,
     data: projects,

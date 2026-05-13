@@ -18,7 +18,7 @@ if [ "$ENV" = "production" ]; then
   fi
 fi
 
-echo "🚢 Px Lite 极简版平台 — Deployment"
+echo "🚢 Px Lite 药企患教内容运营与行为洞察平台 — Deployment"
 echo "========================================"
 echo "  Environment: $ENV"
 echo "  Compose:     $COMPOSE_FILE"

@@ -1,4 +1,4 @@
-# Px Lite 极简版平台 — Project Rules & Conventions
+# Px Lite 药企患教内容运营与行为洞察平台 — Project Rules & Conventions
 
 > Last Updated: 2026-05-12
 
@@ -246,8 +246,8 @@ describe('ComponentName', () => {
 | Variable | Dev Value | Prod Value | Description |
 |----------|-----------|------------|-------------|
 | `VITE_API_BASE_URL` | `http://localhost:3001/api` | `https://api.px.senzco.com` | API base URL |
-| `VITE_APP_TITLE` | `Px Lite 极简版平台` | `Px Lite 极简版平台` | App title |
-| `VITE_APP_VERSION` | `V0.1 · DEMO` | `V0.1` | Version display |
+| `VITE_APP_TITLE` | `Px Lite 药企患教内容运营与行为洞察平台` | `Px Lite 药企患教内容运营与行为洞察平台` | App title |
+| `VITE_APP_VERSION` | `V1.0 · LOCAL` | `V1.0` | Version display |
 | `VITE_LOG_LEVEL` | `DEBUG` | `WARN` | Frontend log level |
 | `VITE_ENABLE_DEV_PANEL` | `true` | `false` | Show debug panel |
 | `NODE_ENV` | `development` | `production` | Node environment |
