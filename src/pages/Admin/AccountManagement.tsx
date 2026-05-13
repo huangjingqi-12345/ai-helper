@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Key, Search, ToggleLeft, ToggleRight, UserCog } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -7,32 +7,9 @@ import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { showToast } from '@/components/ui/Toast';
 import { useLogger } from '@/hooks/useLogger';
-
-type AccountStatus = 'active' | 'frozen' | 'invited';
-
-interface AccountRow {
-  id: string;
-  name: string;
-  email: string;
-  tenant: string;
-  tenantId: string;
-  view: '运营视图' | '药企视图';
-  roles: string[];
-  status: AccountStatus;
-  has2fa: boolean;
-  lastLogin: string;
-  note: string;
-}
-
-const TENANT_OPTIONS = [
-  { value: '', label: '全部租户' },
-  { value: 'T-PX', label: 'Px Ops' },
-  { value: 'T-NV', label: '诺华' },
-  { value: 'T-AZ', label: '阿斯利康' },
-  { value: 'T-MSD', label: '默沙东' },
-  { value: 'T-RC', label: '罗氏' },
-  { value: 'T-LL', label: '礼来' },
-];
+import { createAccount as createAccountApi, getAccounts, getTenantOptions, updateAccount2fa, updateAccountStatus } from '@/api/endpoints/platform';
+import type { AccountRow, AccountStatus } from '@/types/platform';
+import type { TenantOption } from '@/stores/useTenantStore';
 
 const VIEW_OPTIONS = [
   { value: '', label: '全部视图' },
@@ -45,27 +22,6 @@ const STATUS_OPTIONS = [
   { value: 'active', label: '已激活' },
   { value: 'frozen', label: '已冻结' },
   { value: 'invited', label: '已邀请' },
-];
-
-const initialAccounts: AccountRow[] = [
-  { id: 'A-001', name: '齐晓川', email: 'qixc@px.health', tenant: 'Px Ops', tenantId: 'T-PX', view: '运营视图', roles: ['运营 · 平台管理员'], status: 'active', has2fa: true, lastLogin: '2026-05-08 08:42', note: '平台超管，唯一可启停用租户。' },
-  { id: 'A-002', name: '陆玟昕', email: 'luwx@px.health', tenant: 'Px Ops', tenantId: 'T-PX', view: '运营视图', roles: ['运营 · 内容审核员'], status: 'active', has2fa: true, lastLogin: '2026-05-07 22:11', note: '负责医学审核与上下架。' },
-  { id: 'A-003', name: '祝景琰', email: 'zhujy@px.health', tenant: 'Px Ops', tenantId: 'T-PX', view: '运营视图', roles: ['运营 · 内容审核员'], status: 'active', has2fa: true, lastLogin: '2026-05-08 09:01', note: '负责内容合规复核。' },
-  { id: 'A-004', name: '顾翊辰', email: 'guyc@px.health', tenant: 'Px Ops', tenantId: 'T-PX', view: '运营视图', roles: ['运营 · 分发执行员'], status: 'active', has2fa: true, lastLogin: '2026-05-08 07:55', note: '操作分发策略与触达。' },
-  { id: 'A-005', name: '邵书珩', email: 'shaosh@px.health', tenant: 'Px Ops', tenantId: 'T-PX', view: '运营视图', roles: ['运营 · 分发执行员'], status: 'active', has2fa: false, lastLogin: '2026-05-07 19:32', note: '待开启二步验证。' },
-  { id: 'A-006', name: '钟锦盛', email: 'zhongjs@px.health', tenant: 'Px Ops', tenantId: 'T-PX', view: '运营视图', roles: ['运营 · 内容审核员', '运营 · 分发执行员'], status: 'active', has2fa: true, lastLogin: '2026-05-08 06:20', note: '复合角色。' },
-  { id: 'A-007', name: '林筱', email: 'linx@novartis.cn', tenant: '诺华', tenantId: 'T-NV', view: '药企视图', roles: ['药企 · 合规'], status: 'active', has2fa: true, lastLogin: '2026-05-07 16:30', note: '合规审核员。' },
-  { id: 'A-008', name: '宋知节', email: 'songzj@novartis.cn', tenant: '诺华', tenantId: 'T-NV', view: '药企视图', roles: ['药企 · BD'], status: 'active', has2fa: true, lastLogin: '2026-05-08 09:15', note: '选题需求提交。' },
-  { id: 'A-009', name: '崔知白', email: 'cuizb@novartis.cn', tenant: '诺华', tenantId: 'T-NV', view: '药企视图', roles: ['药企 · 市场'], status: 'active', has2fa: false, lastLogin: '2026-05-06 11:42', note: '查看项目效果。' },
-  { id: 'A-010', name: '顾承', email: 'guc@az.cn', tenant: '阿斯利康', tenantId: 'T-AZ', view: '药企视图', roles: ['药企 · 合规'], status: 'active', has2fa: true, lastLogin: '2026-05-07 14:55', note: '合规审核员。' },
-  { id: 'A-011', name: '毕瑾', email: 'bij@az.cn', tenant: '阿斯利康', tenantId: 'T-AZ', view: '药企视图', roles: ['药企 · BD'], status: 'active', has2fa: true, lastLogin: '2026-05-08 08:30', note: 'BD 项目提交。' },
-  { id: 'A-012', name: '高承翊', email: 'gaocy@az.cn', tenant: '阿斯利康', tenantId: 'T-AZ', view: '药企视图', roles: ['药企 · 市场'], status: 'invited', has2fa: false, lastLogin: '—', note: '邀请未激活。' },
-  { id: 'A-013', name: '韦珂', email: 'weik@msd.cn', tenant: '默沙东', tenantId: 'T-MSD', view: '药企视图', roles: ['药企 · 合规'], status: 'active', has2fa: true, lastLogin: '2026-05-06 19:20', note: '合规审核员。' },
-  { id: 'A-014', name: '司礼安', email: 'sila@msd.cn', tenant: '默沙东', tenantId: 'T-MSD', view: '药企视图', roles: ['药企 · BD', '药企 · 市场'], status: 'active', has2fa: true, lastLogin: '2026-05-07 17:48', note: '复合药企角色。' },
-  { id: 'A-015', name: '贺珏', email: 'hej@roche.cn', tenant: '罗氏', tenantId: 'T-RC', view: '药企视图', roles: ['药企 · 合规'], status: 'frozen', has2fa: true, lastLogin: '2026-04-25 17:45', note: '租户停用后冻结。' },
-  { id: 'A-016', name: '明微', email: 'mingw@roche.cn', tenant: '罗氏', tenantId: 'T-RC', view: '药企视图', roles: ['药企 · BD'], status: 'frozen', has2fa: false, lastLogin: '2026-04-25 17:42', note: '租户停用后冻结。' },
-  { id: 'A-017', name: '禾未', email: 'hew@lilly.cn', tenant: '礼来', tenantId: 'T-LL', view: '药企视图', roles: ['药企 · 合规'], status: 'active', has2fa: true, lastLogin: '2026-05-08 09:10', note: '合规审核员。' },
-  { id: 'A-018', name: '言归', email: 'yang@lilly.cn', tenant: '礼来', tenantId: 'T-LL', view: '药企视图', roles: ['药企 · BD'], status: 'active', has2fa: true, lastLogin: '2026-05-07 21:33', note: 'BD 项目提交。' },
 ];
 
 function statusLabel(status: AccountStatus): string {
@@ -82,13 +38,35 @@ function statusColor(status: AccountStatus): 'green' | 'gray' | 'yellow' {
 
 export function AccountManagement(): JSX.Element {
   const { log } = useLogger('AccountManagement');
-  const [accounts, setAccounts] = useState(initialAccounts);
+  const [accounts, setAccounts] = useState<AccountRow[]>([]);
+  const [tenants, setTenants] = useState<TenantOption[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [tenantFilter, setTenantFilter] = useState('');
   const [viewFilter, setViewFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [inviteOpen, setInviteOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null);
+
+  const loadData = async (): Promise<void> => {
+    setLoading(true);
+    try {
+      const [accountsRes, tenantsRes] = await Promise.all([getAccounts(), getTenantOptions()]);
+      setAccounts(accountsRes.data);
+      setTenants(tenantsRes.data);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  const tenantOptions = useMemo(() => [
+    { value: '', label: '全部租户' },
+    ...tenants.map((tenant) => ({ value: tenant.id, label: tenant.shortName })),
+  ], [tenants]);
 
   const filtered = useMemo(() => accounts.filter((a) => {
     if (tenantFilter && a.tenantId !== tenantFilter) return false;
@@ -105,16 +83,43 @@ export function AccountManagement(): JSX.Element {
   const frozenCount = accounts.filter((a) => a.status === 'frozen').length;
   const has2faCount = accounts.filter((a) => a.has2fa).length;
 
-  const toggleAccount = (id: string): void => {
-    setAccounts((current) => current.map((account) => account.id === id ? { ...account, status: account.status === 'active' ? 'frozen' : 'active' } : account));
-    log.action('Toggle account', { id });
-    showToast('账号状态已更新（演示模式）', 'success');
+  const toggleAccount = async (id: string): Promise<void> => {
+    const currentAccount = accounts.find((account) => account.id === id);
+    if (!currentAccount) return;
+    const nextStatus: AccountStatus = currentAccount.status === 'active' ? 'frozen' : 'active';
+    try {
+      const res = await updateAccountStatus(id, nextStatus);
+      setAccounts((current) => current.map((account) => account.id === id ? res.data : account));
+      setSelectedAccount((current) => current?.id === id ? res.data : current);
+      log.action('Toggle account', { id, status: nextStatus });
+      showToast('账号状态已更新并写入 SQLite', 'success');
+    } catch (error) {
+      log.error('Toggle account failed', error);
+      showToast('账号状态更新失败，请检查后端服务', 'error');
+    }
   };
 
-  const addAccount = (account: AccountRow): void => {
-    setAccounts((current) => [account, ...current]);
-    setInviteOpen(false);
-    showToast('邀请邮件已发送（演示模式）', 'success');
+  const activateAccount = async (id: string): Promise<void> => {
+    try {
+      const res = await updateAccountStatus(id, 'active');
+      setAccounts((current) => current.map((account) => account.id === id ? res.data : account));
+      showToast('账号已激活并写入 SQLite', 'success');
+    } catch (error) {
+      log.error('Activate account failed', error);
+      showToast('账号激活失败，请检查后端服务', 'error');
+    }
+  };
+
+  const addAccount = async (account: AccountRow): Promise<void> => {
+    try {
+      const res = await createAccountApi(account);
+      setAccounts((current) => [res.data, ...current.filter((item) => item.id !== res.data.id)]);
+      setInviteOpen(false);
+      showToast('邀请邮件已发送并写入 SQLite', 'success');
+    } catch (error) {
+      log.error('Invite account failed', error);
+      showToast('邀请账号失败，请检查后端服务', 'error');
+    }
   };
 
   return (
@@ -147,7 +152,7 @@ export function AccountManagement(): JSX.Element {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
             <input type="text" placeholder="搜索姓名 / 邮箱 / 账号 ID" value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-blue" />
           </div>
-          <Select options={TENANT_OPTIONS} value={tenantFilter} onChange={setTenantFilter} />
+          <Select options={tenantOptions} value={tenantFilter} onChange={setTenantFilter} />
           <Select options={VIEW_OPTIONS} value={viewFilter} onChange={setViewFilter} />
           <Select options={STATUS_OPTIONS} value={statusFilter} onChange={setStatusFilter} />
           <span className="text-xs text-text-muted ml-auto">{filtered.length} / {accounts.length} 条</span>
@@ -166,7 +171,10 @@ export function AccountManagement(): JSX.Element {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((a) => (
+            {loading && (
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-text-muted">正在从 SQLite 加载账号...</td></tr>
+            )}
+            {!loading && filtered.map((a) => (
               <tr key={a.id} className="border-b border-border/50 hover:bg-bg-tertiary/30 transition-colors">
                 <td className="px-4 py-3"><div className="text-sm font-medium text-text-primary">{a.name}</div><div className="text-xs text-text-muted">{a.email}</div></td>
                 <td className="px-4 py-3 text-sm text-text-secondary">{a.tenant}<div className="text-xs text-text-muted">{a.tenantId}</div></td>
@@ -177,7 +185,7 @@ export function AccountManagement(): JSX.Element {
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-center gap-2">
                     <button aria-label={`${statusLabel(a.status)} ${a.name}`} onClick={() => toggleAccount(a.id)} className="text-xl">{a.status === 'active' ? <ToggleRight className="w-5 h-5 text-accent-green" /> : <ToggleLeft className="w-5 h-5 text-text-muted" />}</button>
-                    <button onClick={() => { setAccounts((current) => current.map((account) => account.id === a.id ? { ...account, status: 'active' } : account)); showToast('账号已激活（演示模式）', 'success'); }} className="text-xs text-text-muted hover:text-text-primary">激活</button>
+                    <button onClick={() => { void activateAccount(a.id); }} className="text-xs text-text-muted hover:text-text-primary">激活</button>
                     <button onClick={() => { log.action('View account', { id: a.id }); setSelectedAccount(a); }} className="text-xs text-accent-blue flex items-center gap-0.5 hover:underline">详情 <ChevronRight size={12} /></button>
                   </div>
                 </td>
@@ -194,13 +202,14 @@ export function AccountManagement(): JSX.Element {
         maxWidth="max-w-4xl"
         footer={<Button variant="secondary" onClick={() => setInviteOpen(false)}>Close</Button>}
       >
-        <InviteAccountWizard onInvite={addAccount} />
+        <InviteAccountWizard tenants={tenants} onInvite={addAccount} />
       </Modal>
 
       <Modal open={!!selectedAccount} onClose={() => setSelectedAccount(null)} title="账号详情" maxWidth="max-w-4xl" footer={<Button variant="secondary" onClick={() => setSelectedAccount(null)}>Close</Button>}>
-        {selectedAccount && <AccountDetail account={selectedAccount} onToggle2fa={() => {
-          setAccounts((current) => current.map((account) => account.id === selectedAccount.id ? { ...account, has2fa: !account.has2fa } : account));
-          setSelectedAccount((current) => current ? { ...current, has2fa: !current.has2fa } : current);
+        {selectedAccount && <AccountDetail account={selectedAccount} onToggle2fa={async () => {
+          const res = await updateAccount2fa(selectedAccount.id, !selectedAccount.has2fa);
+          setAccounts((current) => current.map((account) => account.id === selectedAccount.id ? res.data : account));
+          setSelectedAccount(res.data);
         }} />}
       </Modal>
     </div>
@@ -241,15 +250,15 @@ function AccountDetail({ account, onToggle2fa }: { account: AccountRow; onToggle
   );
 }
 
-function InviteAccountWizard({ onInvite }: { onInvite: (account: AccountRow) => void }): JSX.Element {
-  const tenantCards = [
-    { id: 'T-PX', shortName: 'Px', name: 'Px 自营运营组', view: '运营视图', scope: '可见病种 全部 · 灰度 ≤ 100% · k=0', tenant: 'Px Ops' },
-    { id: 'T-NV', shortName: '诺华', name: '诺华制药（中国）', view: '药企视图', scope: '可见病种 2 种 · 灰度 ≤ 50% · k=50', tenant: '诺华' },
-    { id: 'T-AZ', shortName: '阿斯', name: '阿斯利康（中国）', view: '药企视图', scope: '可见病种 3 种 · 灰度 ≤ 30% · k=50', tenant: '阿斯利康' },
-    { id: 'T-MSD', shortName: '默沙', name: '默沙东（中国）', view: '药企视图', scope: '可见病种 2 种 · 灰度 ≤ 20% · k=100', tenant: '默沙东' },
-    { id: 'T-RC', shortName: '罗氏', name: '罗氏制药', view: '药企视图', scope: '可见病种 2 种 · 灰度 ≤ 10% · k=100', tenant: '罗氏' },
-    { id: 'T-LL', shortName: '礼来', name: '礼来制药', view: '药企视图', scope: '可见病种 1 种 · 灰度 ≤ 30% · k=50', tenant: '礼来' },
-  ] as const;
+function InviteAccountWizard({ tenants, onInvite }: { tenants: TenantOption[]; onInvite: (account: AccountRow) => void | Promise<void> }): JSX.Element {
+  const tenantCards = tenants.map((tenant) => ({
+    id: tenant.id,
+    shortName: tenant.shortName,
+    name: tenant.name,
+    view: tenant.type === 'ops' ? '运营视图' : '药企视图',
+    scope: tenant.type === 'ops' ? '可见病种 全部 · 灰度 ≤ 100% · k=0' : '脱敏聚合视图 · 按租户范围授权',
+    tenant: tenant.shortName,
+  }));
   const steps = [
     ['选择租户', '决定可分配的视图'],
     ['账号信息', '姓名 / 邮箱 / 2FA'],

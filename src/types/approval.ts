@@ -18,3 +18,15 @@ export interface ApprovalFilter {
   page?: number;
   pageSize?: number;
 }
+
+export interface ApprovalTask {
+  id: string;
+  taskId?: string;
+  title: string;
+  disease: string;
+  author: string;
+  node: string;
+  progress: string;
+  sla: string;
+  status: ApprovalStatus;
+}

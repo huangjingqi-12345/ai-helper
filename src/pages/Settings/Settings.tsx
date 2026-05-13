@@ -1,39 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { showToast } from '@/components/ui/Toast';
 import { useTenantStore } from '@/stores/useTenantStore';
-
-interface TeamMember {
-  id: string;
-  name: string;
-  email: string;
-  role: 'admin' | 'editor' | 'viewer';
-  lastLogin: string;
-}
+import { createTeamMember, deleteTeamMember, getAuditLogs, getTeamMembers, updateTeamMemberRole } from '@/api/endpoints/platform';
+import type { AuditLogRow, TeamMember } from '@/types/platform';
 
 const ROLE_OPTIONS = [
   { value: 'admin', label: '管理员' },
   { value: 'editor', label: '编辑' },
   { value: 'viewer', label: '查看者' },
 ];
-
-const initialMembers: TeamMember[] = [
-  { id: 'm-1', name: '张明', email: 'zhang.ming@px.cn', role: 'admin', lastLogin: '2026-04-28 09:14' },
-  { id: 'm-2', name: '李雨晴', email: 'li.yq@px.cn', role: 'editor', lastLogin: '2026-04-27 17:42' },
-  { id: 'm-3', name: '王健', email: 'wang.j@px.cn', role: 'editor', lastLogin: '2026-04-26 11:08' },
-  { id: 'm-4', name: '陈思雨', email: 'chen.sy@px.cn', role: 'viewer', lastLogin: '2026-04-22 09:31' },
-];
-
-const logs = [
-  ['张明 发布了内容 《心衰患者每日体重监测的 5 个细节》', '2026-04-28 09:32'],
-  ['李雨晴 更新了内容 《胰岛素笔注射 7 步法》', '2026-04-27 17:46'],
-  ['王健 下架了内容 《沙库巴曲缬沙坦该饭前还是饭后吃？》', '2026-04-26 11:12'],
-  ['张明 邀请成员加入 陈思雨 (查看者)', '2026-04-25 15:08'],
-  ['系统 导出报告 近 7 天行为汇总.csv', '2026-04-24 10:01'],
-] as const;
 
 const roleLabel: Record<TeamMember['role'], string> = {
   admin: '管理员',
@@ -46,8 +25,33 @@ export function Settings(): JSX.Element {
   const [name, setName] = useState('系统管理员');
   const [email, setEmail] = useState('admin@px.cn');
   const [region, setRegion] = useState('华东区域');
-  const [members, setMembers] = useState(initialMembers);
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [logs, setLogs] = useState<AuditLogRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const memberCount = useMemo(() => members.length, [members]);
+
+  const loadSettingsData = useCallback(async (): Promise<void> => {
+    setLoading(true);
+    try {
+      const [membersRes, logsRes] = await Promise.all([
+        getTeamMembers(currentTenant.id),
+        getAuditLogs(currentTenant.id),
+      ]);
+      setMembers(membersRes.data);
+      setLogs(logsRes.data);
+      const firstMember = membersRes.data[0];
+      if (firstMember) {
+        setName(firstMember.name);
+        setEmail(firstMember.email);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [currentTenant.id]);
+
+  useEffect(() => {
+    void loadSettingsData();
+  }, [loadSettingsData]);
 
   return (
     <div className="space-y-6">
@@ -75,25 +79,31 @@ export function Settings(): JSX.Element {
       <Card className="p-0 overflow-hidden">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <div><h2 className="text-base font-semibold text-text-primary">团队成员</h2><p className="mt-1 text-xs text-text-muted">极简权限：管理员可管理一切；编辑可创建/编辑内容；查看者只读。</p></div>
-          <div className="flex items-center gap-3"><span className="text-xs text-text-muted">{memberCount} 人</span><Button size="sm" onClick={() => {
+          <div className="flex items-center gap-3"><span className="text-xs text-text-muted">{memberCount} 人</span><Button size="sm" onClick={async () => {
             const nextIndex = members.length + 1;
-            setMembers((current) => [...current, { id: `m-${Date.now()}`, name: `新成员${nextIndex}`, email: `new${nextIndex}@px.cn`, role: 'viewer', lastLogin: '—' }]);
-            showToast('已添加一名演示成员', 'success');
+            const res = await createTeamMember(currentTenant.id, { name: `新成员${nextIndex}`, email: `new${nextIndex}@px.cn`, role: 'viewer' });
+            setMembers((current) => [...current, res.data]);
+            showToast('已添加一名成员并写入 SQLite', 'success');
           }}>邀请成员</Button></div>
         </div>
         <table className="w-full">
           <thead><tr className="border-b border-border bg-bg-secondary/50"><th className="px-4 py-3 text-left text-xs text-text-muted">成员</th><th className="px-4 py-3 text-left text-xs text-text-muted">邮箱</th><th className="px-4 py-3 text-left text-xs text-text-muted">角色</th><th className="px-4 py-3 text-left text-xs text-text-muted">最近登录</th><th className="px-4 py-3 text-right text-xs text-text-muted">操作</th></tr></thead>
           <tbody>
-            {members.map((member) => (
+            {loading && (
+              <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-text-muted">正在从 SQLite 加载团队成员...</td></tr>
+            )}
+            {!loading && members.map((member) => (
               <tr key={member.id} className="border-b border-border/50 hover:bg-bg-tertiary/30">
                 <td className="px-4 py-3"><div className="flex items-center gap-3"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-blue/20 text-xs font-bold text-accent-blue">{member.name[0]}</div><span className="text-sm text-text-primary">{member.name}</span></div></td>
                 <td className="px-4 py-3 text-sm text-text-secondary">{member.email}</td>
-                <td className="px-4 py-3"><Select value={member.role} options={ROLE_OPTIONS} onChange={(value) => {
-                  setMembers((current) => current.map((item) => item.id === member.id ? { ...item, role: value as TeamMember['role'] } : item));
-                  showToast(`${member.name} 已设为${roleLabel[value as TeamMember['role']]}`, 'success');
+                <td className="px-4 py-3"><Select value={member.role} options={ROLE_OPTIONS} onChange={async (value) => {
+                  const role = value as TeamMember['role'];
+                  const res = await updateTeamMemberRole(member.id, role);
+                  setMembers((current) => current.map((item) => item.id === member.id ? res.data : item));
+                  showToast(`${member.name} 已设为${roleLabel[role]}并写入 SQLite`, 'success');
                 }} /></td>
                 <td className="px-4 py-3 text-xs text-text-muted">{member.lastLogin}</td>
-                <td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" onClick={() => { setMembers((current) => current.filter((item) => item.id !== member.id)); showToast('成员已移除（演示模式）', 'success'); }}>移除</Button></td>
+                <td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" onClick={async () => { await deleteTeamMember(member.id); setMembers((current) => current.filter((item) => item.id !== member.id)); showToast('成员已移除并写入 SQLite', 'success'); }}>移除</Button></td>
               </tr>
             ))}
           </tbody>
@@ -103,10 +113,10 @@ export function Settings(): JSX.Element {
       <Card>
         <div className="mb-4"><h2 className="text-base font-semibold text-text-primary">操作日志</h2><p className="mt-1 text-xs text-text-muted">近期关键操作 · 仅管理员可见</p></div>
         <div className="space-y-3">
-          {logs.map(([message, time]) => (
-            <div key={`${message}-${time}`} className="flex items-center justify-between rounded-lg border border-border bg-bg-tertiary px-4 py-3">
-              <span className="text-sm text-text-secondary">{message}</span>
-              <span className="font-mono text-xs text-text-muted">{time}</span>
+          {logs.map((log) => (
+            <div key={log.id} className="flex items-center justify-between rounded-lg border border-border bg-bg-tertiary px-4 py-3">
+              <span className="text-sm text-text-secondary">{log.message}</span>
+              <span className="font-mono text-xs text-text-muted">{log.time}</span>
             </div>
           ))}
         </div>

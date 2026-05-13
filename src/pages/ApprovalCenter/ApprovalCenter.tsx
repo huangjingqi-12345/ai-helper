@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle, Clock, ListChecks, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
@@ -8,46 +8,36 @@ import { Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
 import { useLogger } from '@/hooks/useLogger';
 
-interface ApprovalTask {
-  id: string;
-  title: string;
-  disease: string;
-  author: string;
-  node: string;
-  progress: string;
-  sla: string;
-  status: 'pending' | 'approved' | 'rejected';
-}
+import { getApprovalTasks, updateApprovalTask } from '@/api/endpoints/approval';
+import type { ApprovalTask } from '@/types/approval';
 
 type ApprovalFilter = 'pending' | 'approved' | 'rejected' | 'all';
-
-const initialTasks: ApprovalTask[] = [
-  { id: 'CNT-101', title: '心衰患者每日体重监测的 5 个细节', disease: '慢性心力衰竭', author: '李主任', node: 'PX 运营审核', progress: '2/5', sla: '460h / 24h', status: 'pending' },
-  { id: 'CNT-102', title: '沙库巴曲缬沙坦该饭前还是饭后吃？', disease: '慢性心力衰竭', author: '孙医生', node: 'DX 小编审核', progress: '0/5', sla: '484h / 24h', status: 'pending' },
-  { id: 'CNT-104', title: '低 GI 饮食一周食谱（可下载）', disease: '2型糖尿病', author: '孙医生', node: 'PX 运营审核', progress: '2/5', sla: '436h / 24h', status: 'pending' },
-  { id: 'CNT-105', title: '乳腺癌术后第 1 周日常活动清单', disease: '乳腺癌', author: '周护士长', node: 'DX 小编审核', progress: '0/5', sla: '460h / 24h', status: 'pending' },
-  { id: 'CNT-106', title: '免疫治疗常见副作用早期识别', disease: '肺癌(NSCLC)', author: '周护士长', node: 'DX 小编审核', progress: '0/5', sla: '484h / 24h', status: 'pending' },
-  { id: 'CNT-107', title: '类风湿患者居家关节保护操（视频）', disease: '类风湿关节炎', author: '赵医生', node: 'DX 小编审核', progress: '0/5', sla: '412h / 24h', status: 'pending' },
-  { id: 'CNT-103', title: '胰岛素注射部位轮换示意（短视频）', disease: '2型糖尿病', author: '周护士长', node: '发布', progress: '5/5', sla: '已完成', status: 'approved' },
-  { id: 'CNT-108', title: '甲氨蝶呤每周服药 5 问 5 答', disease: '类风湿关节炎', author: '王教授', node: '发布', progress: '5/5', sla: '已完成', status: 'approved' },
-  { id: 'CNT-110', title: '高血压患者居家自测血压标准流程', disease: '高血压', author: '孙医生', node: '发布', progress: '5/5', sla: '已完成', status: 'approved' },
-  { id: 'CNT-111', title: 'COPD 患者呼吸康复操（图解）', disease: '慢阻肺(COPD)', author: '周护士长', node: '发布', progress: '5/5', sla: '已完成', status: 'approved' },
-  { id: 'CNT-109', title: '多发性骨髓瘤患者家庭营养支持手册', disease: '多发性骨髓瘤', author: '陈医生', node: '药企医学审核', progress: '3/5', sla: '修改中', status: 'rejected' },
-  { id: 'CNT-112', title: '化疗期间口腔溃疡的居家护理', disease: '乳腺癌', author: '赵医生', node: '药企市场部审核', progress: '4/5', sla: '修改中', status: 'rejected' },
-  { id: 'CNT-113', title: '心衰患者用药提醒：每天 8:00', disease: '慢性心力衰竭', author: '李主任', node: '发布', progress: '5/5', sla: '已完成', status: 'approved' },
-  { id: 'CNT-114', title: '胰岛素笔注射 7 步法', disease: '2型糖尿病', author: '孙医生', node: '发布', progress: '5/5', sla: '已完成', status: 'approved' },
-];
 
 const flowNodes = ['DX 小编审核', 'AI 预审', 'PX 运营审核', '药企医学审核', '药企市场部审核'];
 
 export function ApprovalCenter(): JSX.Element {
   const { log } = useLogger('ApprovalCenter');
-  const [tasks, setTasks] = useState(initialTasks);
+  const [tasks, setTasks] = useState<ApprovalTask[]>([]);
+  const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<ApprovalFilter>('pending');
   const [selected, setSelected] = useState<ApprovalTask | null>(null);
   const [action, setAction] = useState<'approve' | 'reject'>('approve');
   const [rejectReason, setRejectReason] = useState('');
   const [comments, setComments] = useState('');
+
+  const loadTasks = async (): Promise<void> => {
+    setLoading(true);
+    try {
+      const res = await getApprovalTasks({ pageSize: 100 });
+      setTasks(res.data);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTasks();
+  }, []);
 
   const pendingCount = tasks.filter((task) => task.status === 'pending').length;
   const approvedCount = tasks.filter((task) => task.status === 'approved').length;
@@ -56,25 +46,25 @@ export function ApprovalCenter(): JSX.Element {
     activeFilter === 'all' ? tasks : tasks.filter((task) => task.status === activeFilter)
   ), [activeFilter, tasks]);
 
-  const submit = () => {
+  const submit = async (): Promise<void> => {
     if (!selected) return;
     if (action === 'reject' && (!rejectReason.trim() || !comments.trim())) {
       showToast('不通过时请填写驳回原因和修改建议', 'error');
       return;
     }
-    setTasks((current) => current.map((task) => task.id === selected.id ? {
-      ...task,
-      status: action === 'approve' ? 'approved' : 'rejected',
-      node: action === 'approve' ? '发布' : task.node,
-      progress: action === 'approve' ? '5/5' : task.progress,
-      sla: action === 'approve' ? '已完成' : '修改中',
-    } : task));
-    log.action('Approval handled', { id: selected.id, action, rejectReason, comments });
-    showToast(action === 'approve' ? '已提交通过' : '已提交驳回', 'success');
-    setSelected(null);
-    setRejectReason('');
-    setComments('');
-    setAction('approve');
+    try {
+      const res = await updateApprovalTask(selected.id, { action, rejectReason, comments });
+      setTasks((current) => current.map((task) => task.id === selected.id ? res.data : task));
+      log.action('Approval handled', { id: selected.id, action, rejectReason, comments });
+      showToast(action === 'approve' ? '已提交通过' : '已提交驳回', 'success');
+      setSelected(null);
+      setRejectReason('');
+      setComments('');
+      setAction('approve');
+    } catch (error) {
+      log.error('Approval action failed', error);
+      showToast('审批提交失败，请检查后端服务', 'error');
+    }
   };
 
   const openTask = (task: ApprovalTask): void => {
@@ -121,7 +111,10 @@ export function ApprovalCenter(): JSX.Element {
         <table className="w-full">
           <thead><tr className="border-b border-border bg-bg-secondary/60"><th className="px-4 py-3 text-left text-xs text-text-muted">内容</th><th className="px-4 py-3 text-left text-xs text-text-muted">当前节点</th><th className="px-4 py-3 text-left text-xs text-text-muted">进度</th><th className="px-4 py-3 text-left text-xs text-text-muted">SLA</th><th className="px-4 py-3 text-right text-xs text-text-muted">操作</th></tr></thead>
           <tbody>
-            {filteredTasks.map((task) => (
+            {loading && (
+              <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-text-muted">正在从 SQLite 加载审批任务...</td></tr>
+            )}
+            {!loading && filteredTasks.map((task) => (
               <tr key={task.id} className="border-b border-border/50 hover:bg-bg-tertiary/30">
                 <td className="px-4 py-3"><div className="text-sm font-medium text-text-primary">{task.title}</div><div className="text-xs text-text-muted mt-1">{task.id} · {task.disease}</div></td>
                 <td className="px-4 py-3"><Badge color={task.status === 'rejected' ? 'red' : task.status === 'approved' ? 'green' : 'blue'}>{task.node}</Badge></td>
@@ -132,7 +125,7 @@ export function ApprovalCenter(): JSX.Element {
             ))}
           </tbody>
         </table>
-        {filteredTasks.length === 0 && <div className="px-4 py-10 text-center text-sm text-text-muted">当前筛选下暂无审批任务。</div>}
+        {!loading && filteredTasks.length === 0 && <div className="px-4 py-10 text-center text-sm text-text-muted">当前筛选下暂无审批任务。</div>}
       </Card>
 
       <Modal

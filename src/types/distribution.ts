@@ -55,3 +55,40 @@ export interface UpdateStrategyDTO {
   schedule?: ScheduleConfig;
   status?: StrategyStatus;
 }
+
+export type DistributionProjectStatus = 'intake' | 'production' | 'distribution' | 'completed' | 'archived';
+export type DistributionProjectPriority = 'P0' | 'P1' | 'P2';
+
+export interface DistributionProject {
+  id: string;
+  title: string;
+  priority: DistributionProjectPriority;
+  status: DistributionProjectStatus;
+  brand: string;
+  disease: string;
+  owner: string;
+  tenantId: string;
+  expectedDate: string;
+  totalPieces: number;
+  cadence: string;
+  patientCap: number;
+  topics: string[];
+  formats: string;
+  approvalFlow: string;
+  progress: number;
+  currentNode: string;
+  contentCount: number;
+  publishedCount: number;
+}
+
+export interface DoctorCandidate {
+  id: string;
+  name: string;
+  title: string;
+  dept: string;
+  region: string;
+  hospital?: string;
+  specialties: string;
+  specialtyList?: string[];
+  tags: string[];
+}

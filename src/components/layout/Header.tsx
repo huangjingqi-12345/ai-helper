@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, Bell, ChevronDown, Settings, LogOut, User, Shield } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { showToast } from '@/components/ui/Toast';
-import { TENANTS, useTenantStore } from '@/stores/useTenantStore';
+import { useTenantStore } from '@/stores/useTenantStore';
 import { NAV_ITEMS, APP_VERSION } from '@/utils/constants';
 
 const adminLabels: Record<string, string> = {
@@ -15,9 +15,13 @@ const adminLabels: Record<string, string> = {
 export function Header(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
-  const { currentTenant, isOps, setTenant } = useTenantStore();
+  const { tenants, currentTenant, isOps, setTenant, fetchTenants } = useTenantStore();
   const [pxOpsOpen, setPxOpsOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
+
+  useEffect(() => {
+    void fetchTenants();
+  }, [fetchTenants]);
 
   const currentNav = NAV_ITEMS.find((item) =>
     item.path === '/'
@@ -97,7 +101,7 @@ export function Header(): JSX.Element {
                       切换后，工坊 / 分发 / 洞察 / KPI 数据均按所选租户视角呈现。
                     </p>
                   </div>
-                  {TENANTS.map((tenant) => (
+                  {tenants.map((tenant) => (
                     <button
                       key={tenant.id}
                       onClick={() => {

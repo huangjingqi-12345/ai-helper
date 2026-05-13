@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, RotateCcw, Save, ShieldCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { showToast } from '@/components/ui/Toast';
-import { distributionProjects, doctorCandidates } from '@/data/demoDistributionProjects';
+import { getDistributionProjectById, getDistributionProjectDoctors } from '@/api/endpoints/distribution';
+import type { DistributionProject, DoctorCandidate } from '@/types/distribution';
 
 const filterGroups = {
   科室: ['心内科', '内分泌科', '肿瘤科', '呼吸科', '风湿免疫科', '消化内科', '神经内科', '全科'],
@@ -22,9 +23,30 @@ export function DistributionProjectDetail(): JSX.Element {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'doctor' | 'approval'>('doctor');
   const [activeFilters, setActiveFilters] = useState<Record<string, string[]>>(defaultFilters);
-  const project = (distributionProjects.find((item) => item.id === id) ?? distributionProjects[0])!;
+  const [project, setProject] = useState<DistributionProject | null>(null);
+  const [doctorCandidates, setDoctorCandidates] = useState<DoctorCandidate[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    Promise.all([getDistributionProjectById(id), getDistributionProjectDoctors(id)])
+      .then(([projectRes, doctorsRes]) => {
+        if (!mounted) return;
+        setProject(projectRes.data);
+        setDoctorCandidates(doctorsRes.data);
+      })
+      .catch(() => {
+        if (mounted) setProject(null);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => { mounted = false; };
+  }, [id]);
+
   const candidates = useMemo(
-    () => doctorCandidates
+    () => project ? doctorCandidates
       .filter((doctor) => doctor.specialties.includes(project.disease) || doctor.dept.includes(project.disease.slice(0, 2)))
       .filter((doctor) => {
         const deptFilters = activeFilters['科室'] ?? [];
@@ -37,8 +59,8 @@ export function DistributionProjectDetail(): JSX.Element {
         if (titleFilters.length && !titleFilters.includes(doctor.title)) return false;
         return true;
       })
-      .slice(0, 4),
-    [activeFilters, project.disease],
+      .slice(0, 4) : [],
+    [activeFilters, doctorCandidates, project],
   );
   const visibleCandidates = candidates.length > 0 ? candidates : doctorCandidates.slice(0, 1);
   const toggleFilter = (label: string, value: string): void => {
@@ -52,6 +74,21 @@ export function DistributionProjectDetail(): JSX.Element {
       };
     });
   };
+
+  if (loading) {
+    return <div className="py-10 text-center text-sm text-text-muted">正在从 SQLite 加载项目详情...</div>;
+  }
+
+  if (!project) {
+    return (
+      <div className="space-y-4">
+        <button onClick={() => navigate('/distribute')} className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary">
+          <ArrowLeft className="w-3.5 h-3.5" /> 返回项目清单
+        </button>
+        <Card className="py-10 text-center text-sm text-text-muted">未找到该分发项目。</Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

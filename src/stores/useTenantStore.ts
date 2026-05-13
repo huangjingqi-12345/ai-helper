@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { getTenantOptions } from '@/api/endpoints/platform';
+import { logger } from '@/utils/logger';
 
 export type TenantType = 'ops' | 'pharma';
 
@@ -19,27 +21,47 @@ export const TENANTS: TenantOption[] = [
 ];
 
 interface TenantState {
+  tenants: TenantOption[];
   currentTenantId: string;
   currentTenant: TenantOption;
   isOps: boolean;
+  loading: boolean;
+  fetchTenants: () => Promise<void>;
   setTenant: (id: string) => void;
 }
 
 const storageKey = 'pxlite.currentTenantId';
-const getInitialTenant = (): TenantOption => {
-  if (typeof window === 'undefined') return TENANTS[0]!;
-  const saved = window.localStorage.getItem(storageKey);
-  return TENANTS.find((tenant) => tenant.id === saved) ?? TENANTS[0]!;
-};
+const fallbackTenant = TENANTS[0]!;
 
-export const useTenantStore = create<TenantState>((set) => {
-  const initialTenant = getInitialTenant();
+function pickInitialTenant(tenants: TenantOption[]): TenantOption {
+  if (typeof window === 'undefined') return tenants[0] ?? fallbackTenant;
+  const saved = window.localStorage.getItem(storageKey);
+  return tenants.find((tenant) => tenant.id === saved) ?? tenants[0] ?? fallbackTenant;
+}
+
+export const useTenantStore = create<TenantState>((set, get) => {
+  const initialTenant = pickInitialTenant(TENANTS);
   return {
+    tenants: TENANTS,
     currentTenantId: initialTenant.id,
     currentTenant: initialTenant,
     isOps: initialTenant.type === 'ops',
+    loading: false,
+    fetchTenants: async () => {
+      set({ loading: true });
+      try {
+        const res = await getTenantOptions();
+        const tenants = res.data.length > 0 ? res.data : TENANTS;
+        const selected = tenants.find((tenant) => tenant.id === get().currentTenantId) ?? pickInitialTenant(tenants);
+        set({ tenants, currentTenantId: selected.id, currentTenant: selected, isOps: selected.type === 'ops' });
+      } catch (error) {
+        logger.error('Failed to load tenants from DB, using fallback tenants', error);
+      } finally {
+        set({ loading: false });
+      }
+    },
     setTenant: (id: string) => {
-      const tenant = TENANTS.find((item) => item.id === id) ?? TENANTS[0]!;
+      const tenant = get().tenants.find((item) => item.id === id) ?? get().tenants[0] ?? fallbackTenant;
       if (typeof window !== 'undefined') window.localStorage.setItem(storageKey, tenant.id);
       set({ currentTenantId: tenant.id, currentTenant: tenant, isOps: tenant.type === 'ops' });
     },

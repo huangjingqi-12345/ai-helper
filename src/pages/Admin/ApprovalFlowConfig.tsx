@@ -1,27 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, ArrowUp, ArrowDown, Pause } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { useLogger } from '@/hooks/useLogger';
-
-interface FlowNode {
-  id: number;
-  name: string;
-  reviewerType: string;
-  slaHours: number;
-  timeoutPolicy: string;
-}
-
-interface ApprovalFlow {
-  id: string;
-  name: string;
-  nodes: FlowNode[];
-  status: 'active' | 'inactive';
-  returnPolicy: string;
-  lastUpdated: string;
-}
+import { getApprovalFlows, getTenantOptions } from '@/api/endpoints/platform';
+import type { ApprovalFlow, FlowNode } from '@/types/platform';
+import type { TenantOption } from '@/stores/useTenantStore';
 
 const REVIEWER_OPTIONS = [
   { value: 'dx_editor', label: 'DX 小编审核' },
@@ -43,53 +29,39 @@ const RETURN_OPTIONS = [
   { value: 'first', label: '回到第一节点' },
 ];
 
-const TENANT_OPTIONS = [
-  { value: 'T-PX', label: 'Px Ops (2)' },
-  { value: 'T-NV', label: '诺华 (1)' },
-  { value: 'T-AZ', label: '阿斯利康 (1)' },
-];
-
-const initialFlows: ApprovalFlow[] = [
-  {
-    id: 'flow-1',
-    name: 'PX 默认审批流',
-    status: 'active',
-    returnPolicy: 'submitter',
-    lastUpdated: '2026-04-20',
-    nodes: [
-      { id: 1, name: 'DX 小编审核', reviewerType: 'dx_editor', slaHours: 24, timeoutPolicy: 'remind_only' },
-      { id: 2, name: 'AI 预审', reviewerType: 'ai_review', slaHours: 2, timeoutPolicy: 'auto_pass' },
-      { id: 3, name: 'PX 运营审核', reviewerType: 'px_ops', slaHours: 24, timeoutPolicy: 'remind_only' },
-      { id: 4, name: '药企医学审核', reviewerType: 'pharma_med', slaHours: 48, timeoutPolicy: 'escalate' },
-      { id: 5, name: '药企市场部', reviewerType: 'pharma_mkt', slaHours: 48, timeoutPolicy: 'remind_only' },
-    ],
-  },
-  {
-    id: 'flow-2',
-    name: 'PX 快速流（品牌通识类）',
-    status: 'inactive',
-    returnPolicy: 'previous',
-    lastUpdated: '2026-03-15',
-    nodes: [
-      { id: 1, name: 'DX 小编审核', reviewerType: 'dx_editor', slaHours: 12, timeoutPolicy: 'remind_only' },
-      { id: 2, name: 'PX 运营审核', reviewerType: 'px_ops', slaHours: 24, timeoutPolicy: 'auto_pass' },
-      { id: 3, name: '药企医学审核', reviewerType: 'pharma_med', slaHours: 24, timeoutPolicy: 'remind_only' },
-    ],
-  },
-];
-
 export function ApprovalFlowConfig(): JSX.Element {
   const { log } = useLogger('ApprovalFlowConfig');
-  const [flows, setFlows] = useState<ApprovalFlow[]>(initialFlows);
-  const [selectedFlowId, setSelectedFlowId] = useState<string>(initialFlows[0]!.id);
+  const [flows, setFlows] = useState<ApprovalFlow[]>([]);
+  const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
+  const [selectedFlowId, setSelectedFlowId] = useState<string>('');
   const [selectedTenant, setSelectedTenant] = useState('T-PX');
+  const [loading, setLoading] = useState(true);
 
-  const selectedFlow = (flows.find((f) => f.id === selectedFlowId) ?? flows[0])!;
+  useEffect(() => {
+    getTenantOptions().then((res) => setTenantOptions(res.data)).catch(() => setTenantOptions([]));
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    getApprovalFlows(selectedTenant)
+      .then((res) => {
+        if (!mounted) return;
+        setFlows(res.data);
+        setSelectedFlowId((current) => res.data.some((flow) => flow.id === current) ? current : res.data[0]?.id ?? '');
+      })
+      .finally(() => { if (mounted) setLoading(false); });
+    return () => { mounted = false; };
+  }, [selectedTenant]);
+
+  const selectOptions = useMemo(() => tenantOptions.map((tenant) => ({ value: tenant.id, label: tenant.shortName })), [tenantOptions]);
+  const selectedFlow = flows.find((f) => f.id === selectedFlowId) ?? flows[0];
 
   const addNode = () => {
+    if (!selectedFlow) return;
     log.action('Add node clicked');
     const newNode: FlowNode = {
-      id: selectedFlow.nodes.length + 1,
+      id: `node-${Date.now()}`,
       name: '新审核节点',
       reviewerType: 'dx_editor',
       slaHours: 24,
@@ -98,12 +70,14 @@ export function ApprovalFlowConfig(): JSX.Element {
     setFlows(flows.map((f) => f.id === selectedFlowId ? { ...f, nodes: [...f.nodes, newNode] } : f));
   };
 
-  const removeNode = (nodeId: number) => {
+  const removeNode = (nodeId: string) => {
     log.action('Remove node', { nodeId });
+    if (!selectedFlow) return;
     setFlows(flows.map((f) => f.id === selectedFlowId ? { ...f, nodes: f.nodes.filter((n) => n.id !== nodeId) } : f));
   };
 
   const moveNode = (index: number, direction: 'up' | 'down') => {
+    if (!selectedFlow) return;
     const newIndex = direction === 'up' ? index - 1 : index + 1;
     if (newIndex < 0 || newIndex >= selectedFlow.nodes.length) return;
     const newNodes = [...selectedFlow.nodes];
@@ -118,18 +92,26 @@ export function ApprovalFlowConfig(): JSX.Element {
   const addFlow = () => {
     log.action('Create new flow');
     const newFlow: ApprovalFlow = {
-      id: `flow-${flows.length + 1}`,
+      id: `flow-${Date.now()}`,
       name: '新审批流',
       status: 'inactive',
       returnPolicy: 'submitter',
       lastUpdated: new Date().toISOString().slice(0, 10),
-      nodes: [{ id: 1, name: 'DX 小编审核', reviewerType: 'dx_editor', slaHours: 24, timeoutPolicy: 'remind_only' }],
+      nodes: [{ id: `node-${Date.now()}`, name: 'DX 小编审核', reviewerType: 'dx_editor', slaHours: 24, timeoutPolicy: 'remind_only' }],
     };
     setFlows([...flows, newFlow]);
     setSelectedFlowId(newFlow.id);
   };
 
-  const chainDesc = selectedFlow.nodes.map((n) => n.name).join(' → ');
+  const chainDesc = selectedFlow?.nodes.map((n) => n.name).join(' → ') ?? '';
+
+  if (loading) {
+    return <div className="py-10 text-center text-sm text-text-muted">正在从 SQLite 加载审批流...</div>;
+  }
+
+  if (!selectedFlow) {
+    return <Card className="py-10 text-center text-sm text-text-muted">当前租户暂无审批流。</Card>;
+  }
 
   return (
     <div className="space-y-6">
@@ -144,7 +126,7 @@ export function ApprovalFlowConfig(): JSX.Element {
         <span className="text-xs text-text-muted px-3 py-1.5 bg-bg-tertiary rounded-lg">修改本会话内生效（演示模式）</span>
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-text-muted">选择租户</span>
-          <Select options={TENANT_OPTIONS} value={selectedTenant} onChange={setSelectedTenant} />
+          <Select options={selectOptions} value={selectedTenant} onChange={setSelectedTenant} />
         </div>
       </div>
 

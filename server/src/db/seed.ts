@@ -1,182 +1,538 @@
-import { getDb } from './connection.js';
+import { dbAll, dbGet, dbRun, DB_DRIVER } from './connection.js';
 import { initializeSchema } from './schema.js';
 import { logger } from '../utils/logger.js';
+import { contentList } from '../data/content.js';
+import { overviewProjects, overviewStats } from '../data/overview.js';
+import { behaviorSummary } from '../data/behavior.js';
+import { distributionProjects, doctorCandidates } from '../data/distributionProjects.js';
 
-export function seedDatabase(): void {
-  const db = getDb();
+const jsonCast = DB_DRIVER === 'postgres' ? '::jsonb' : '';
+const boolValue = (value: boolean): boolean | number => (DB_DRIVER === 'postgres' ? value : value ? 1 : 0);
+const demoResetEnabled = DB_DRIVER === 'sqlite' && process.env.RESET_DEMO_DATA === 'true';
 
-  // Initialize schema first
-  initializeSchema();
+async function run(sql: string, params: unknown[] = []): Promise<void> {
+  await dbRun(sql, params);
+}
 
-  // Check if already seeded
-  const count = db.prepare('SELECT COUNT(*) as cnt FROM projects').get() as { cnt: number };
-  if (count.cnt > 0) {
-    logger.info('Database already seeded, skipping');
-    return;
+function json(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+async function replaceRowsForSqlite(tables: string[]): Promise<void> {
+  if (!demoResetEnabled) return;
+  await run('PRAGMA foreign_keys = OFF');
+  for (const table of tables) {
+    await run(`DELETE FROM ${table}`);
+  }
+  await run('PRAGMA foreign_keys = ON');
+}
+
+async function seedTenants(now: string): Promise<void> {
+  const tenants = [
+    ['T-PX', 'Px 自营运营组', 'Px Ops', 'ops', 'active', '未签约', '齐晓川', 'ops-admin@px.health', 'Px 平台合规枢纽租户，唯一可见全量明文。', boolValue(true)],
+    ['T-NV', '诺华制药（中国）', '诺华', 'pharma', 'active', 'PXC-2025-A001', '林筱', 'compliance@novartis.cn', '心血管与肿瘤线脱敏聚合数据视图。', boolValue(true)],
+    ['T-AZ', '阿斯利康（中国）', '阿斯利康', 'pharma', 'active', 'PXC-2025-A002', '顾承', 'compliance@astrazeneca.cn', '慢病项目脱敏聚合数据视图。', boolValue(true)],
+    ['T-MSD', '默沙东（中国）', '默沙东', 'pharma', 'active', 'PXC-2025-A003', '韦珂', 'compliance@msd.cn', '肿瘤项目脱敏聚合查看，不开放导出。', boolValue(false)],
+    ['T-RC', '罗氏制药', '罗氏', 'pharma', 'inactive', 'PXC-2025-A004', '贺珏', 'compliance@roche.cn', '租户暂停中，仅保留历史审计记录。', boolValue(false)],
+    ['T-LL', '礼来制药', '礼来', 'pharma', 'active', 'PXC-2026-A005', '禾未', 'compliance@lilly.cn', '代谢领域脱敏聚合视图。', boolValue(true)],
+    ['T-SY', '石药集团', '石药', 'pharma', 'draft', '未签约', '周予安', 'compliance@cspc.cn', '草稿租户，等待合同与合规范围确认。', boolValue(false)],
+  ];
+
+  for (const tenant of tenants) {
+    await run(`
+      INSERT INTO tenants (id, name, short_name, tenant_type, status, contract_no, contact_name, contact_email, description, can_export, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        short_name = excluded.short_name,
+        tenant_type = excluded.tenant_type,
+        status = excluded.status,
+        contract_no = excluded.contract_no,
+        contact_name = excluded.contact_name,
+        contact_email = excluded.contact_email,
+        description = excluded.description,
+        can_export = excluded.can_export,
+        updated_at = excluded.updated_at
+    `, [...tenant, now, now]);
   }
 
-  logger.info('Seeding database...');
+  const scopes = [
+    ['scope-T-PX', 'T-PX', [], [], [], 100, 0, boolValue(true), boolValue(true), boolValue(true)],
+    ['scope-T-NV', 'T-NV', ['慢性心力衰竭', '乳腺癌'], ['诺欣妥', '爱博新'], ['华东', '华南'], 50, 50, boolValue(true), boolValue(false), boolValue(true)],
+    ['scope-T-AZ', 'T-AZ', ['慢性心力衰竭', '2型糖尿病', '慢阻肺(COPD)'], ['安达唐', '可定'], ['全国'], 30, 50, boolValue(true), boolValue(false), boolValue(true)],
+    ['scope-T-MSD', 'T-MSD', ['肺癌(NSCLC)', '乳腺癌'], ['可瑞达'], ['华东', '华北'], 20, 100, boolValue(true), boolValue(false), boolValue(false)],
+    ['scope-T-RC', 'T-RC', ['乳腺癌', '肺癌(NSCLC)'], ['赫赛汀', '泰圣奇'], ['华东'], 10, 100, boolValue(true), boolValue(false), boolValue(false)],
+    ['scope-T-LL', 'T-LL', ['2型糖尿病'], ['优泌乐'], ['华东', '华南'], 30, 50, boolValue(true), boolValue(false), boolValue(true)],
+    ['scope-T-SY', 'T-SY', [], [], [], 0, 100, boolValue(true), boolValue(false), boolValue(false)],
+  ];
 
-  const insertMany = db.transaction(() => {
-    // === Overview Stats ===
-    db.prepare(`
-      INSERT INTO overview_stats (id, project_count, published_content, push_count, read_users, read_count, interaction_count, last_updated)
-      VALUES (1, 6, '4/14', 12800, 8942, 24531, 3876, ?)
-    `).run(new Date().toISOString());
+  for (const scope of scopes) {
+    const [id, tenantId, diseaseIds, brandIds, regionIds, gray, kAnon, canViewAggregate, canViewPii, canExportCsv] = scope;
+    await run(`
+      INSERT INTO tenant_scopes (id, tenant_id, disease_ids, brand_ids, region_ids, gray_limit_percent, k_anonymity_threshold, can_view_aggregate_metrics, can_view_patient_pii, can_export_csv, created_at, updated_at)
+      VALUES (?, ?, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        disease_ids = excluded.disease_ids,
+        brand_ids = excluded.brand_ids,
+        region_ids = excluded.region_ids,
+        gray_limit_percent = excluded.gray_limit_percent,
+        k_anonymity_threshold = excluded.k_anonymity_threshold,
+        can_view_aggregate_metrics = excluded.can_view_aggregate_metrics,
+        can_view_patient_pii = excluded.can_view_patient_pii,
+        can_export_csv = excluded.can_export_csv,
+        updated_at = excluded.updated_at
+    `, [id, tenantId, json(diseaseIds), json(brandIds), json(regionIds), gray, kAnon, canViewAggregate, canViewPii, canExportCsv, now, now]);
+  }
+}
 
-    // === Projects ===
-    const insertProject = db.prepare(`
-      INSERT INTO projects (id, name, disease, content_count, published_count, push_count, read_count, interaction_count, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
+  await replaceRowsForSqlite([
+    'content_tags',
+    'content_versions',
+    'content_assets',
+    'content',
+    'project_topics',
+    'project_formats',
+    'projects',
+    'behavior_trends',
+    'behavior_top_content',
+    'behavior_by_disease',
+  ]);
 
-    const projects = [
-      ['proj-001', '乳腺癌患教项目', '乳腺癌', 5, 2, 3200, 8500, 1200, 'active', '2026-01-15T08:00:00Z', '2026-05-10T10:00:00Z'],
-      ['proj-002', '肺癌患教项目', '肺癌', 3, 1, 2800, 6200, 890, 'active', '2026-02-01T08:00:00Z', '2026-05-09T14:00:00Z'],
-      ['proj-003', '糖尿病患教项目', '糖尿病', 4, 1, 4500, 5800, 1050, 'active', '2026-01-20T08:00:00Z', '2026-05-08T16:00:00Z'],
-      ['proj-004', '高血压患教项目', '高血压', 2, 0, 2300, 4031, 736, 'paused', '2026-03-01T08:00:00Z', '2026-04-20T12:00:00Z'],
-      ['proj-005', '冠心病患教项目', '冠心病', 0, 0, 0, 0, 0, 'active', '2026-04-15T08:00:00Z', '2026-04-15T08:00:00Z'],
-      ['proj-006', '哮喘患教项目', '哮喘', 0, 0, 0, 0, 0, 'archived', '2025-11-01T08:00:00Z', '2026-03-01T08:00:00Z'],
-    ];
-    for (const p of projects) insertProject.run(...p);
+  await run(`
+    INSERT INTO overview_stats (id, project_count, published_content, push_count, read_users, read_count, interaction_count, last_updated)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      project_count = excluded.project_count,
+      published_content = excluded.published_content,
+      push_count = excluded.push_count,
+      read_users = excluded.read_users,
+      read_count = excluded.read_count,
+      interaction_count = excluded.interaction_count,
+      last_updated = excluded.last_updated
+  `, [overviewStats.projectCount, overviewStats.publishedContent, overviewStats.pushCount, overviewStats.readUsers, overviewStats.readCount, overviewStats.interactionCount, overviewStats.lastUpdated]);
 
-    // === Content ===
-    const insertContent = db.prepare(`
-      INSERT INTO content (id, project_id, title, type, status, author, content, tags, read_count, like_count, bookmark_count, created_at, updated_at, published_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+  for (const project of overviewProjects) {
+    await run(`
+      INSERT INTO projects (id, tenant_id, name, title, disease, content_count, published_count, push_count, read_users, read_count, interaction_count, status, created_at, updated_at)
+      VALUES (?, 'T-PX', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        title = excluded.title,
+        disease = excluded.disease,
+        content_count = excluded.content_count,
+        published_count = excluded.published_count,
+        push_count = excluded.push_count,
+        read_users = excluded.read_users,
+        read_count = excluded.read_count,
+        interaction_count = excluded.interaction_count,
+        status = excluded.status,
+        updated_at = excluded.updated_at
+    `, [project.id, project.name, project.name, project.disease, project.contentCount, project.publishedCount, project.pushCount, project.readUsers, project.readCount, project.interactionCount, project.status, project.createdAt, project.updatedAt]);
+  }
 
-    const contentItems = [
-      ['cnt-001', 'proj-001', '乳腺癌早期筛查指南', 'article', 'published', '张医生', '乳腺癌早期筛查对于提高生存率至关重要...', '["乳腺癌","筛查","预防"]', 3200, 450, 280, '2026-01-20T08:00:00Z', '2026-03-15T10:00:00Z', '2026-02-01T08:00:00Z'],
-      ['cnt-002', 'proj-001', '乳腺癌术后康复指导', 'article', 'published', '李护士', '术后康复是乳腺癌治疗的重要环节...', '["乳腺癌","康复","护理"]', 2800, 380, 220, '2026-02-10T08:00:00Z', '2026-03-20T10:00:00Z', '2026-03-01T08:00:00Z'],
-      ['cnt-003', 'proj-001', '乳腺癌患者饮食建议', 'infographic', 'under_review', '王营养师', '合理的饮食对乳腺癌患者的康复有重要作用...', '["乳腺癌","饮食","营养"]', 0, 0, 0, '2026-04-01T08:00:00Z', '2026-04-15T10:00:00Z', null],
-      ['cnt-004', 'proj-001', '乳腺癌心理疏导', 'video', 'draft', '陈心理师', '面对乳腺癌诊断，患者常常会经历...', '["乳腺癌","心理","支持"]', 0, 0, 0, '2026-04-20T08:00:00Z', '2026-04-20T08:00:00Z', null],
-      ['cnt-005', 'proj-001', '乳腺癌治疗方案解读', 'article', 'draft', '张医生', '目前乳腺癌的治疗方案包括...', '["乳腺癌","治疗","方案"]', 0, 0, 0, '2026-05-01T08:00:00Z', '2026-05-01T08:00:00Z', null],
-      ['cnt-006', 'proj-002', '肺癌预防与早期发现', 'article', 'published', '刘医生', '肺癌是全球发病率最高的恶性肿瘤之一...', '["肺癌","预防","筛查"]', 4100, 520, 310, '2026-02-15T08:00:00Z', '2026-03-25T10:00:00Z', '2026-03-01T08:00:00Z'],
-      ['cnt-007', 'proj-002', '肺癌靶向治疗科普', 'video', 'under_review', '刘医生', '靶向治疗是肺癌治疗的重要进展...', '["肺癌","靶向治疗","科普"]', 0, 0, 0, '2026-04-10T08:00:00Z', '2026-04-25T10:00:00Z', null],
-      ['cnt-008', 'proj-002', '肺癌患者运动建议', 'infographic', 'draft', '赵康复师', '适当的运动有助于肺癌患者的康复...', '["肺癌","运动","康复"]', 0, 0, 0, '2026-05-05T08:00:00Z', '2026-05-05T08:00:00Z', null],
-      ['cnt-009', 'proj-003', '糖尿病日常管理手册', 'article', 'published', '周医生', '糖尿病的日常管理是控制血糖的关键...', '["糖尿病","管理","血糖"]', 5200, 680, 420, '2026-01-25T08:00:00Z', '2026-02-28T10:00:00Z', '2026-02-15T08:00:00Z'],
-      ['cnt-010', 'proj-003', '糖尿病饮食指南', 'infographic', 'under_review', '王营养师', '科学的饮食控制是糖尿病治疗的基础...', '["糖尿病","饮食","控制"]', 0, 0, 0, '2026-03-15T08:00:00Z', '2026-04-10T10:00:00Z', null],
-      ['cnt-011', 'proj-003', '胰岛素使用教程', 'video', 'draft', '周医生', '正确使用胰岛素是糖尿病治疗的重要环节...', '["糖尿病","胰岛素","教程"]', 0, 0, 0, '2026-04-20T08:00:00Z', '2026-04-20T08:00:00Z', null],
-      ['cnt-012', 'proj-003', '糖尿病并发症预防', 'quiz', 'draft', '周医生', '了解糖尿病并发症的预防知识...', '["糖尿病","并发症","预防"]', 0, 0, 0, '2026-05-08T08:00:00Z', '2026-05-08T08:00:00Z', null],
-      ['cnt-013', 'proj-004', '高血压用药指导', 'article', 'under_review', '吴医生', '高血压的药物治疗需要长期坚持...', '["高血压","用药","指导"]', 0, 0, 0, '2026-03-10T08:00:00Z', '2026-04-05T10:00:00Z', null],
-      ['cnt-014', 'proj-004', '高血压生活方式干预', 'article', 'draft', '吴医生', '生活方式的改变是高血压治疗的基础...', '["高血压","生活方式","干预"]', 0, 0, 0, '2026-04-15T08:00:00Z', '2026-04-15T08:00:00Z', null],
-    ];
-    for (const c of contentItems) insertContent.run(...c);
+  for (const item of contentList) {
+    await run(`
+      INSERT INTO content (id, tenant_id, project_id, title, type, status, pipeline_stage, priority, author, excerpt, content, tags, push_count, read_users, read_count, like_count, dislike_count, bookmark_count, share_count, finish_rate, avg_read_sec, expected_date, rejection_note, created_at, updated_at, published_at)
+      VALUES (?, 'T-PX', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        project_id = excluded.project_id,
+        title = excluded.title,
+        type = excluded.type,
+        status = excluded.status,
+        pipeline_stage = excluded.pipeline_stage,
+        priority = excluded.priority,
+        author = excluded.author,
+        excerpt = excluded.excerpt,
+        content = excluded.content,
+        tags = excluded.tags,
+        push_count = excluded.push_count,
+        read_users = excluded.read_users,
+        read_count = excluded.read_count,
+        like_count = excluded.like_count,
+        dislike_count = excluded.dislike_count,
+        bookmark_count = excluded.bookmark_count,
+        share_count = excluded.share_count,
+        finish_rate = excluded.finish_rate,
+        avg_read_sec = excluded.avg_read_sec,
+        expected_date = excluded.expected_date,
+        rejection_note = excluded.rejection_note,
+        updated_at = excluded.updated_at,
+        published_at = excluded.published_at
+    `, [
+      item.id,
+      item.projectId,
+      item.title,
+      item.type,
+      item.status,
+      item.pipelineStage,
+      item.priority,
+      item.author,
+      item.excerpt ?? null,
+      item.content,
+      json(item.tags),
+      item.pushCount ?? 0,
+      item.readUsers ?? 0,
+      item.readCount,
+      item.likeCount,
+      item.dislikeCount ?? 0,
+      item.bookmarkCount,
+      item.shareCount ?? 0,
+      item.finishRate ?? null,
+      item.avgReadSec ?? null,
+      item.expectedDate ?? null,
+      item.rejectionNote ?? null,
+      item.createdAt,
+      item.updatedAt,
+      item.publishedAt ?? null,
+    ]);
+  }
 
-    // === Behavior Trends (reads) ===
-    const insertTrend = db.prepare('INSERT INTO behavior_trends (date, type, value) VALUES (?, ?, ?)');
-    const readTrends = [
-      ['2026-04-13', 320], ['2026-04-14', 410], ['2026-04-15', 380], ['2026-04-16', 520],
-      ['2026-04-17', 490], ['2026-04-18', 350], ['2026-04-19', 280], ['2026-04-20', 450],
-      ['2026-04-21', 510], ['2026-04-22', 620], ['2026-04-23', 580], ['2026-04-24', 490],
-      ['2026-04-25', 420], ['2026-04-26', 350], ['2026-04-27', 530], ['2026-04-28', 610],
-      ['2026-04-29', 680], ['2026-04-30', 720], ['2026-05-01', 550], ['2026-05-02', 480],
-      ['2026-05-03', 590], ['2026-05-04', 640], ['2026-05-05', 710], ['2026-05-06', 680],
-      ['2026-05-07', 750], ['2026-05-08', 820], ['2026-05-09', 790], ['2026-05-10', 850],
-      ['2026-05-11', 910], ['2026-05-12', 880],
-    ];
-    for (const [d, v] of readTrends) insertTrend.run(d, 'reads', v);
+  await run('DELETE FROM behavior_trends');
+  for (const point of behaviorSummary.readTrend) {
+    await run('INSERT INTO behavior_trends (date, type, value) VALUES (?, ?, ?)', [point.date, 'reads', point.value]);
+  }
+  for (const point of behaviorSummary.interactionTrend) {
+    await run('INSERT INTO behavior_trends (date, type, value) VALUES (?, ?, ?)', [point.date, 'interactions', point.value]);
+  }
 
-    const interactionTrends = [
-      ['2026-04-13', 45], ['2026-04-14', 62], ['2026-04-15', 58], ['2026-04-16', 78],
-      ['2026-04-17', 72], ['2026-04-18', 48], ['2026-04-19', 38], ['2026-04-20', 65],
-      ['2026-04-21', 75], ['2026-04-22', 92], ['2026-04-23', 85], ['2026-04-24', 70],
-      ['2026-04-25', 60], ['2026-04-26', 50], ['2026-04-27', 78], ['2026-04-28', 88],
-      ['2026-04-29', 98], ['2026-04-30', 105], ['2026-05-01', 80], ['2026-05-02', 68],
-      ['2026-05-03', 85], ['2026-05-04', 95], ['2026-05-05', 102], ['2026-05-06', 98],
-      ['2026-05-07', 110], ['2026-05-08', 120], ['2026-05-09', 115], ['2026-05-10', 125],
-      ['2026-05-11', 132], ['2026-05-12', 128],
-    ];
-    for (const [d, v] of interactionTrends) insertTrend.run(d, 'interactions', v);
+  await run('DELETE FROM behavior_top_content');
+  for (const item of behaviorSummary.topContent) {
+    await run('INSERT INTO behavior_top_content (content_id, title, reads, interactions) VALUES (?, ?, ?, ?)', [item.contentId, item.title, item.reads, item.interactions]);
+  }
 
-    // === Behavior Top Content ===
-    const insertTopContent = db.prepare('INSERT INTO behavior_top_content (content_id, title, reads, interactions) VALUES (?, ?, ?, ?)');
-    const topContent = [
-      ['cnt-009', '糖尿病日常管理手册', 5200, 680],
-      ['cnt-006', '肺癌预防与早期发现', 4100, 520],
-      ['cnt-001', '乳腺癌早期筛查指南', 3200, 450],
-      ['cnt-002', '乳腺癌术后康复指导', 2800, 380],
-    ];
-    for (const tc of topContent) insertTopContent.run(...tc);
+  await run('DELETE FROM behavior_by_disease');
+  for (const item of behaviorSummary.byDisease) {
+    await run('INSERT INTO behavior_by_disease (disease, reads, interactions, push_count) VALUES (?, ?, ?, ?)', [item.disease, item.reads, item.interactions, item.pushCount]);
+  }
+}
 
-    // === Behavior By Disease ===
-    const insertByDisease = db.prepare('INSERT INTO behavior_by_disease (disease, reads, interactions, push_count) VALUES (?, ?, ?, ?)');
-    const byDisease = [
-      ['乳腺癌', 6000, 830, 3200],
-      ['肺癌', 4100, 520, 2800],
-      ['糖尿病', 5200, 680, 4500],
-      ['高血压', 4031, 736, 2300],
-    ];
-    for (const bd of byDisease) insertByDisease.run(...bd);
+async function seedDistributionProjects(now: string): Promise<void> {
+  await replaceRowsForSqlite(['distribution_projects', 'doctor_specialties', 'doctor_tags', 'distribution_candidates', 'doctors']);
 
-    // === Distribution Strategies ===
-    const insertStrategy = db.prepare(`
-      INSERT INTO distribution_strategies (id, name, project_id, target_regions, target_diseases, target_patient_count, content_ids, schedule_type, schedule_start_date, schedule_end_date, schedule_frequency, status, metrics_pushed, metrics_delivered, metrics_opened, metrics_read, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+  for (const project of distributionProjects) {
+    await run(`
+      INSERT INTO distribution_projects (id, tenant_id, title, priority, status, brand, disease, owner, expected_date, total_pieces, cadence, patient_cap, topics, formats, approval_flow, progress, current_node, content_count, published_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        tenant_id = excluded.tenant_id,
+        title = excluded.title,
+        priority = excluded.priority,
+        status = excluded.status,
+        brand = excluded.brand,
+        disease = excluded.disease,
+        owner = excluded.owner,
+        expected_date = excluded.expected_date,
+        total_pieces = excluded.total_pieces,
+        cadence = excluded.cadence,
+        patient_cap = excluded.patient_cap,
+        topics = excluded.topics,
+        formats = excluded.formats,
+        approval_flow = excluded.approval_flow,
+        progress = excluded.progress,
+        current_node = excluded.current_node,
+        content_count = excluded.content_count,
+        published_count = excluded.published_count,
+        updated_at = excluded.updated_at
+    `, [project.id, project.tenantId, project.title, project.priority, project.status, project.brand, project.disease, project.owner, project.expectedDate, project.totalPieces, project.cadence, project.patientCap, json(project.topics), project.formats, project.approvalFlow, project.progress, project.currentNode, project.contentCount, project.publishedCount, now, now]);
+  }
 
-    const strategies = [
-      ['str-001', '乳腺癌春季推送计划', 'proj-001', '["华东","华南"]', '["乳腺癌"]', 3200, '["cnt-001","cnt-002"]', 'recurring', '2026-03-01T00:00:00Z', '2026-05-31T23:59:59Z', 'weekly', 'active', 3200, 3050, 2100, 1800, '2026-02-20T08:00:00Z', '2026-05-10T10:00:00Z'],
-      ['str-002', '肺癌科普专项推送', 'proj-002', '["华北","西南"]', '["肺癌"]', 2800, '["cnt-006"]', 'scheduled', '2026-04-01T00:00:00Z', '2026-06-30T23:59:59Z', null, 'active', 2800, 2650, 1800, 1500, '2026-03-15T08:00:00Z', '2026-05-09T14:00:00Z'],
-      ['str-003', '糖尿病管理推送', 'proj-003', '["全国"]', '["糖尿病"]', 4500, '["cnt-009"]', 'recurring', '2026-02-01T00:00:00Z', '2026-07-31T23:59:59Z', 'monthly', 'active', 4500, 4200, 3100, 2600, '2026-01-25T08:00:00Z', '2026-05-08T16:00:00Z'],
-      ['str-004', '高血压患者关怀', 'proj-004', '["华中"]', '["高血压"]', 2300, '["cnt-013"]', 'immediate', null, null, null, 'paused', 2300, 2100, 1400, 1100, '2026-03-10T08:00:00Z', '2026-04-20T12:00:00Z'],
-      ['str-005', '多病种综合推送', 'proj-001', '["华东"]', '["乳腺癌","肺癌"]', 1500, '["cnt-001","cnt-006"]', 'scheduled', '2026-05-15T00:00:00Z', '2026-08-15T23:59:59Z', null, 'draft', 0, 0, 0, 0, '2026-05-01T08:00:00Z', '2026-05-01T08:00:00Z'],
-      ['str-006', '新内容测试推送', 'proj-003', '["华南"]', '["糖尿病"]', 500, '["cnt-010"]', 'immediate', null, null, null, 'completed', 500, 480, 350, 290, '2026-04-15T08:00:00Z', '2026-04-25T10:00:00Z'],
-    ];
-    for (const s of strategies) insertStrategy.run(...s);
+  for (const doctor of doctorCandidates) {
+    await run(`
+      INSERT INTO doctors (id, name, title, department, region, hospital, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        title = excluded.title,
+        department = excluded.department,
+        region = excluded.region,
+        hospital = excluded.hospital,
+        status = excluded.status,
+        updated_at = excluded.updated_at
+    `, [doctor.id, doctor.name, doctor.title, doctor.dept, doctor.region, doctor.hospital, now, now]);
 
-    // === Approval Items ===
-    const insertApproval = db.prepare(`
+    await run('DELETE FROM doctor_specialties WHERE doctor_id = ?', [doctor.id]);
+    for (const specialty of doctor.specialties) {
+      await run('INSERT INTO doctor_specialties (doctor_id, disease_id, created_at) VALUES (?, ?, ?)', [doctor.id, specialty, now]);
+    }
+
+    await run('DELETE FROM doctor_tags WHERE doctor_id = ?', [doctor.id]);
+    for (const tag of doctor.tags) {
+      await run('INSERT INTO doctor_tags (doctor_id, tag, created_at) VALUES (?, ?, ?)', [doctor.id, tag, now]);
+    }
+  }
+}
+
+async function seedStrategies(now: string): Promise<void> {
+  await replaceRowsForSqlite(['distribution_strategies', 'distribution_strategy_filters', 'distribution_records']);
+
+  const strategies = [
+    ['str-001', 'T-NV', '乳腺癌春季推送计划', 'proj-breast', ['华东', '华南'], ['乳腺癌'], 3200, ['CNT-105', 'CNT-112'], 'recurring', '2026-03-01T00:00:00Z', '2026-05-31T23:59:59Z', 'weekly', 'active', 3200, 3050, 2100, 1800, '2026-02-20T08:00:00Z', now],
+    ['str-002', 'T-MSD', '肺癌科普专项推送', 'proj-lung', ['华北', '西南'], ['肺癌(NSCLC)'], 2800, ['CNT-106'], 'scheduled', '2026-04-01T00:00:00Z', '2026-06-30T23:59:59Z', null, 'active', 2800, 2650, 1800, 1500, '2026-03-15T08:00:00Z', now],
+    ['str-003', 'T-AZ', '糖尿病管理推送', 'proj-diabetes', ['全国'], ['2型糖尿病'], 4500, ['CNT-104', 'CNT-114'], 'recurring', '2026-02-01T00:00:00Z', '2026-07-31T23:59:59Z', 'monthly', 'active', 4500, 4200, 3100, 2600, '2026-01-25T08:00:00Z', now],
+    ['str-004', 'T-PX', '高血压患者关怀', 'proj-hypertension', ['华中'], ['高血压'], 2300, ['CNT-110'], 'immediate', null, null, null, 'paused', 2300, 2100, 1400, 1100, '2026-03-10T08:00:00Z', now],
+  ];
+
+  for (const strategy of strategies) {
+    const [id, tenantId, name, projectId, regions, diseases, patientCount, contentIds, scheduleType, startDate, endDate, frequency, status, pushed, delivered, opened, read, createdAt, updatedAt] = strategy;
+    await run(`
+      INSERT INTO distribution_strategies (id, tenant_id, name, project_id, target_regions, target_diseases, target_patient_count, content_ids, schedule_type, schedule_start_date, schedule_end_date, schedule_frequency, status, metrics_pushed, metrics_delivered, metrics_opened, metrics_read, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?${jsonCast}, ?${jsonCast}, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        tenant_id = excluded.tenant_id,
+        name = excluded.name,
+        project_id = excluded.project_id,
+        target_regions = excluded.target_regions,
+        target_diseases = excluded.target_diseases,
+        target_patient_count = excluded.target_patient_count,
+        content_ids = excluded.content_ids,
+        schedule_type = excluded.schedule_type,
+        schedule_start_date = excluded.schedule_start_date,
+        schedule_end_date = excluded.schedule_end_date,
+        schedule_frequency = excluded.schedule_frequency,
+        status = excluded.status,
+        metrics_pushed = excluded.metrics_pushed,
+        metrics_delivered = excluded.metrics_delivered,
+        metrics_opened = excluded.metrics_opened,
+        metrics_read = excluded.metrics_read,
+        updated_at = excluded.updated_at
+    `, [id, tenantId, name, projectId, json(regions), json(diseases), patientCount, json(contentIds), scheduleType, startDate, endDate, frequency, status, pushed, delivered, opened, read, createdAt, updatedAt]);
+  }
+}
+
+async function seedApproval(now: string): Promise<void> {
+  await replaceRowsForSqlite(['approval_task_actions', 'approval_tasks', 'approval_flow_nodes', 'approval_flows', 'approval_items']);
+
+  const flows = [
+    ['flow-1', 'T-PX', 'PX 默认审批流', '医生制作 → DX 小编 → AI 预审 → PX 运营 → 药企医学 → 药企市场部 → 发布', 'active', 'submitter', '2026-04-20T00:00:00Z', now],
+    ['flow-2', 'T-PX', 'PX 快速流（品牌通识类）', '品牌通识内容快速审核链路', 'inactive', 'previous', '2026-03-15T00:00:00Z', now],
+    ['flow-nv-standard', 'T-NV', '诺华 · 标准审批流', '诺华医学与市场审核链路', 'active', 'submitter', '2026-04-18T00:00:00Z', now],
+    ['flow-az-standard', 'T-AZ', '阿斯利康 · 标准审批流', '阿斯利康医学审核链路', 'active', 'submitter', '2026-04-18T00:00:00Z', now],
+  ];
+
+  for (const flow of flows) {
+    await run(`
+      INSERT INTO approval_flows (id, tenant_id, name, description, status, return_policy, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        tenant_id = excluded.tenant_id,
+        name = excluded.name,
+        description = excluded.description,
+        status = excluded.status,
+        return_policy = excluded.return_policy,
+        updated_at = excluded.updated_at
+    `, flow);
+  }
+
+  const flowNodes: Array<[string, string, number, string, string, number, string]> = [
+    ['flow-1-node-1', 'flow-1', 1, 'DX 小编审核', 'dx_editor', 24, 'remind_only'],
+    ['flow-1-node-2', 'flow-1', 2, 'AI 预审', 'ai_review', 2, 'auto_pass'],
+    ['flow-1-node-3', 'flow-1', 3, 'PX 运营审核', 'px_ops', 24, 'remind_only'],
+    ['flow-1-node-4', 'flow-1', 4, '药企医学审核', 'pharma_med', 48, 'escalate'],
+    ['flow-1-node-5', 'flow-1', 5, '药企市场部', 'pharma_mkt', 48, 'remind_only'],
+    ['flow-2-node-1', 'flow-2', 1, 'DX 小编审核', 'dx_editor', 12, 'remind_only'],
+    ['flow-2-node-2', 'flow-2', 2, 'PX 运营审核', 'px_ops', 24, 'auto_pass'],
+    ['flow-2-node-3', 'flow-2', 3, '药企医学审核', 'pharma_med', 24, 'remind_only'],
+    ['flow-nv-node-1', 'flow-nv-standard', 1, 'DX 小编审核', 'dx_editor', 24, 'remind_only'],
+    ['flow-nv-node-2', 'flow-nv-standard', 2, 'PX 运营审核', 'px_ops', 24, 'remind_only'],
+    ['flow-nv-node-3', 'flow-nv-standard', 3, '药企医学审核', 'pharma_med', 48, 'escalate'],
+    ['flow-az-node-1', 'flow-az-standard', 1, 'DX 小编审核', 'dx_editor', 24, 'remind_only'],
+    ['flow-az-node-2', 'flow-az-standard', 2, '药企医学审核', 'pharma_med', 48, 'escalate'],
+  ];
+
+  for (const node of flowNodes) {
+    await run(`
+      INSERT INTO approval_flow_nodes (id, flow_id, sort_order, node_name, reviewer_type, sla_hours, timeout_policy, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        flow_id = excluded.flow_id,
+        sort_order = excluded.sort_order,
+        node_name = excluded.node_name,
+        reviewer_type = excluded.reviewer_type,
+        sla_hours = excluded.sla_hours,
+        timeout_policy = excluded.timeout_policy,
+        updated_at = excluded.updated_at
+    `, [...node, now, now]);
+  }
+
+  const taskSeeds = [
+    ['task-CNT-101', 'CNT-101', 'proj-hf', 'flow-1', 'flow-1-node-3', 'pending', '2/5', '460h / 24h'],
+    ['task-CNT-102', 'CNT-102', 'proj-hf', 'flow-1', 'flow-1-node-1', 'pending', '0/5', '484h / 24h'],
+    ['task-CNT-104', 'CNT-104', 'proj-diabetes', 'flow-1', 'flow-1-node-3', 'pending', '2/5', '436h / 24h'],
+    ['task-CNT-105', 'CNT-105', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/5', '460h / 24h'],
+    ['task-CNT-106', 'CNT-106', 'proj-lung', 'flow-1', 'flow-1-node-1', 'pending', '0/5', '484h / 24h'],
+    ['task-CNT-107', 'CNT-107', 'proj-ra', 'flow-1', 'flow-1-node-1', 'pending', '0/5', '412h / 24h'],
+    ['task-CNT-103', 'CNT-103', 'proj-diabetes', 'flow-1', null, 'approved', '5/5', '已完成'],
+    ['task-CNT-108', 'CNT-108', 'proj-ra', 'flow-1', null, 'approved', '5/5', '已完成'],
+    ['task-CNT-110', 'CNT-110', 'proj-hypertension', 'flow-1', null, 'approved', '5/5', '已完成'],
+    ['task-CNT-111', 'CNT-111', 'proj-copd', 'flow-1', null, 'approved', '5/5', '已完成'],
+    ['task-CNT-109', 'CNT-109', 'proj-mm', 'flow-1', 'flow-1-node-4', 'rejected', '3/5', '修改中'],
+    ['task-CNT-112', 'CNT-112', 'proj-breast', 'flow-1', 'flow-1-node-5', 'rejected', '4/5', '修改中'],
+    ['task-CNT-113', 'CNT-113', 'proj-hf', 'flow-1', null, 'approved', '5/5', '已完成'],
+    ['task-CNT-114', 'CNT-114', 'proj-diabetes', 'flow-1', null, 'approved', '5/5', '已完成'],
+  ];
+
+  for (const task of taskSeeds) {
+    const content = contentList.find((item) => item.id === task[1]);
+    await run(`
+      INSERT INTO approval_tasks (id, tenant_id, content_id, project_id, flow_id, current_node_id, status, progress_text, sla_due_at, submitted_by, submitted_at, completed_at, created_at, updated_at)
+      VALUES (?, 'T-PX', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        content_id = excluded.content_id,
+        project_id = excluded.project_id,
+        flow_id = excluded.flow_id,
+        current_node_id = excluded.current_node_id,
+        status = excluded.status,
+        progress_text = excluded.progress_text,
+        sla_due_at = excluded.sla_due_at,
+        submitted_by = excluded.submitted_by,
+        submitted_at = excluded.submitted_at,
+        completed_at = excluded.completed_at,
+        updated_at = excluded.updated_at
+    `, [task[0], task[1], task[2], task[3], task[4], task[5], task[6], task[7], content?.author ?? '作者', content?.createdAt ?? now, task[5] === 'approved' ? now : null, now, now]);
+  }
+
+  for (const task of taskSeeds) {
+    const content = contentList.find((item) => item.id === task[1]);
+    if (!content) continue;
+    await run(`
       INSERT INTO approval_items (id, content_id, content_title, submitted_by, submitted_at, status, reviewed_by, reviewed_at, comments, project_name)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+      ON CONFLICT(id) DO UPDATE SET
+        content_id = excluded.content_id,
+        content_title = excluded.content_title,
+        submitted_by = excluded.submitted_by,
+        submitted_at = excluded.submitted_at,
+        status = excluded.status,
+        reviewed_by = excluded.reviewed_by,
+        reviewed_at = excluded.reviewed_at,
+        comments = excluded.comments,
+        project_name = excluded.project_name
+    `, [`apr-${content.id}`, content.id, content.title, content.author, content.createdAt, task[5], task[5] === 'pending' ? null : '管理员', task[5] === 'pending' ? null : now, task[5] === 'rejected' ? content.rejectionNote ?? '请修改后重新提交' : task[5] === 'approved' ? '内容准确，可以发布' : null, content.projectName ?? content.tags[0] ?? '患教项目']);
+  }
+}
 
-    const approvalItems = [
-      ['apr-001', 'cnt-003', '乳腺癌患者饮食建议', '王营养师', '2026-04-15T10:00:00Z', 'pending', null, null, null, '乳腺癌患教项目'],
-      ['apr-002', 'cnt-007', '肺癌靶向治疗科普', '刘医生', '2026-04-25T10:00:00Z', 'pending', null, null, null, '肺癌患教项目'],
-      ['apr-003', 'cnt-010', '糖尿病饮食指南', '王营养师', '2026-04-10T10:00:00Z', 'pending', null, null, null, '糖尿病患教项目'],
-      ['apr-004', 'cnt-013', '高血压用药指导', '吴医生', '2026-04-05T10:00:00Z', 'pending', null, null, null, '高血压患教项目'],
-      ['apr-005', 'cnt-001', '乳腺癌早期筛查指南', '张医生', '2026-01-25T10:00:00Z', 'approved', '管理员', '2026-01-28T14:00:00Z', '内容准确，可以发布', '乳腺癌患教项目'],
-      ['apr-006', 'cnt-002', '乳腺癌术后康复指导', '李护士', '2026-02-20T10:00:00Z', 'approved', '管理员', '2026-02-25T14:00:00Z', '审核通过', '乳腺癌患教项目'],
-      ['apr-007', 'cnt-006', '肺癌预防与早期发现', '刘医生', '2026-02-25T10:00:00Z', 'rejected', '管理员', '2026-02-28T14:00:00Z', '部分数据需要更新，请修改后重新提交', '肺癌患教项目'],
-    ];
-    for (const a of approvalItems) insertApproval.run(...a);
+async function seedAccountsAndLogs(now: string): Promise<void> {
+  await replaceRowsForSqlite(['user_roles', 'users', 'audit_logs', 'notifications', 'team_settings']);
 
-    // === Users ===
-    const insertUser = db.prepare(`
-      INSERT INTO users (id, name, email, role, region, status, last_login, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+  const accounts = [
+    ['A-001', 'T-PX', '齐晓川', 'qixc@px.health', 'admin', ['运营 · 平台管理员'], 'ops', '全国', 'active', true, '2026-05-08 08:42', '平台超管，唯一可启停用租户。'],
+    ['A-002', 'T-PX', '陆玟昕', 'luwx@px.health', 'editor', ['运营 · 内容审核员'], 'ops', '华东', 'active', true, '2026-05-07 22:11', '负责医学审核与上下架。'],
+    ['A-003', 'T-PX', '祝景琰', 'zhujy@px.health', 'editor', ['运营 · 内容审核员'], 'ops', '华东', 'active', true, '2026-05-08 09:01', '负责内容合规复核。'],
+    ['A-004', 'T-PX', '顾翊辰', 'guyc@px.health', 'editor', ['运营 · 分发执行员'], 'ops', '华南', 'active', true, '2026-05-08 07:55', '操作分发策略与触达。'],
+    ['A-005', 'T-PX', '邵书珩', 'shaosh@px.health', 'editor', ['运营 · 分发执行员'], 'ops', '华南', 'active', false, '2026-05-07 19:32', '待开启二步验证。'],
+    ['A-006', 'T-PX', '钟锦盛', 'zhongjs@px.health', 'editor', ['运营 · 内容审核员', '运营 · 分发执行员'], 'ops', '华北', 'active', true, '2026-05-08 06:20', '复合角色。'],
+    ['A-007', 'T-NV', '林筱', 'linx@novartis.cn', 'viewer', ['药企 · 合规'], 'pharma', '华东', 'active', true, '2026-05-07 16:30', '合规审核员。'],
+    ['A-008', 'T-NV', '宋知节', 'songzj@novartis.cn', 'viewer', ['药企 · BD'], 'pharma', '华东', 'active', true, '2026-05-08 09:15', '选题需求提交。'],
+    ['A-009', 'T-NV', '崔知白', 'cuizb@novartis.cn', 'viewer', ['药企 · 市场'], 'pharma', '华南', 'active', false, '2026-05-06 11:42', '查看项目效果。'],
+    ['A-010', 'T-AZ', '顾承', 'guc@az.cn', 'viewer', ['药企 · 合规'], 'pharma', '全国', 'active', true, '2026-05-07 14:55', '合规审核员。'],
+    ['A-011', 'T-AZ', '毕瑾', 'bij@az.cn', 'viewer', ['药企 · BD'], 'pharma', '全国', 'active', true, '2026-05-08 08:30', 'BD 项目提交。'],
+    ['A-012', 'T-AZ', '高承翊', 'gaocy@az.cn', 'viewer', ['药企 · 市场'], 'pharma', '全国', 'invited', false, '—', '邀请未激活。'],
+    ['A-013', 'T-MSD', '韦珂', 'weik@msd.cn', 'viewer', ['药企 · 合规'], 'pharma', '华东', 'active', true, '2026-05-06 19:20', '合规审核员。'],
+    ['A-014', 'T-MSD', '司礼安', 'sila@msd.cn', 'viewer', ['药企 · BD', '药企 · 市场'], 'pharma', '华北', 'active', true, '2026-05-07 17:48', '复合药企角色。'],
+    ['A-015', 'T-RC', '贺珏', 'hej@roche.cn', 'viewer', ['药企 · 合规'], 'pharma', '华东', 'frozen', true, '2026-04-25 17:45', '租户停用后冻结。'],
+    ['A-016', 'T-RC', '明微', 'mingw@roche.cn', 'viewer', ['药企 · BD'], 'pharma', '华东', 'frozen', false, '2026-04-25 17:42', '租户停用后冻结。'],
+    ['A-017', 'T-LL', '禾未', 'hew@lilly.cn', 'viewer', ['药企 · 合规'], 'pharma', '华东', 'active', true, '2026-05-08 09:10', '合规审核员。'],
+    ['A-018', 'T-LL', '言归', 'yang@lilly.cn', 'viewer', ['药企 · BD'], 'pharma', '华南', 'active', true, '2026-05-07 21:33', 'BD 项目提交。'],
+  ];
 
-    const usersData = [
-      ['usr-001', '张三', 'zhangsan@pharma.com', 'admin', '华东', 'active', '2026-05-12T08:30:00Z', '2025-06-01T08:00:00Z'],
-      ['usr-002', '李四', 'lisi@pharma.com', 'editor', '华南', 'active', '2026-05-11T14:20:00Z', '2025-08-15T08:00:00Z'],
-      ['usr-003', '王五', 'wangwu@pharma.com', 'editor', '华北', 'active', '2026-05-10T09:15:00Z', '2025-09-01T08:00:00Z'],
-      ['usr-004', '赵六', 'zhaoliu@pharma.com', 'viewer', '西南', 'active', '2026-05-09T16:45:00Z', '2025-10-15T08:00:00Z'],
-      ['usr-005', '孙七', 'sunqi@pharma.com', 'viewer', '华中', 'active', '2026-05-08T11:00:00Z', '2025-11-01T08:00:00Z'],
-      ['usr-006', '周八', 'zhouba@pharma.com', 'editor', '华东', 'inactive', '2026-03-15T10:00:00Z', '2025-07-01T08:00:00Z'],
-      ['usr-007', '吴九', 'wujiu@pharma.com', 'viewer', '华南', 'active', '2026-05-12T07:00:00Z', '2026-01-15T08:00:00Z'],
-      ['usr-008', '郑十', 'zhengshi@pharma.com', 'admin', '全国', 'active', '2026-05-12T09:00:00Z', '2025-06-01T08:00:00Z'],
-    ];
-    for (const u of usersData) insertUser.run(...u);
+  for (const account of accounts) {
+    const [id, tenantId, name, email, role, roleLabels, viewType, region, status, has2fa, lastLogin, note] = account;
+    await run(`
+      INSERT INTO users (id, tenant_id, name, email, role, role_labels, view_type, region, status, has_2fa, last_login, note, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(email) DO UPDATE SET
+        id = excluded.id,
+        tenant_id = excluded.tenant_id,
+        name = excluded.name,
+        role = excluded.role,
+        role_labels = excluded.role_labels,
+        view_type = excluded.view_type,
+        region = excluded.region,
+        status = excluded.status,
+        has_2fa = excluded.has_2fa,
+        last_login = excluded.last_login,
+        note = excluded.note,
+        updated_at = excluded.updated_at
+    `, [id, tenantId, name, email, role, json(roleLabels), viewType, region, status, boolValue(Boolean(has2fa)), lastLogin, note, '2025-09-01 09:00', now]);
+  }
 
-    // === Platform Settings ===
-    const insertSetting = db.prepare('INSERT INTO platform_settings (key, value) VALUES (?, ?)');
-    const settings = {
-      siteName: 'Px Lite 极简版平台',
-      version: 'V0.1 · DEMO',
-      region: '中国',
-      features: JSON.stringify({
-        contentWorkshop: true,
-        behaviorInsights: true,
-        distributionStrategy: true,
-        approvalCenter: true,
-      }),
-    };
-    for (const [k, v] of Object.entries(settings)) insertSetting.run(k, v);
-  });
+  const logs = [
+    ['log-001', 'T-PX', 'A-001', '张明', 'publish_content', 'content', 'CNT-101', '张明 发布了内容 《心衰患者每日体重监测的 5 个细节》', '2026-04-28 09:32'],
+    ['log-002', 'T-PX', 'A-002', '李雨晴', 'update_content', 'content', 'CNT-114', '李雨晴 更新了内容 《胰岛素笔注射 7 步法》', '2026-04-27 17:46'],
+    ['log-003', 'T-PX', 'A-003', '王健', 'archive_content', 'content', 'CNT-102', '王健 下架了内容 《沙库巴曲缬沙坦该饭前还是饭后吃？》', '2026-04-26 11:12'],
+    ['log-004', 'T-PX', 'A-001', '张明', 'invite_member', 'user', 'm-4', '张明 邀请成员加入 陈思雨 (查看者)', '2026-04-25 15:08'],
+    ['log-005', 'T-PX', null, '系统', 'export_report', 'behavior_export', 'export-001', '系统 导出报告 近 7 天行为汇总.csv', '2026-04-24 10:01'],
+  ];
 
-  insertMany();
-  logger.info('Database seeded successfully');
+  for (const logRow of logs) {
+    await run(`
+      INSERT INTO audit_logs (id, tenant_id, actor_user_id, actor_name, action, resource_type, resource_id, description, metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        tenant_id = excluded.tenant_id,
+        actor_user_id = excluded.actor_user_id,
+        actor_name = excluded.actor_name,
+        action = excluded.action,
+        resource_type = excluded.resource_type,
+        resource_id = excluded.resource_id,
+        description = excluded.description,
+        metadata = excluded.metadata,
+        created_at = excluded.created_at
+    `, [...logRow.slice(0, 8), json({ seed: true }), logRow[8]]);
+  }
+
+  const settings: Record<string, unknown> = {
+    siteName: 'Px 信欣健康 · 极简版平台',
+    version: 'V0.1 · DEMO',
+    region: '中国',
+    database: DB_DRIVER,
+    behaviorAvgReadDuration: behaviorSummary.avgReadDuration,
+    features: {
+      contentWorkshop: true,
+      behaviorInsights: true,
+      distributionStrategy: true,
+      approvalCenter: true,
+    },
+  };
+
+  for (const [key, val] of Object.entries(settings)) {
+    await run('INSERT INTO platform_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [
+      key,
+      typeof val === 'string' ? val : JSON.stringify(val),
+    ]);
+  }
+
+  await run(`
+    INSERT INTO team_settings (id, tenant_id, site_name, default_region, feature_flags, created_at, updated_at)
+    VALUES ('team-T-PX', 'T-PX', 'Px 信欣健康 · 极简版平台', '华东区域', ?${jsonCast}, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      site_name = excluded.site_name,
+      default_region = excluded.default_region,
+      feature_flags = excluded.feature_flags,
+      updated_at = excluded.updated_at
+  `, [json({ contentWorkshop: true, behaviorInsights: true, distributionStrategy: true, approvalCenter: true }), now, now]);
+}
+
+export async function seedDatabase(): Promise<void> {
+  await initializeSchema();
+  const now = new Date().toISOString();
+
+  logger.info({ driver: DB_DRIVER, demoResetEnabled }, 'Seeding fake demo data...');
+  await seedTenants(now);
+  await seedOverviewContentAndBehavior(now);
+  await seedDistributionProjects(now);
+  await seedStrategies(now);
+  await seedApproval(now);
+  await seedAccountsAndLogs(now);
+
+  const counts = await dbAll<{ name: string; cnt: number | string }>(`
+    SELECT 'projects' as name, COUNT(*) as cnt FROM projects
+    UNION ALL SELECT 'content', COUNT(*) FROM content
+    UNION ALL SELECT 'distribution_projects', COUNT(*) FROM distribution_projects
+    UNION ALL SELECT 'users', COUNT(*) FROM users
+  `);
+  const summary = Object.fromEntries(counts.map((row) => [row.name, Number(row.cnt)]));
+  const seeded = await dbGet<{ cnt: number | string }>('SELECT COUNT(*) as cnt FROM tenants');
+  logger.info({ driver: DB_DRIVER, tenants: Number(seeded?.cnt ?? 0), ...summary }, 'Fake demo data seeded successfully');
 }

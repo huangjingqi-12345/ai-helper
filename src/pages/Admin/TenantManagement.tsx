@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Building2, ChevronRight, Search, ToggleLeft, ToggleRight } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -7,42 +7,14 @@ import { Modal } from '@/components/ui/Modal';
 import { Select } from '@/components/ui/Select';
 import { showToast } from '@/components/ui/Toast';
 import { useLogger } from '@/hooks/useLogger';
-
-type TenantStatus = 'active' | 'inactive' | 'draft';
-
-interface TenantRow {
-  id: string;
-  name: string;
-  shortName: string;
-  type: '自营' | '药企租户';
-  status: TenantStatus;
-  contract: string;
-  contact: string;
-  description: string;
-  diseaseScope: string;
-  brandScope: string;
-  regionScope: string;
-  gray: string;
-  kAnon: string;
-  accounts: number;
-  canExport: boolean;
-}
+import { createTenant as createTenantApi, getTenants, updateTenantStatus } from '@/api/endpoints/platform';
+import type { TenantRow, TenantStatus } from '@/types/platform';
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
   { value: 'active', label: '已启用' },
   { value: 'inactive', label: '已停用' },
   { value: 'draft', label: '草稿' },
-];
-
-const initialTenants: TenantRow[] = [
-  { id: 'T-PX', name: 'Px 自营运营组', shortName: 'Px Ops', type: '自营', status: 'active', contract: '未签约', contact: '齐晓川 · ops-admin@px.health', description: 'Px 平台合规枢纽租户，唯一可见全量明文。', diseaseScope: '全部病种 · 仅 Px 自营运营组', brandScope: '全部品牌', regionScope: '全国 / 不限地域', gray: '灰度 ≤ 100%', kAnon: 'k-匿 0', accounts: 6, canExport: true },
-  { id: 'T-NV', name: '诺华制药（中国）', shortName: '诺华', type: '药企租户', status: 'active', contract: 'PXC-2025-A001', contact: '林筱 · compliance@novartis.cn', description: '心血管与肿瘤线脱敏聚合数据视图。', diseaseScope: '慢性心力衰竭 / 乳腺癌', brandScope: '诺欣妥 / 爱博新', regionScope: '华东 / 华南', gray: '灰度 ≤ 50%', kAnon: 'k-匿 50', accounts: 3, canExport: true },
-  { id: 'T-AZ', name: '阿斯利康（中国）', shortName: '阿斯利康', type: '药企租户', status: 'active', contract: 'PXC-2025-A002', contact: '顾承 · compliance@astrazeneca.cn', description: '慢病项目脱敏聚合数据视图。', diseaseScope: '慢性心力衰竭 / 2型糖尿病 / 慢阻肺(COPD)', brandScope: '安达唐 / 可定', regionScope: '全国', gray: '灰度 ≤ 30%', kAnon: 'k-匿 50', accounts: 3, canExport: true },
-  { id: 'T-MSD', name: '默沙东（中国）', shortName: '默沙东', type: '药企租户', status: 'active', contract: 'PXC-2025-A003', contact: '韦珂 · compliance@msd.cn', description: '肿瘤项目脱敏聚合查看，不开放导出。', diseaseScope: '肺癌(NSCLC) / 乳腺癌', brandScope: '可瑞达', regionScope: '华东 / 华北', gray: '灰度 ≤ 20%', kAnon: 'k-匿 100', accounts: 2, canExport: false },
-  { id: 'T-RC', name: '罗氏制药', shortName: '罗氏', type: '药企租户', status: 'inactive', contract: 'PXC-2025-A004', contact: '贺珏 · compliance@roche.cn', description: '租户暂停中，仅保留历史审计记录。', diseaseScope: '乳腺癌 / 肺癌(NSCLC)', brandScope: '赫赛汀 / 泰圣奇', regionScope: '华东', gray: '灰度 ≤ 10%', kAnon: 'k-匿 100', accounts: 2, canExport: false },
-  { id: 'T-LL', name: '礼来制药', shortName: '礼来', type: '药企租户', status: 'active', contract: 'PXC-2026-A005', contact: '禾未 · compliance@lilly.cn', description: '代谢领域脱敏聚合视图。', diseaseScope: '2型糖尿病', brandScope: '优泌乐', regionScope: '华东 / 华南', gray: '灰度 ≤ 30%', kAnon: 'k-匿 50', accounts: 2, canExport: true },
-  { id: 'T-SY', name: '石药集团', shortName: '石药', type: '药企租户', status: 'draft', contract: '未签约', contact: '周予安 · compliance@cspc.cn', description: '草稿租户，等待合同与合规范围确认。', diseaseScope: '0 种病', brandScope: '待配置', regionScope: '待配置', gray: '灰度 ≤ 0%', kAnon: 'k-匿 100', accounts: 0, canExport: false },
 ];
 
 function statusLabel(status: TenantStatus): string {
@@ -59,11 +31,26 @@ function statusColor(status: TenantStatus): 'green' | 'gray' | 'yellow' {
 
 export function TenantManagement(): JSX.Element {
   const { log } = useLogger('TenantManagement');
-  const [tenants, setTenants] = useState(initialTenants);
+  const [tenants, setTenants] = useState<TenantRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState<TenantRow | null>(null);
+
+  const loadTenants = async (): Promise<void> => {
+    setLoading(true);
+    try {
+      const res = await getTenants();
+      setTenants(res.data);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTenants();
+  }, []);
 
   const filtered = useMemo(() => tenants.filter((t) => {
     if (statusFilter && t.status !== statusFilter) return false;
@@ -76,19 +63,32 @@ export function TenantManagement(): JSX.Element {
   const pharma = tenants.filter((t) => t.type === '药企租户').length;
   const totalAccounts = tenants.reduce((sum, t) => sum + t.accounts, 0);
 
-  const toggleTenantStatus = (id: string): void => {
-    setTenants((current) => current.map((tenant) => tenant.id === id ? {
-      ...tenant,
-      status: tenant.status === 'active' ? 'inactive' : 'active',
-    } : tenant));
-    log.action('Toggle tenant', { id });
-    showToast('租户状态已更新（演示模式）', 'success');
+  const toggleTenantStatus = async (id: string): Promise<void> => {
+    const currentTenant = tenants.find((tenant) => tenant.id === id);
+    if (!currentTenant) return;
+    const nextStatus: TenantStatus = currentTenant.status === 'active' ? 'inactive' : 'active';
+    try {
+      const res = await updateTenantStatus(id, nextStatus);
+      setTenants((current) => current.map((tenant) => tenant.id === id ? res.data : tenant));
+      setSelectedTenant((current) => current?.id === id ? res.data : current);
+      log.action('Toggle tenant', { id, status: nextStatus });
+      showToast('租户状态已更新并写入 SQLite', 'success');
+    } catch (error) {
+      log.error('Toggle tenant failed', error);
+      showToast('租户状态更新失败，请检查后端服务', 'error');
+    }
   };
 
-  const addTenant = (tenant: TenantRow): void => {
-    setTenants((current) => [tenant, ...current]);
-    setCreateOpen(false);
-    showToast('租户已创建，首位管理员邀请已发送', 'success');
+  const addTenant = async (tenant: TenantRow): Promise<void> => {
+    try {
+      const res = await createTenantApi(tenant);
+      setTenants((current) => [res.data, ...current.filter((item) => item.id !== res.data.id)]);
+      setCreateOpen(false);
+      showToast('租户已创建并写入 SQLite，首位管理员邀请已发送', 'success');
+    } catch (error) {
+      log.error('Create tenant failed', error);
+      showToast('租户创建失败，请检查后端服务', 'error');
+    }
   };
 
   return (
@@ -136,7 +136,10 @@ export function TenantManagement(): JSX.Element {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((t) => (
+            {loading && (
+              <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-text-muted">正在从 SQLite 加载租户...</td></tr>
+            )}
+            {!loading && filtered.map((t) => (
               <tr key={t.id} className="border-b border-border/50 hover:bg-bg-tertiary/30 transition-colors">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
@@ -243,7 +246,7 @@ function InfoBox({ label, value }: { label: string; value: string }): JSX.Elemen
   return <div className="rounded-lg border border-border bg-bg-tertiary p-3"><div className="text-text-muted">{label}</div><div className="mt-1 text-text-primary">{value}</div></div>;
 }
 
-function AddTenantWizard({ onCreate }: { onCreate: (tenant: TenantRow) => void }): JSX.Element {
+function AddTenantWizard({ onCreate }: { onCreate: (tenant: TenantRow) => void | Promise<void> }): JSX.Element {
   const steps = [
     ['基础信息', '租户身份与主联系人'],
     ['合规可见范围', '病种 / 品牌 / 灰度 / k-匿'],

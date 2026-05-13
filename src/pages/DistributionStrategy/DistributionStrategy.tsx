@@ -1,12 +1,21 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, FileText, Search, SlidersHorizontal, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { formatNumber } from '@/utils/formatters';
-import { distributionProjects, distributionStatusLabels, type DistributionProjectPriority, type DistributionProjectStatus } from '@/data/demoDistributionProjects';
+import { getDistributionProjects } from '@/api/endpoints/distribution';
+import type { DistributionProject, DistributionProjectPriority, DistributionProjectStatus } from '@/types/distribution';
 import { useLogger } from '@/hooks/useLogger';
+
+const distributionStatusLabels: Record<DistributionProjectStatus, string> = {
+  intake: '受理中',
+  production: '制作中',
+  distribution: '分发中',
+  completed: '已完成',
+  archived: '已归档',
+};
 
 const statusOptions = [
   { value: '', label: '全部状态' },
@@ -43,20 +52,38 @@ export function DistributionStrategy(): JSX.Element {
   const [status, setStatus] = useState('');
   const [priority, setPriority] = useState('');
   const [search, setSearch] = useState('');
+  const [projects, setProjects] = useState<DistributionProject[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = useMemo(() => distributionProjects.filter((project) => {
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    getDistributionProjects({ pageSize: 100 })
+      .then((res) => {
+        if (mounted) setProjects(res.data);
+      })
+      .catch((error) => {
+        log.error('Failed to load distribution projects from DB', error);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => { mounted = false; };
+  }, [log]);
+
+  const filtered = useMemo(() => projects.filter((project) => {
     if (search && !`${project.title}${project.disease}${project.brand}`.toLowerCase().includes(search.toLowerCase())) return false;
     if (status && project.status !== status) return false;
     if (priority && project.priority !== priority) return false;
     return true;
-  }), [priority, search, status]);
+  }), [priority, projects, search, status]);
 
   const counts = {
-    intake: distributionProjects.filter((p) => p.status === 'intake').length,
-    production: distributionProjects.filter((p) => p.status === 'production').length,
-    distribution: distributionProjects.filter((p) => p.status === 'distribution').length,
-    completed: distributionProjects.filter((p) => p.status === 'completed').length,
-    archived: distributionProjects.filter((p) => p.status === 'archived').length,
+    intake: projects.filter((p) => p.status === 'intake').length,
+    production: projects.filter((p) => p.status === 'production').length,
+    distribution: projects.filter((p) => p.status === 'distribution').length,
+    completed: projects.filter((p) => p.status === 'completed').length,
+    archived: projects.filter((p) => p.status === 'archived').length,
   };
 
   return (
@@ -65,7 +92,7 @@ export function DistributionStrategy(): JSX.Element {
         <Badge color="blue" className="text-[10px] uppercase tracking-wider">Distribution</Badge>
         <h1 className="text-2xl font-bold text-text-primary">分发策略</h1>
         <p className="text-sm text-text-secondary max-w-3xl">一条药企诉求即一个项目；进入项目后可分别配置医生分发策略 / 患者分发策略，并实时跟踪审批节点。</p>
-        <div className="text-xs text-text-muted">当前租户 · Px 自营运营组 <span className="mx-2">·</span> 项目总数 · {distributionProjects.length}</div>
+        <div className="text-xs text-text-muted">当前租户 · Px 自营运营组 <span className="mx-2">·</span> 项目总数 · {projects.length}</div>
       </div>
 
       <div className="grid grid-cols-5 gap-4">
@@ -98,7 +125,8 @@ export function DistributionStrategy(): JSX.Element {
         </div>
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {filtered.map((project) => (
+          {loading && <div className="col-span-full py-8 text-center text-sm text-text-muted">正在从 SQLite 加载项目...</div>}
+          {!loading && filtered.map((project) => (
             <button
               key={project.id}
               onClick={() => {
@@ -142,6 +170,7 @@ export function DistributionStrategy(): JSX.Element {
               </div>
             </button>
           ))}
+          {!loading && filtered.length === 0 && <div className="col-span-full py-8 text-center text-sm text-text-muted">当前筛选下暂无项目。</div>}
         </div>
       </Card>
     </div>

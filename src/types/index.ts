@@ -20,6 +20,10 @@ export type {
 } from './behavior';
 export type {
   DistributionStrategy,
+  DistributionProject,
+  DistributionProjectStatus,
+  DistributionProjectPriority,
+  DoctorCandidate,
   AudienceConfig,
   ScheduleConfig,
   StrategyStatus,
@@ -28,11 +32,19 @@ export type {
   CreateStrategyDTO,
   UpdateStrategyDTO,
 } from './distribution';
-export type { ApprovalItem, ApprovalStatus, ApprovalFilter } from './approval';
+export type { ApprovalItem, ApprovalStatus, ApprovalFilter, ApprovalTask } from './approval';
 export type {
   User,
   UserRole,
   FeatureFlags,
   PlatformSettings,
   UpdateUserDTO,
+  TenantRow,
+  TenantStatus,
+  AccountRow,
+  AccountStatus,
+  ApprovalFlow,
+  FlowNode,
+  TeamMember,
+  AuditLogRow,
 } from './platform';
