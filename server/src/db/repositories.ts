@@ -1,4 +1,28 @@
 import { getDb } from './connection.js';
+import { overviewStats, overviewProjects } from '../data/overview.js';
+import { contentList as seededContentList } from '../data/content.js';
+import { behaviorSummary } from '../data/behavior.js';
+
+type ContentRecord = {
+  id: string;
+  projectId: string;
+  title: string;
+  type: string;
+  status: string;
+  pipelineStage: string;
+  priority: string;
+  author: string;
+  content: string;
+  tags: string[];
+  readCount: number;
+  likeCount: number;
+  bookmarkCount: number;
+  createdAt: string;
+  updatedAt: string;
+  [key: string]: unknown;
+};
+
+let contentItems: ContentRecord[] = seededContentList.map((item) => ({ ...item, tags: [...item.tags] }));
 
 // === Helper: convert snake_case row to camelCase ===
 function toCamel(row: Record<string, unknown>): Record<string, unknown> {
@@ -21,121 +45,100 @@ function parseJsonFields(obj: Record<string, unknown>, fields: string[]): Record
 
 // === Overview ===
 export function getOverviewStats() {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM overview_stats WHERE id = 1').get() as Record<string, unknown> | undefined;
-  if (!row) return null;
-  const r = toCamel(row);
-  delete r.id;
-  r.lastUpdated = new Date().toISOString();
-  return r;
+  return overviewStats;
 }
 
 export function getOverviewProjects() {
-  const db = getDb();
-  const rows = db.prepare('SELECT * FROM projects ORDER BY created_at DESC').all() as Record<string, unknown>[];
-  return rows.map(toCamel);
+  return overviewProjects;
 }
 
 // === Content ===
-export function getContentList(filters: { status?: string; type?: string; projectId?: string; page: number; pageSize: number }) {
-  const db = getDb();
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  if (filters.status) { conditions.push('status = ?'); params.push(filters.status); }
-  if (filters.type) { conditions.push('type = ?'); params.push(filters.type); }
-  if (filters.projectId) { conditions.push('project_id = ?'); params.push(filters.projectId); }
-
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  const total = (db.prepare(`SELECT COUNT(*) as cnt FROM content ${where}`).get(...params) as { cnt: number }).cnt;
+export function getContentList(filters: { status?: string; type?: string; projectId?: string; pipelineStage?: string; priority?: string; search?: string; page: number; pageSize: number }) {
+  const normalizedStatus = filters.status === 'offline' ? 'archived' : filters.status;
+  let rows = [...contentItems];
+  if (normalizedStatus) rows = rows.filter((item) => item.status === normalizedStatus);
+  if (filters.type) rows = rows.filter((item) => item.type === filters.type);
+  if (filters.projectId) rows = rows.filter((item) => item.projectId === filters.projectId);
+  if (filters.pipelineStage) rows = rows.filter((item) => item.pipelineStage === filters.pipelineStage);
+  if (filters.priority) rows = rows.filter((item) => item.priority === filters.priority);
+  if (filters.search) {
+    const query = filters.search.toLowerCase();
+    rows = rows.filter((item) => item.title.toLowerCase().includes(query) || item.id.toLowerCase().includes(query));
+  }
+  const total = rows.length;
   const offset = (filters.page - 1) * filters.pageSize;
-  const rows = db.prepare(`SELECT * FROM content ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, filters.pageSize, offset) as Record<string, unknown>[];
+  const pageRows = rows.slice(offset, offset + filters.pageSize);
 
   return {
-    data: rows.map((r) => parseJsonFields(toCamel(r), ['tags'])),
+    data: pageRows,
     total,
     totalPages: Math.ceil(total / filters.pageSize),
   };
 }
 
 export function getContentById(id: string) {
-  const db = getDb();
-  const row = db.prepare('SELECT * FROM content WHERE id = ?').get(id) as Record<string, unknown> | undefined;
-  if (!row) return null;
-  return parseJsonFields(toCamel(row), ['tags']);
+  return contentItems.find((item) => item.id.toLowerCase() === id.toLowerCase()) ?? null;
 }
 
 export function createContent(data: Record<string, unknown>) {
-  const db = getDb();
-  const count = (db.prepare('SELECT COUNT(*) as cnt FROM content').get() as { cnt: number }).cnt;
-  const id = `cnt-${String(count + 1).padStart(3, '0')}`;
+  const nextNumber = Math.max(...contentItems.map((item) => Number(item.id.replace(/\D/g, '')) || 100)) + 1;
+  const id = `CNT-${nextNumber}`;
   const now = new Date().toISOString();
+  const project = overviewProjects.find((p) => p.id === data.projectId);
+  const newItem = {
+    id,
+    projectId: String(data.projectId || 'proj-hf'),
+    title: String(data.title || '未命名内容'),
+    type: (data.type || 'article') as 'article',
+    status: 'draft' as const,
+    pipelineStage: 'requirement_submitted' as const,
+    priority: 'P2' as const,
+    author: String(data.author || '系统管理员'),
+    content: String(data.content || ''),
+    tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
+    pushCount: 0,
+    readUsers: 0,
+    readCount: 0,
+    likeCount: 0,
+    dislikeCount: 0,
+    bookmarkCount: 0,
+    createdAt: now,
+    updatedAt: now,
+    projectName: project?.name || '未分配项目',
+    projectColor: 'blue',
+  };
 
-  db.prepare(`
-    INSERT INTO content (id, project_id, title, type, status, author, content, tags, read_count, like_count, bookmark_count, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, 0, 0, 0, ?, ?)
-  `).run(id, data.projectId, data.title, data.type, data.author, data.content || '', JSON.stringify(data.tags || []), now, now);
-
-  return getContentById(id);
+  contentItems = [newItem, ...contentItems];
+  return newItem;
 }
 
 export function updateContent(id: string, data: Record<string, unknown>) {
-  const db = getDb();
-  const existing = db.prepare('SELECT id FROM content WHERE id = ?').get(id);
-  if (!existing) return null;
-
-  const updates: string[] = [];
-  const params: unknown[] = [];
-  const fieldMap: Record<string, string> = {
-    title: 'title', type: 'type', status: 'status', author: 'author',
-    content: 'content', publishedAt: 'published_at', projectId: 'project_id',
+  const index = contentItems.findIndex((item) => item.id.toLowerCase() === id.toLowerCase());
+  if (index === -1) return null;
+  const current = contentItems[index]!;
+  const updated = {
+    ...current,
+    ...data,
+    tags: Array.isArray(data.tags) ? data.tags.map(String) : current.tags,
+    updatedAt: new Date().toISOString(),
   };
-
-  for (const [camel, snake] of Object.entries(fieldMap)) {
-    if (data[camel] !== undefined) { updates.push(`${snake} = ?`); params.push(data[camel]); }
-  }
-  if (data.tags !== undefined) { updates.push('tags = ?'); params.push(JSON.stringify(data.tags)); }
-
-  updates.push('updated_at = ?');
-  params.push(new Date().toISOString());
-  params.push(id);
-
-  db.prepare(`UPDATE content SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-  return getContentById(id);
+  contentItems[index] = updated;
+  return updated;
 }
 
 export function deleteContent(id: string): boolean {
-  const db = getDb();
-  const result = db.prepare('DELETE FROM content WHERE id = ?').run(id);
-  return result.changes > 0;
+  const before = contentItems.length;
+  contentItems = contentItems.filter((item) => item.id.toLowerCase() !== id.toLowerCase());
+  return contentItems.length !== before;
 }
 
 // === Behavior ===
 export function getBehaviorSummary() {
-  const db = getDb();
-
-  const stats = db.prepare('SELECT * FROM overview_stats WHERE id = 1').get() as Record<string, unknown>;
-  const readTrend = db.prepare("SELECT date, value FROM behavior_trends WHERE type = 'reads' ORDER BY date").all();
-  const interactionTrend = db.prepare("SELECT date, value FROM behavior_trends WHERE type = 'interactions' ORDER BY date").all();
-  const topContent = db.prepare('SELECT content_id as contentId, title, reads, interactions FROM behavior_top_content ORDER BY reads DESC').all();
-  const byDisease = db.prepare('SELECT disease, reads, interactions, push_count as pushCount FROM behavior_by_disease').all();
-
-  return {
-    totalReads: stats?.read_count ?? 24531,
-    totalInteractions: stats?.interaction_count ?? 3876,
-    avgReadDuration: 186,
-    readTrend,
-    interactionTrend,
-    topContent,
-    byDisease,
-  };
+  return behaviorSummary;
 }
 
 export function getBehaviorTrends(type: string) {
-  const db = getDb();
-  const trendType = type === 'interactions' ? 'interactions' : 'reads';
-  return db.prepare('SELECT date, value FROM behavior_trends WHERE type = ? ORDER BY date').all(trendType);
+  return type === 'interactions' ? behaviorSummary.interactionTrend : behaviorSummary.readTrend;
 }
 
 // === Distribution ===

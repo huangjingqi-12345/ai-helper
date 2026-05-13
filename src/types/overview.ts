@@ -17,6 +17,7 @@ export interface Project {
   contentCount: number;
   publishedCount: number;
   pushCount: number;
+  readUsers?: number;
   readCount: number;
   interactionCount: number;
   status: ProjectStatus;

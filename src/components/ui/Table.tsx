@@ -18,7 +18,7 @@ interface TableProps<T> {
   className?: string;
 }
 
-export function Table<T extends Record<string, unknown>>({
+export function Table<T extends object>({
   columns,
   data,
   rowKey,
@@ -60,7 +60,7 @@ export function Table<T extends Record<string, unknown>>({
                 <td key={col.key} className="px-4 py-3 text-sm text-text-secondary">
                   {col.render
                     ? col.render(record, index)
-                    : String(record[col.key] ?? '')}
+                    : String((record as Record<string, unknown>)[col.key] ?? '')}
                 </td>
               ))}
             </tr>

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ApprovalItem } from '@/types';
+import type { ApprovalItem, ApprovalStatus } from '@/types';
 import { getApprovalQueue, approveContent, rejectContent } from '@/api/endpoints/approval';
 import { logger } from '@/utils/logger';
 
@@ -8,7 +8,7 @@ interface ApprovalState {
   total: number;
   loading: boolean;
   error: string | null;
-  fetchQueue: (status?: string) => Promise<void>;
+  fetchQueue: (status?: ApprovalStatus) => Promise<void>;
   approve: (id: string, comments?: string) => Promise<void>;
   reject: (id: string, comments: string) => Promise<void>;
 }

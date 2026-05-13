@@ -1,8 +1,24 @@
+import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, Eye, Send, CheckCircle, Settings } from 'lucide-react';
+import { LayoutDashboard, FileText, Eye, Send, CheckCircle, Settings, ChevronDown, Building2, UserCog, GitBranch } from 'lucide-react';
 import { clsx } from 'clsx';
-import { NAV_ITEMS, PAGE_DESCRIPTIONS } from '@/utils/constants';
+import { PAGE_DESCRIPTIONS } from '@/utils/constants';
 import { useLogger } from '@/hooks/useLogger';
+import { useTenantStore } from '@/stores/useTenantStore';
+
+const mainNavItems = [
+  { key: 'overview', label: '总览', path: '/', icon: 'LayoutDashboard' },
+  { key: 'content-workshop', label: '患教内容工坊', path: '/content', icon: 'FileText' },
+  { key: 'behavior-insights', label: '患者行为洞察', path: '/audience', icon: 'Eye' },
+  { key: 'distribution-strategy', label: '分发策略', path: '/distribute', icon: 'Send' },
+  { key: 'approval-center', label: '审批中心', path: '/approvals', icon: 'CheckCircle' },
+];
+
+const adminSubItems = [
+  { key: 'admin-tenants', label: '租户管理', path: '/admin/tenants', icon: 'Building2' },
+  { key: 'admin-accounts', label: '账号管理', path: '/admin/accounts', icon: 'UserCog' },
+  { key: 'admin-approval-flows', label: '审批流配置', path: '/admin/approval-flows', icon: 'GitBranch' },
+];
 
 const iconMap: Record<string, React.ReactNode> = {
   LayoutDashboard: <LayoutDashboard size={18} />,
@@ -11,33 +27,54 @@ const iconMap: Record<string, React.ReactNode> = {
   Send: <Send size={18} />,
   CheckCircle: <CheckCircle size={18} />,
   Settings: <Settings size={18} />,
+  Building2: <Building2 size={16} />,
+  UserCog: <UserCog size={16} />,
+  GitBranch: <GitBranch size={16} />,
 };
 
 export function Sidebar(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
   const { log } = useLogger('Sidebar');
+  const { isOps } = useTenantStore();
+  const [adminExpanded, setAdminExpanded] = useState(
+    location.pathname.startsWith('/admin') || location.pathname === '/platform-management'
+  );
 
-  const activeKey = NAV_ITEMS.find((item) => item.path === location.pathname)?.key || 'overview';
+  const isAdminActive = location.pathname.startsWith('/admin') || location.pathname === '/platform-management';
+  const activeKey =
+    adminSubItems.find((item) => item.path === location.pathname)?.key ||
+    mainNavItems.find((item) => location.pathname === item.path || location.pathname.startsWith(`${item.path}/`))?.key ||
+    (location.pathname === '/settings' ? 'settings' : undefined) ||
+    (location.pathname === '/platform-management' ? 'admin-tenants' : 'overview');
 
   const handleNavClick = (path: string, label: string): void => {
     log.nav(`Navigate to ${label}`, { path });
     navigate(path);
   };
 
+  const toggleAdmin = () => {
+    setAdminExpanded(!adminExpanded);
+    if (!adminExpanded && !isAdminActive) {
+      navigate('/admin/tenants');
+    }
+  };
+
   return (
-    <aside className="w-sidebar h-[calc(100vh-theme(spacing.header))] bg-bg-secondary border-r border-border flex flex-col overflow-y-auto">
+    <aside className="w-sidebar h-[calc(100vh-theme(spacing.header))] bg-bg-secondary/95 border-r border-border flex flex-col overflow-y-auto backdrop-blur">
       <div className="px-4 py-4">
         <h3 className="text-[10px] uppercase tracking-widest text-text-muted font-medium mb-3">主菜单</h3>
         <nav className="flex flex-col gap-1">
-          {NAV_ITEMS.map((item) => (
+          {mainNavItems
+            .filter((item) => isOps || !['distribution-strategy'].includes(item.key))
+            .map((item) => (
             <button
               key={item.key}
               onClick={() => handleNavClick(item.path, item.label)}
               className={clsx(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 text-left w-full',
                 activeKey === item.key
-                  ? 'bg-accent-blue/10 text-accent-blue border-l-2 border-accent-blue'
+                  ? 'bg-gradient-to-r from-accent-purple/20 to-accent-blue/10 text-accent-blue border-l-2 border-accent-blue'
                   : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
               )}
             >
@@ -45,18 +82,69 @@ export function Sidebar(): JSX.Element {
               <span>{item.label}</span>
             </button>
           ))}
+
+          {/* 平台管理 expandable */}
+          {isOps && (
+            <button
+              onClick={toggleAdmin}
+              className={clsx(
+                'flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 text-left w-full',
+                isAdminActive
+                  ? 'bg-gradient-to-r from-accent-purple/20 to-accent-blue/10 text-accent-blue border-l-2 border-accent-blue'
+                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+              )}
+            >
+              <div className="flex items-center gap-3">
+                {iconMap.Settings}
+                <span>平台管理</span>
+              </div>
+              <ChevronDown
+                size={14}
+                className={clsx('transition-transform duration-200', adminExpanded ? 'rotate-180' : '')}
+              />
+            </button>
+          )}
+
+          {/* Admin sub-items */}
+          {isOps && adminExpanded && (
+            <div className="ml-4 pl-3 border-l border-border/50 flex flex-col gap-0.5">
+              {adminSubItems.map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => handleNavClick(item.path, item.label)}
+                  className={clsx(
+                    'flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-colors duration-150 text-left w-full',
+                    activeKey === item.key
+                      ? 'bg-accent-blue/10 text-accent-blue'
+                      : 'text-text-muted hover:bg-bg-tertiary hover:text-text-primary'
+                  )}
+                >
+                  {iconMap[item.icon]}
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </nav>
       </div>
 
       <div className="px-4 py-4 border-t border-border mt-2">
         <h3 className="text-[10px] uppercase tracking-widest text-text-muted font-medium mb-2">说明</h3>
         <p className="text-xs text-text-muted leading-relaxed">
-          {PAGE_DESCRIPTIONS[activeKey] || ''}
+          {isOps
+            ? PAGE_DESCRIPTIONS[activeKey] || '运营视图 Ops View。合规枢纽：唯一可见患者明文：全部生产 / 触达能力'
+            : '药企视图 Pharma View。仅可见脱敏聚合数据 · k-匿名 · 不可下钻到个体'}
         </p>
       </div>
 
       <div className="mt-auto px-4 py-4 border-t border-border">
-        <div className="flex items-center gap-3">
+        <button
+          onClick={() => handleNavClick('/settings', '设置')}
+          className={clsx(
+            'flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors',
+            activeKey === 'settings' ? 'bg-gradient-to-r from-accent-purple/20 to-accent-blue/10 text-accent-blue' : 'hover:bg-bg-tertiary',
+          )}
+        >
           <div className="w-8 h-8 rounded-full bg-accent-blue/20 flex items-center justify-center text-accent-blue text-xs font-bold">
             管
           </div>
@@ -64,7 +152,7 @@ export function Sidebar(): JSX.Element {
             <div className="text-sm text-text-primary">系统管理员</div>
             <div className="text-xs text-text-muted">华东区域 · admin</div>
           </div>
-        </div>
+        </button>
       </div>
     </aside>
   );

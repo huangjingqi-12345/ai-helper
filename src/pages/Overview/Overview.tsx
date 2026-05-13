@@ -7,13 +7,15 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { KpiCards } from './KpiCards';
 import { ProjectTable } from './ProjectTable';
 import { useOverviewStore } from '@/stores/useOverviewStore';
+import { useTenantStore } from '@/stores/useTenantStore';
 import { useLogger } from '@/hooks/useLogger';
-import { formatDateOnly } from '@/utils/formatters';
+import { formatDate } from '@/utils/formatters';
 
 export function Overview(): JSX.Element {
   const { stats, projects, loading, error, fetchAll } = useOverviewStore();
   const navigate = useNavigate();
   const { log } = useLogger('Overview');
+  const { isOps } = useTenantStore();
 
   useEffect(() => {
     log.nav('Overview page loaded');
@@ -29,17 +31,17 @@ export function Overview(): JSX.Element {
     <div className="space-y-6">
       {/* Page Header */}
       <div className="space-y-3">
-        <Badge color="blue" className="text-[10px] uppercase tracking-wider">Overview</Badge>
-        <h1 className="text-2xl font-bold text-text-primary">患者教育内容运营总览</h1>
-        <p className="text-sm text-text-secondary max-w-2xl">
-          查看所有患教项目的内容发布情况、患者触达数据和行为互动概览。通过数据驱动，优化内容策略，提升患者教育效果。
-        </p>
+          <Badge color="blue" className="text-[10px] uppercase tracking-wider">Overview</Badge>
+          <h1 className="text-2xl font-bold text-text-primary">患者教育内容运营总览</h1>
+          <p className="text-sm text-text-secondary max-w-2xl">
+          {isOps
+            ? '按项目维度展示各项目下的内容触达、阅读与互动效果。当前为极简版，不含 AE 管理与归因模块。'
+            : '药企视图：按项目维度展示该租户名下各项目的脱敏聚合数据（k-匿名），不可下钻。'}
+          </p>
         <div className="flex items-center gap-3 text-xs text-text-muted">
-          <span>数据更新至 {stats?.lastUpdated ? formatDateOnly(stats.lastUpdated) : '—'}</span>
+          <span>数据更新：{stats?.lastUpdated ? formatDate(stats.lastUpdated) : '—'}</span>
           <span>•</span>
-          <Badge color="purple" className="text-[10px]">患者教育</Badge>
-          <Badge color="green" className="text-[10px]">行为数据</Badge>
-          <Badge color="yellow" className="text-[10px]">内容运营</Badge>
+          <Badge color="blue" className="text-[10px]">运营视图</Badge>
         </div>
         <Button
           variant="ghost"
@@ -47,10 +49,10 @@ export function Overview(): JSX.Element {
           className="text-accent-blue"
           onClick={() => {
             log.ui('Enter Content Workshop button clicked');
-            navigate('/content-workshop');
+            navigate('/content');
           }}
         >
-          进入内容工坊 <ArrowRight size={14} />
+          {isOps ? '进入内容工坊' : '提交选题需求'} <ArrowRight size={14} />
         </Button>
       </div>
 

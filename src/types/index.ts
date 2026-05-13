@@ -7,6 +7,8 @@ export type {
   ContentFilter,
   CreateContentDTO,
   UpdateContentDTO,
+  PipelineStage,
+  ContentPriority,
 } from './content';
 export type {
   BehaviorSummary,

@@ -7,9 +7,10 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  maxWidth?: string;
 }
 
-export function Modal({ open, onClose, title, children, footer }: ModalProps): JSX.Element | null {
+export function Modal({ open, onClose, title, children, footer, maxWidth = 'max-w-lg' }: ModalProps): JSX.Element | null {
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden';
@@ -26,7 +27,7 @@ export function Modal({ open, onClose, title, children, footer }: ModalProps): J
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative bg-bg-secondary border border-border rounded-card w-full max-w-lg mx-4 animate-in fade-in zoom-in-95 duration-200">
+      <div className={`relative bg-bg-secondary border border-border rounded-card w-full ${maxWidth} mx-4 animate-in fade-in zoom-in-95 duration-200`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
           <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">

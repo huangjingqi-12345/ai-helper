@@ -17,7 +17,7 @@ apiClient.interceptors.request.use(
     const url = config.url || '';
     logger.api(method, url, { params: config.params as Record<string, unknown> });
     // Attach start time for duration calculation
-    (config as Record<string, unknown>)._startTime = Date.now();
+    (config as unknown as Record<string, unknown>)._startTime = Date.now();
     return config;
   },
   (error: unknown) => {
@@ -29,7 +29,7 @@ apiClient.interceptors.request.use(
 // Response interceptor — log responses with duration
 apiClient.interceptors.response.use(
   (response) => {
-    const startTime = (response.config as Record<string, unknown>)._startTime as number | undefined;
+    const startTime = (response.config as unknown as Record<string, unknown>)._startTime as number | undefined;
     const duration = startTime ? Date.now() - startTime : 0;
     const method = (response.config.method || 'GET').toUpperCase();
     const url = response.config.url || '';

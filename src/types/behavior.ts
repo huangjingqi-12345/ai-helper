@@ -6,6 +6,9 @@ export interface TrendPoint {
 export interface ContentMetric {
   contentId: string;
   title: string;
+  disease?: string;
+  pushCount?: number;
+  readUsers?: number;
   reads: number;
   interactions: number;
 }
@@ -18,6 +21,8 @@ export interface DiseaseMetric {
 }
 
 export interface BehaviorSummary {
+  pushCount?: number;
+  readUsers?: number;
   totalReads: number;
   totalInteractions: number;
   avgReadDuration: number;

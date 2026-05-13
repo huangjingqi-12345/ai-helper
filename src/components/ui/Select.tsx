@@ -7,13 +7,15 @@ interface SelectOption {
   label: string;
 }
 
-interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
+interface SelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'onChange' | 'value'> {
   label?: string;
   options: SelectOption[];
   placeholder?: string;
+  value?: string;
+  onChange?: (value: string) => void;
 }
 
-export function Select({ label, options, placeholder, className, id, ...props }: SelectProps): JSX.Element {
+export function Select({ label, options, placeholder, className, id, onChange, ...props }: SelectProps): JSX.Element {
   const selectId = id || label?.replace(/\s+/g, '-').toLowerCase();
 
   return (
@@ -31,6 +33,7 @@ export function Select({ label, options, placeholder, className, id, ...props }:
             className
           )
         )}
+        onChange={(event) => onChange?.(event.target.value)}
         {...props}
       >
         {placeholder && (

@@ -18,14 +18,14 @@ const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
 };
 
 const CATEGORY_COLORS: Record<LogCategory, string> = {
-  NAV: '#3b82f6',
-  UI: '#8b5cf6',
-  API: '#22c55e',
-  ACTION: '#f59e0b',
-  AUTH: '#ef4444',
+  NAV: '#7773FD',
+  UI: '#720DD7',
+  API: '#34D399',
+  ACTION: '#FBBF24',
+  AUTH: '#FB7185',
   FEATURE: '#06b6d4',
   PERF: '#ec4899',
-  ERROR: '#ef4444',
+  ERROR: '#FB7185',
 };
 
 const MAX_ENTRIES = 1000;

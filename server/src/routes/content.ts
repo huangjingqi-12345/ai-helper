@@ -6,12 +6,15 @@ const router = Router();
 
 router.get('/', (req, res) => {
   logger.info({ query: req.query }, 'GET /api/content');
-  const { status, type, projectId, page = '1', pageSize = '20' } = req.query;
+  const { status, type, projectId, pipelineStage, priority, search, page = '1', pageSize = '20' } = req.query;
 
   const result = getContentList({
     status: status as string | undefined,
     type: type as string | undefined,
     projectId: projectId as string | undefined,
+    pipelineStage: pipelineStage as string | undefined,
+    priority: priority as string | undefined,
+    search: search as string | undefined,
     page: parseInt(page as string, 10),
     pageSize: parseInt(pageSize as string, 10),
   });

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { DistributionStrategy } from '@/types';
+import type { CreateStrategyDTO, DistributionStrategy, StrategyStatus, UpdateStrategyDTO } from '@/types';
 import { getStrategies, createStrategy, updateStrategy } from '@/api/endpoints/distribution';
 import { logger } from '@/utils/logger';
 
@@ -8,9 +8,9 @@ interface DistributionState {
   total: number;
   loading: boolean;
   error: string | null;
-  fetchStrategies: (status?: string) => Promise<void>;
-  createStrategy: (data: Partial<DistributionStrategy>) => Promise<void>;
-  updateStrategy: (id: string, data: Partial<DistributionStrategy>) => Promise<void>;
+  fetchStrategies: (status?: StrategyStatus) => Promise<void>;
+  createStrategy: (data: CreateStrategyDTO) => Promise<void>;
+  updateStrategy: (id: string, data: UpdateStrategyDTO) => Promise<void>;
 }
 
 export const useDistributionStore = create<DistributionState>((set, get) => ({

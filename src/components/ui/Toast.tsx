@@ -25,7 +25,15 @@ function notifyListeners(): void {
   toastListeners.forEach((listener) => listener([...toasts]));
 }
 
-export function showToast(type: ToastType, message: string): void {
+function isToastType(value: string): value is ToastType {
+  return ['success', 'error', 'warning', 'info'].includes(value);
+}
+
+export function showToast(type: ToastType, message: string): void;
+export function showToast(message: string, type?: ToastType): void;
+export function showToast(first: ToastType | string, second = 'info'): void {
+  const type = isToastType(first) ? first : isToastType(second) ? second : 'info';
+  const message = isToastType(first) ? second : first;
   const id = Date.now().toString();
   toasts = [...toasts, { id, type, message }];
   notifyListeners();
