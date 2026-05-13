@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, Eye, Send, CheckCircle, Settings, ChevronDown, Building2, UserCog, GitBranch } from 'lucide-react';
+import { LayoutDashboard, FileText, Eye, Send, CheckCircle, Settings, ChevronDown, Building2, UserCog, GitBranch, FolderKanban, WalletCards, FileSignature, ReceiptText, FileCheck2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { PAGE_DESCRIPTIONS } from '@/utils/constants';
 import { useLogger } from '@/hooks/useLogger';
@@ -18,7 +18,15 @@ const mainNavItems = [
 const adminSubItems = [
   { key: 'admin-tenants', label: '租户管理', path: '/admin/tenants', icon: 'Building2' },
   { key: 'admin-accounts', label: '账号管理', path: '/admin/accounts', icon: 'UserCog' },
+  { key: 'admin-projects', label: '项目管理', path: '/admin/projects', icon: 'FolderKanban' },
   { key: 'admin-approval-flows', label: '审批流配置', path: '/admin/approval-flows', icon: 'GitBranch' },
+];
+
+const financeSubItems = [
+  { key: 'finance-overview', label: '业财总览', path: '/finance', icon: 'WalletCards' },
+  { key: 'finance-contracts', label: '合同与订阅', path: '/finance/contracts', icon: 'FileSignature' },
+  { key: 'finance-billing', label: '账单引擎', path: '/finance/billing', icon: 'ReceiptText' },
+  { key: 'finance-invoicing', label: '价值交付与开票', path: '/finance/invoicing', icon: 'FileCheck2' },
 ];
 
 const iconMap: Record<string, React.ReactNode> = {
@@ -31,6 +39,11 @@ const iconMap: Record<string, React.ReactNode> = {
   Building2: <Building2 size={16} />,
   UserCog: <UserCog size={16} />,
   GitBranch: <GitBranch size={16} />,
+  FolderKanban: <FolderKanban size={16} />,
+  WalletCards: <WalletCards size={16} />,
+  FileSignature: <FileSignature size={16} />,
+  ReceiptText: <ReceiptText size={16} />,
+  FileCheck2: <FileCheck2 size={16} />,
 };
 
 export function Sidebar(): JSX.Element {
@@ -42,10 +55,13 @@ export function Sidebar(): JSX.Element {
   const [adminExpanded, setAdminExpanded] = useState(
     location.pathname.startsWith('/admin') || location.pathname === '/platform-management'
   );
+  const [financeExpanded, setFinanceExpanded] = useState(location.pathname.startsWith('/finance'));
 
   const isAdminActive = location.pathname.startsWith('/admin') || location.pathname === '/platform-management';
+  const isFinanceActive = location.pathname.startsWith('/finance');
   const activeKey =
     adminSubItems.find((item) => item.path === location.pathname)?.key ||
+    financeSubItems.find((item) => item.path === location.pathname)?.key ||
     mainNavItems.find((item) => location.pathname === item.path || location.pathname.startsWith(`${item.path}/`))?.key ||
     (location.pathname === '/settings' ? 'settings' : undefined) ||
     (location.pathname === '/platform-management' ? 'admin-tenants' : 'overview');
@@ -59,6 +75,13 @@ export function Sidebar(): JSX.Element {
     setAdminExpanded(!adminExpanded);
     if (!adminExpanded && !isAdminActive) {
       navigate('/admin/tenants');
+    }
+  };
+
+  const toggleFinance = () => {
+    setFinanceExpanded(!financeExpanded);
+    if (!financeExpanded && !isFinanceActive) {
+      navigate('/finance');
     }
   };
 
@@ -119,6 +142,47 @@ export function Sidebar(): JSX.Element {
           {isOps && adminExpanded && (
             <div className="ml-4 pl-3 border-l border-border/50 flex flex-col gap-0.5">
               {adminSubItems.map((item) => (
+                <button
+                  key={item.key}
+                  onClick={() => handleNavClick(item.path, item.label)}
+                  className={clsx(
+                    'flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-colors duration-150 text-left w-full',
+                    activeKey === item.key
+                      ? 'bg-accent-blue/10 text-accent-blue'
+                      : 'text-text-muted hover:bg-bg-tertiary hover:text-text-primary'
+                  )}
+                >
+                  {iconMap[item.icon]}
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {isOps && (
+            <button
+              onClick={toggleFinance}
+              className={clsx(
+                'flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 text-left w-full',
+                isFinanceActive
+                  ? 'bg-gradient-to-r from-accent-purple/20 to-accent-blue/10 text-accent-blue border-l-2 border-accent-blue'
+                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+              )}
+            >
+              <div className="flex items-center gap-3">
+                {iconMap.WalletCards}
+                <span>财务管理</span>
+              </div>
+              <ChevronDown
+                size={14}
+                className={clsx('transition-transform duration-200', financeExpanded ? 'rotate-180' : '')}
+              />
+            </button>
+          )}
+
+          {isOps && financeExpanded && (
+            <div className="ml-4 pl-3 border-l border-border/50 flex flex-col gap-0.5">
+              {financeSubItems.map((item) => (
                 <button
                   key={item.key}
                   onClick={() => handleNavClick(item.path, item.label)}

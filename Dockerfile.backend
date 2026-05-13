@@ -38,10 +38,11 @@ USER nodejs
 
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV DB_CLIENT=sqlite
 ENV DB_PATH=/app/data/pxlite.db
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget -q --spider http://localhost:3001/api/health || exit 1
+  CMD wget -q --spider http://127.0.0.1:3001/api/ready || exit 1
 
 EXPOSE 3001
 

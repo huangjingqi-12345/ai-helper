@@ -33,6 +33,7 @@ export interface Content {
   priority: ContentPriority;
   author: string;
   excerpt?: string;
+  projectBrief?: string;
   content: string;
   tags: string[];
   pushCount?: number;

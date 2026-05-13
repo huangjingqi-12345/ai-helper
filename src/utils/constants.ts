@@ -10,6 +10,7 @@ export const NAV_ITEMS = [
   { key: 'distribution-strategy', label: '分发策略', path: '/distribute', icon: 'Send' },
   { key: 'approval-center', label: '审批中心', path: '/approvals', icon: 'CheckCircle' },
   { key: 'platform-management', label: '平台管理', path: '/admin', icon: 'Settings' },
+  { key: 'finance-management', label: '财务管理', path: '/finance', icon: 'Wallet' },
 ] as const;
 
 export const PAGE_DESCRIPTIONS: Record<string, string> = {
@@ -19,6 +20,12 @@ export const PAGE_DESCRIPTIONS: Record<string, string> = {
   'distribution-strategy': '配置内容分发策略，设置目标受众、推送时间和频率。',
   'approval-center': '审批待发布的患教内容，确保内容质量和合规性。',
   'platform-management': '管理平台用户、角色权限和系统设置。',
+  'admin-projects': '按租户与病种组织患教项目，登记项目基础信息与关联诉求。',
+  'finance-management': '串联合同、订阅、账单、对账、价值报告与开票的业财链路。',
+  'finance-overview': '业财总览：收入、回款、预算占用与待办速览。',
+  'finance-contracts': '合同与订阅：客户主数据、合同条款与订阅版本。',
+  'finance-billing': '账单引擎：月度固定费排期、对账、催款和状态跟踪。',
+  'finance-invoicing': '价值交付与开票：交付报告自动转开票指令。',
 };
 
 export const CONTENT_STATUS_MAP = {
@@ -68,11 +75,11 @@ export const PROJECT_COLOR_MAP: Record<string, string> = {
 };
 
 export const CONTENT_TYPE_LABELS: Record<string, string> = {
-  article: '图文文章',
+  article: '长图文',
   video: '短视频',
-  infographic: '海报 / 长图',
+  infographic: '海报',
   quiz: '测验',
-  qa: '问答 / 问卷',
-  checklist: '自查清单',
-  poster: '海报 / 长图',
+  qa: '长图文',
+  checklist: '手册',
+  poster: '海报',
 };

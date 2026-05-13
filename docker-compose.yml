@@ -9,7 +9,7 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: pxlite-frontend
     ports:
-      - "80:80"
+      - "9973:80"
     depends_on:
       backend:
         condition: service_healthy
@@ -23,17 +23,25 @@ services:
       dockerfile: Dockerfile.backend
     container_name: pxlite-backend
     ports:
-      - "3001:3001"
+      # Keep the backend reachable from the host without colliding with a local dev server on 3001.
+      # The frontend container still reaches it internally as http://backend:3001.
+      - "${BACKEND_HOST_PORT:-3002}:3001"
     environment:
       - NODE_ENV=production
       - PORT=3001
+      - DB_CLIENT=sqlite
       - DB_PATH=/app/data/pxlite.db
+      # This compose file is the local demo stack; seed sample data so the UI has content.
+      - RUN_DEMO_SEED=true
+      # Demo stack: frontend has no login screen, so allow backend dev user fallback.
+      # Disable this and provide OIDC settings for real production auth.
+      - ALLOW_DEMO_AUTH=true
     volumes:
       - pxlite-db:/app/data
       - pxlite-logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/api/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/api/ready"]
       interval: 30s
       timeout: 3s
       start_period: 10s

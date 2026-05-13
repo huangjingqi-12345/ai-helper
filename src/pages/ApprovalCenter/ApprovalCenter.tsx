@@ -13,7 +13,7 @@ import type { ApprovalTask } from '@/types/approval';
 
 type ApprovalFilter = 'pending' | 'approved' | 'rejected' | 'all';
 
-const flowNodes = ['DX 小编审核', '系统预检', 'PX 运营审核', '药企医学审核', '药企市场部审核'];
+const flowNodes = ['医生制作', '编辑审核', 'AI 预审', 'Px 审核', '药企审核'];
 
 export function ApprovalCenter(): JSX.Element {
   const { log } = useLogger('ApprovalCenter');
@@ -86,7 +86,7 @@ export function ApprovalCenter(): JSX.Element {
       <div className="space-y-3">
         <Badge color="blue" className="text-[10px] uppercase tracking-wider">Approvals · Ops</Badge>
         <h1 className="text-2xl font-bold text-text-primary">审批中心</h1>
-        <p className="text-sm text-text-secondary max-w-3xl">DX 小编 / 系统预检 / PX 运营 三个内部节点的代办与全量轨迹；可针对每条内容做「通过 / 不通过 + 修改建议」。</p>
+        <p className="text-sm text-text-secondary max-w-3xl">DX 小编 / AI 预审 / PX 运营 三个内部节点的代办与全量轨迹；可针对每条内容做「通过 / 不通过 + 修改建议」。</p>
         <div className="flex flex-wrap items-center gap-3 text-xs text-text-muted">
           <span>租户：Px Ops</span><span>当前流：PX 默认审批流</span><span>共 5 个节点</span><span>打回策略：回到提交人</span>
           <Link to="/admin/approval-flows" className="text-accent-blue hover:underline">审批流配置</Link>
@@ -146,7 +146,7 @@ export function ApprovalCenter(): JSX.Element {
             </div>
             <div>
               <div className="mb-2 text-sm font-medium text-text-primary">审批历史</div>
-              <div className="space-y-2 text-xs text-text-muted"><div>提交 · 作者 · 郑医生 <span className="float-right">2026-04-11</span></div><div>通过 · DX 小编审核 · DX-阿杰 <span className="float-right">2026-04-12</span></div><div>通过 · 系统预检 · 系统预检服务 <span className="float-right">2026-04-13</span></div><div>意见：系统预检通过</div></div>
+              <div className="space-y-2 text-xs text-text-muted"><div>提交 · 作者 · 郑医生 <span className="float-right">2026-04-11</span></div><div>通过 · 编辑审核 · DX-阿杰 <span className="float-right">2026-04-12</span></div><div>通过 · AI 预审 · AI 预审服务 <span className="float-right">2026-04-13</span></div><div>意见：AI 预审通过</div></div>
             </div>
             <div>
               <div className="mb-2 text-sm font-medium text-text-primary">在「{selected.node}」节点处理</div>

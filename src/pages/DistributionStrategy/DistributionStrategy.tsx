@@ -151,8 +151,8 @@ export function DistributionStrategy(): JSX.Element {
 
               <div className="mt-4 grid grid-cols-3 gap-3">
                 <div className="rounded-lg bg-bg-card p-3"><div className="text-[10px] text-text-muted">总量</div><div className="font-mono text-sm text-text-primary">{project.totalPieces} 篇</div></div>
-                <div className="rounded-lg bg-bg-card p-3"><div className="text-[10px] text-text-muted">节奏</div><div className="font-mono text-sm text-text-primary">{project.cadence}</div></div>
-                <div className="rounded-lg bg-bg-card p-3"><div className="text-[10px] text-text-muted">患者上限</div><div className="font-mono text-sm text-text-primary">{formatNumber(project.patientCap)} 人</div></div>
+                <div className="rounded-lg bg-bg-card p-3"><div className="text-[10px] text-text-muted">主题 × 形式</div><div className="font-mono text-sm text-text-primary">{project.cadence}</div></div>
+                <div className="rounded-lg bg-bg-card p-3"><div className="text-[10px] text-text-muted">诉求</div><div className="font-mono text-sm text-text-primary">{project.topics.length} 条</div></div>
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
@@ -166,6 +166,7 @@ export function DistributionStrategy(): JSX.Element {
                 <span>当前节点：{project.currentNode}</span>
                 <span className="inline-flex items-center gap-1"><FileText className="w-3 h-3" />关联内容 {project.contentCount}</span>
                 <span className="inline-flex items-center gap-1"><Users className="w-3 h-3" />已发布 {project.publishedCount}</span>
+                <span>患者上限 {formatNumber(project.patientCap)} 人</span>
                 <span className="text-accent-blue">进入项目</span>
               </div>
             </button>

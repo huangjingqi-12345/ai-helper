@@ -79,6 +79,8 @@ export interface DistributionProject {
   currentNode: string;
   contentCount: number;
   publishedCount: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DoctorCandidate {

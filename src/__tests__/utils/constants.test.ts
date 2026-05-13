@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { NAV_ITEMS, CONTENT_STATUS_MAP, STRATEGY_STATUS_MAP, ROLE_MAP, PAGE_DESCRIPTIONS } from '@/utils/constants';
 
 describe('NAV_ITEMS', () => {
-  it('contains 6 navigation items', () => {
-    expect(NAV_ITEMS).toHaveLength(6);
+  it('contains 7 navigation items', () => {
+    expect(NAV_ITEMS).toHaveLength(7);
   });
 
   it('each item has key, label, path, and icon', () => {

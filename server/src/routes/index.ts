@@ -12,6 +12,7 @@ import ingestRoutes from './ingest.js';
 import importRoutes from './imports.js';
 import exportRoutes from './exports.js';
 import { authenticate } from '../middleware/auth.js';
+import { DB_DRIVER, dbGet } from '../db/connection.js';
 
 const router = Router();
 
@@ -24,11 +25,33 @@ router.get('/health', (_req, res) => {
   });
 });
 
-router.get('/ready', (_req, res) => {
-  res.json({
-    status: 'ready',
-    timestamp: new Date().toISOString(),
-  });
+router.get('/ready', async (_req, res) => {
+  try {
+    const db = await dbGet<{ ok: number | string }>('SELECT 1 AS ok');
+
+    if (Number(db?.ok) !== 1) {
+      throw new Error('database readiness query returned no result');
+    }
+
+    res.json({
+      status: 'ready',
+      database: {
+        driver: DB_DRIVER,
+        connected: true,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'not_ready',
+      database: {
+        driver: DB_DRIVER,
+        connected: false,
+      },
+      message: error instanceof Error ? error.message : 'database readiness check failed',
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // Everything below this line requires authenticated context in production.

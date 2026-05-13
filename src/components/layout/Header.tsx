@@ -9,7 +9,15 @@ import { NAV_ITEMS, APP_VERSION } from '@/utils/constants';
 const adminLabels: Record<string, string> = {
   '/admin/tenants': '租户管理',
   '/admin/accounts': '账号管理',
+  '/admin/projects': '项目管理',
   '/admin/approval-flows': '审批流配置',
+};
+
+const financeLabels: Record<string, string> = {
+  '/finance': '业财总览',
+  '/finance/contracts': '合同与订阅',
+  '/finance/billing': '账单引擎',
+  '/finance/invoicing': '价值交付与开票',
 };
 
 export function Header(): JSX.Element {
@@ -29,8 +37,11 @@ export function Header(): JSX.Element {
       : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`),
   );
   const adminLabel = adminLabels[location.pathname];
+  const financeLabel = financeLabels[location.pathname];
   const pageLabel = adminLabel
     ? `平台管理 / ${adminLabel}`
+    : financeLabel
+      ? `财务管理 / ${financeLabel}`
     : location.pathname === '/settings'
       ? '设置'
     : currentNav?.label || '总览';
@@ -43,7 +54,7 @@ export function Header(): JSX.Element {
             <span className="text-white font-mono text-xs font-bold">Px</span>
           </div>
           <span className="font-mono font-bold text-text-primary text-sm">Px Lite</span>
-          <span className="text-xs text-text-muted">患教运营 · 行为洞察</span>
+          <span className="text-xs text-text-muted">极简版 · 行为洞察</span>
         </div>
         <div className="text-text-muted text-xs">|</div>
         <div className="text-xs text-text-secondary">
@@ -107,7 +118,7 @@ export function Header(): JSX.Element {
                       onClick={() => {
                         setTenant(tenant.id);
                         setPxOpsOpen(false);
-                        if (tenant.type === 'pharma' && (location.pathname.startsWith('/admin') || location.pathname.startsWith('/distribute'))) {
+                        if (tenant.type === 'pharma' && (location.pathname.startsWith('/admin') || location.pathname.startsWith('/distribute') || location.pathname.startsWith('/finance'))) {
                           navigate('/');
                         }
                       }}

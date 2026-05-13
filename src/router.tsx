@@ -10,8 +10,10 @@ import { ApprovalCenter } from '@/pages/ApprovalCenter/ApprovalCenter';
 import { PlatformManagement } from '@/pages/PlatformManagement/PlatformManagement';
 import { TenantManagement } from '@/pages/Admin/TenantManagement';
 import { AccountManagement } from '@/pages/Admin/AccountManagement';
+import { ProjectManagement } from '@/pages/Admin/ProjectManagement';
 import { ApprovalFlowConfig } from '@/pages/Admin/ApprovalFlowConfig';
 import { Settings } from '@/pages/Settings/Settings';
+import { FinanceBilling, FinanceContracts, FinanceInvoicing, FinanceOverview } from '@/pages/Finance/FinancePages';
 
 export const router = createBrowserRouter([
   {
@@ -33,10 +35,15 @@ export const router = createBrowserRouter([
       { path: 'approval-center', element: <ApprovalCenter /> },
       { path: 'platform-management', element: <PlatformManagement /> },
       { path: 'settings', element: <Settings /> },
+      { path: 'finance', element: <FinanceOverview /> },
+      { path: 'finance/contracts', element: <FinanceContracts /> },
+      { path: 'finance/billing', element: <FinanceBilling /> },
+      { path: 'finance/invoicing', element: <FinanceInvoicing /> },
       // Admin sub-pages
       { path: 'admin', element: <Navigate to="/admin/tenants" replace /> },
       { path: 'admin/tenants', element: <TenantManagement /> },
       { path: 'admin/accounts', element: <AccountManagement /> },
+      { path: 'admin/projects', element: <ProjectManagement /> },
       { path: 'admin/approval-flows', element: <ApprovalFlowConfig /> },
     ],
   },

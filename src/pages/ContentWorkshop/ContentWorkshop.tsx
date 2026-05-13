@@ -46,6 +46,14 @@ const PIPELINE_OPTIONS = [
   { value: 'published', label: '已发布' },
 ];
 
+const CONTENT_PROJECT_BRIEFS: Record<string, string> = {
+  'CNT-101': '项目 · 诺欣妥 · 慢性心衰患教计划 · 诉求 · 利尿剂调整 · 出院 30 天指引',
+  'CNT-102': '项目 · 诺欣妥 · 慢性心衰患教计划 · 诉求 · 心衰营养 · 低盐调查表',
+  'CNT-103': '项目 · 优泌乐 · 胰岛素手法规范 · 诉求 · 注射部位轮换 · 8 步图示升级',
+  'CNT-104': '项目 · 甲氨蝶呤 · RA 用药依从性 · 诉求 · 周服法术语解读手册',
+  'CNT-105': '项目 · 赫赛汀 · HER2+ 术后随访教育 · 诉求 · 术后护理 KOL 解读海报',
+};
+
 export function ContentWorkshop(): JSX.Element {
   const { items, total, loading, error, filter, setFilter, fetchList, create } = useContentStore();
   const { log } = useLogger('ContentWorkshop');
@@ -110,6 +118,11 @@ export function ContentWorkshop(): JSX.Element {
       render: (item: Content) => (
         <div>
           <div className="font-medium text-text-primary">{item.title}</div>
+          {(item.projectBrief || CONTENT_PROJECT_BRIEFS[item.id]) && (
+            <div className="mt-0.5 max-w-[440px] truncate text-xs text-text-muted">
+              {item.projectBrief || CONTENT_PROJECT_BRIEFS[item.id]}
+            </div>
+          )}
           <div className="text-xs text-text-muted mt-0.5 flex items-center gap-2">
             <span>{item.id.toUpperCase()}</span>
             <span>·</span>

@@ -267,6 +267,14 @@ async function seedDistributionProjects(now: string): Promise<void> {
     `, [project.id, project.tenantId, project.title, project.priority, project.status, project.brand, project.disease, project.owner, project.expectedDate, project.totalPieces, project.cadence, project.patientCap, json(project.topics), project.formats, project.approvalFlow, project.progress, project.currentNode, project.contentCount, project.publishedCount, now, now]);
   }
 
+  const activeProjectIds = distributionProjects.map((project) => project.id);
+  if (activeProjectIds.length > 0) {
+    await run(
+      `DELETE FROM distribution_projects WHERE id LIKE 'PRJ-%' AND id NOT IN (${activeProjectIds.map(() => '?').join(', ')})`,
+      activeProjectIds,
+    );
+  }
+
   for (const doctor of doctorCandidates) {
     await run(`
       INSERT INTO doctors (id, name, title, department, region, hospital, status, created_at, updated_at)
@@ -334,7 +342,7 @@ async function seedApproval(now: string): Promise<void> {
   await replaceRowsForSqlite(['approval_task_actions', 'approval_tasks', 'approval_flow_nodes', 'approval_flows', 'approval_items']);
 
   const flows = [
-    ['flow-1', 'T-PX', 'PX 默认审批流', '医生制作 → DX 小编 → 系统预检 → PX 运营 → 药企医学 → 药企市场部 → 发布', 'active', 'submitter', '2026-04-20T00:00:00Z', now],
+    ['flow-1', 'T-PX', 'PX 默认审批流', '医生制作 → 编辑审核 → AI 预审 → Px 审核 → 药企审核 → 发布', 'active', 'submitter', '2026-04-20T00:00:00Z', now],
     ['flow-2', 'T-PX', 'PX 快速流（品牌通识类）', '品牌通识内容快速审核链路', 'inactive', 'previous', '2026-03-15T00:00:00Z', now],
     ['flow-nv-standard', 'T-NV', '诺华 · 标准审批流', '诺华医学与市场审核链路', 'active', 'submitter', '2026-04-18T00:00:00Z', now],
     ['flow-az-standard', 'T-AZ', '阿斯利康 · 标准审批流', '阿斯利康医学审核链路', 'active', 'submitter', '2026-04-18T00:00:00Z', now],
@@ -355,19 +363,19 @@ async function seedApproval(now: string): Promise<void> {
   }
 
   const flowNodes: Array<[string, string, number, string, string, number, string]> = [
-    ['flow-1-node-1', 'flow-1', 1, 'DX 小编审核', 'dx_editor', 24, 'remind_only'],
-    ['flow-1-node-2', 'flow-1', 2, '系统预检', 'system_precheck', 2, 'auto_pass'],
-    ['flow-1-node-3', 'flow-1', 3, 'PX 运营审核', 'px_ops', 24, 'remind_only'],
-    ['flow-1-node-4', 'flow-1', 4, '药企医学审核', 'pharma_med', 48, 'escalate'],
-    ['flow-1-node-5', 'flow-1', 5, '药企市场部', 'pharma_mkt', 48, 'remind_only'],
-    ['flow-2-node-1', 'flow-2', 1, 'DX 小编审核', 'dx_editor', 12, 'remind_only'],
-    ['flow-2-node-2', 'flow-2', 2, 'PX 运营审核', 'px_ops', 24, 'auto_pass'],
-    ['flow-2-node-3', 'flow-2', 3, '药企医学审核', 'pharma_med', 24, 'remind_only'],
-    ['flow-nv-node-1', 'flow-nv-standard', 1, 'DX 小编审核', 'dx_editor', 24, 'remind_only'],
-    ['flow-nv-node-2', 'flow-nv-standard', 2, 'PX 运营审核', 'px_ops', 24, 'remind_only'],
-    ['flow-nv-node-3', 'flow-nv-standard', 3, '药企医学审核', 'pharma_med', 48, 'escalate'],
-    ['flow-az-node-1', 'flow-az-standard', 1, 'DX 小编审核', 'dx_editor', 24, 'remind_only'],
-    ['flow-az-node-2', 'flow-az-standard', 2, '药企医学审核', 'pharma_med', 48, 'escalate'],
+    ['flow-1-node-1', 'flow-1', 1, '编辑审核', 'dx_editor', 24, 'remind_only'],
+    ['flow-1-node-2', 'flow-1', 2, 'AI 预审', 'system_precheck', 2, 'auto_pass'],
+    ['flow-1-node-3', 'flow-1', 3, 'Px 审核', 'px_ops', 24, 'remind_only'],
+    ['flow-1-node-4', 'flow-1', 4, '药企审核', 'pharma_med', 48, 'escalate'],
+    ['flow-1-node-5', 'flow-1', 5, '药企市场部审核', 'pharma_mkt', 48, 'remind_only'],
+    ['flow-2-node-1', 'flow-2', 1, '编辑审核', 'dx_editor', 12, 'remind_only'],
+    ['flow-2-node-2', 'flow-2', 2, 'Px 审核', 'px_ops', 24, 'auto_pass'],
+    ['flow-2-node-3', 'flow-2', 3, '药企审核', 'pharma_med', 24, 'remind_only'],
+    ['flow-nv-node-1', 'flow-nv-standard', 1, '编辑审核', 'dx_editor', 24, 'remind_only'],
+    ['flow-nv-node-2', 'flow-nv-standard', 2, 'Px 审核', 'px_ops', 24, 'remind_only'],
+    ['flow-nv-node-3', 'flow-nv-standard', 3, '药企审核', 'pharma_med', 48, 'escalate'],
+    ['flow-az-node-1', 'flow-az-standard', 1, '编辑审核', 'dx_editor', 24, 'remind_only'],
+    ['flow-az-node-2', 'flow-az-standard', 2, '药企审核', 'pharma_med', 48, 'escalate'],
   ];
 
   for (const node of flowNodes) {

@@ -20,6 +20,17 @@ Px Lite is a pharma patient-education content operations and aggregate engagemen
 - `RUN_DEMO_SEED=true` is required to seed demo data in production; otherwise only schema/migration checks run.
 - `EXPORT_URL_TTL_MINUTES` controls time-limited CSV download links; exports include a tenant/user/time watermark.
 
+## Docker connection model
+
+- Browser traffic enters the frontend container through nginx on `http://localhost:9973`.
+- The production frontend build uses `VITE_API_BASE_URL=/api`, so API calls stay same-origin.
+- nginx proxies `/api/*` to the backend service over the Docker network at `http://backend:3001`.
+- The backend uses SQLite in the demo compose stack with `DB_CLIENT=sqlite` and `DB_PATH=/app/data/pxlite.db`.
+- The SQLite file persists in the `pxlite-db` Docker volume mounted at `/app/data`.
+- The demo compose stack sets `RUN_DEMO_SEED=true` so the frontend has populated sample data after startup.
+- The backend readiness check is `GET /api/ready`; it executes `SELECT 1 AS ok` and reports the active database driver.
+- Direct host access to the backend defaults to `http://localhost:3002` to avoid colliding with a local dev server on `3001`; set `BACKEND_HOST_PORT=3001` before `docker compose up` if `3001` is free.
+
 ## GA gaps that remain external to code
 
 - Customer IdP configuration and SSO contract testing.
