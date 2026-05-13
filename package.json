@@ -20,10 +20,12 @@
     "test:server": "cd server && npm run test",
     "test:all": "bash scripts/test.sh",
     "db:reset": "bash scripts/db-reset.sh",
+    "docker:dev": "bash scripts/docker-dev.sh",
     "docker:build": "bash scripts/docker-build.sh",
-    "docker:up": "docker compose up -d",
-    "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f",
+    "docker:up": "bash scripts/docker-dev.sh",
+    "docker:down": "docker compose --env-file .env.compose.development.local down",
+    "docker:logs": "docker compose --env-file .env.compose.development.local logs -f",
+    "docker:prod": "bash scripts/deploy.sh",
     "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {

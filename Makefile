@@ -3,7 +3,7 @@
 # ============================================
 
 .PHONY: help setup dev test test-watch build clean \
-        docker-build docker-up docker-down docker-logs docker-restart \
+        docker-build docker-dev docker-up docker-down docker-logs docker-restart \
         deploy db-reset
 
 # Default target
@@ -70,23 +70,25 @@ build-all: build build-backend ## Build everything
 docker-build: ## Build Docker images
 	@bash scripts/docker-build.sh
 
-docker-up: ## Start Docker containers
-	docker compose up -d
+docker-dev: ## Start local Docker stack with SQLite
+	@bash scripts/docker-dev.sh
+
+docker-up: docker-dev ## Alias: start local Docker stack with SQLite
 
 docker-down: ## Stop Docker containers
-	docker compose down
+	docker compose --env-file .env.compose.development.local down
 
 docker-logs: ## View Docker container logs
-	docker compose logs -f
+	docker compose --env-file .env.compose.development.local logs -f
 
 docker-restart: ## Restart Docker containers
-	docker compose restart
+	docker compose --env-file .env.compose.development.local restart
 
 docker-status: ## Show Docker container status
-	docker compose ps
+	docker compose --env-file .env.compose.development.local ps
 
 docker-clean: ## Remove Docker images and volumes
-	docker compose down -v --rmi local
+	docker compose --env-file .env.compose.development.local down -v --rmi local
 
 # ============================================
 # Database
@@ -102,9 +104,8 @@ db-reset: ## Reset database (delete and re-seed on next start)
 deploy: ## Full deployment pipeline (test → build → deploy)
 	@bash scripts/deploy.sh
 
-deploy-skip-tests: ## Deploy without running tests
-	@bash scripts/docker-build.sh
-	docker compose up -d
+deploy-skip-tests: ## Deploy production compose without tests
+	docker compose --env-file .env.compose.production.local -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 # ============================================
 # Utilities

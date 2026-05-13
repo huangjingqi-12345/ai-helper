@@ -25,9 +25,13 @@ Px Lite is a pharma patient-education content operations and aggregate engagemen
 - Browser traffic enters the frontend container through nginx on `http://localhost:9973`.
 - The production frontend build uses `VITE_API_BASE_URL=/api`, so API calls stay same-origin.
 - nginx proxies `/api/*` to the backend service over the Docker network at `http://backend:3001`.
-- The backend uses SQLite in the demo compose stack with `DB_CLIENT=sqlite` and `DB_PATH=/app/data/pxlite.db`.
+- Local development uses SQLite by default. Running `npm run dev:all` without `DB_CLIENT` or `DATABASE_URL` creates/uses `server/data/pxlite.db`.
+- The local demo compose stack also uses SQLite with `DB_CLIENT=sqlite` and `DB_PATH=/app/data/pxlite.db`.
 - The SQLite file persists in the `pxlite-db` Docker volume mounted at `/app/data`.
 - The demo compose stack sets `RUN_DEMO_SEED=true` so the frontend has populated sample data after startup.
+- Production uses PostgreSQL by applying `docker-compose.prod.yml` and providing `DATABASE_URL`, for example:
+  `docker compose --env-file .env.compose.production.local -f docker-compose.yml -f docker-compose.prod.yml up -d --build`.
+- PostgreSQL connection strings should use `postgresql://user:password@host:5432/database` or `postgres://...`; convert Python/SQLAlchemy strings such as `postgresql+psycopg://...` by removing `+psycopg`.
 - The backend readiness check is `GET /api/ready`; it executes `SELECT 1 AS ok` and reports the active database driver.
 - Direct host access to the backend defaults to `http://localhost:3002` to avoid colliding with a local dev server on `3001`; set `BACKEND_HOST_PORT=3001` before `docker compose up` if `3001` is free.
 

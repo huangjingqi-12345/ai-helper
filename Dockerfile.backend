@@ -38,8 +38,10 @@ USER nodejs
 
 ENV NODE_ENV=production
 ENV PORT=3001
-ENV DB_CLIENT=sqlite
-ENV DB_PATH=/app/data/pxlite.db
+# Database mode is selected at runtime.
+# - Local docker-compose sets DB_CLIENT=sqlite and DB_PATH=/app/data/pxlite.db.
+# - Production should set DB_CLIENT=postgres plus DATABASE_URL, or at least DATABASE_URL.
+# Do not bake production database credentials into the image.
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD wget -q --spider http://127.0.0.1:3001/api/ready || exit 1

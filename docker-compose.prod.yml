@@ -1,0 +1,27 @@
+# ============================================
+# Px Lite — Production Docker Compose override
+#
+# Usage:
+#   cp .env.compose.production.example .env.compose.production.local
+#   # edit .env.compose.production.local with real secret values
+#   docker compose --env-file .env.compose.production.local \
+#     -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# ============================================
+
+services:
+  backend:
+    environment:
+      # Production uses PostgreSQL. Use a Node/Postgres DSN such as:
+      # postgresql://user:password@host:5432/database
+      # If you received a SQLAlchemy/Python DSN like postgresql+psycopg://...,
+      # remove "+psycopg" before using it here.
+      DB_CLIENT: postgres
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required for production PostgreSQL}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
+      PGSSLMODE: ${PGSSLMODE:-disable}
+      PG_POOL_MAX: ${PG_POOL_MAX:-10}
+
+      # Production should not seed demo data or allow unauthenticated demo fallback
+      # unless you intentionally override these values for a demo environment.
+      RUN_DEMO_SEED: ${RUN_DEMO_SEED:-false}
+      ALLOW_DEMO_AUTH: ${ALLOW_DEMO_AUTH:-false}
