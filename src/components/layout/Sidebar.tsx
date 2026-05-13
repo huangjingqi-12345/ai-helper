@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import { PAGE_DESCRIPTIONS } from '@/utils/constants';
 import { useLogger } from '@/hooks/useLogger';
 import { useTenantStore } from '@/stores/useTenantStore';
+import { showToast } from '@/components/ui/Toast';
 
 const mainNavItems = [
   { key: 'overview', label: '总览', path: '/', icon: 'LayoutDashboard' },
@@ -37,6 +38,7 @@ export function Sidebar(): JSX.Element {
   const navigate = useNavigate();
   const { log } = useLogger('Sidebar');
   const { isOps } = useTenantStore();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(
     location.pathname.startsWith('/admin') || location.pathname === '/platform-management'
   );
@@ -57,6 +59,14 @@ export function Sidebar(): JSX.Element {
     setAdminExpanded(!adminExpanded);
     if (!adminExpanded && !isAdminActive) {
       navigate('/admin/tenants');
+    }
+  };
+
+  const openSettings = (section: 'account' | 'team'): void => {
+    setUserMenuOpen(false);
+    handleNavClick('/settings', section === 'account' ? '账号设置' : '团队管理');
+    if (section === 'team') {
+      showToast('已打开团队管理', 'info');
     }
   };
 
@@ -137,21 +147,56 @@ export function Sidebar(): JSX.Element {
         </p>
       </div>
 
-      <div className="mt-auto px-4 py-4 border-t border-border">
+      <div className="relative mt-auto px-4 py-4 border-t border-border">
+        {userMenuOpen && (
+          <>
+            <button
+              aria-label="关闭用户菜单"
+              className="fixed inset-0 z-20 cursor-default"
+              onClick={() => setUserMenuOpen(false)}
+              tabIndex={-1}
+            />
+            <div className="absolute bottom-[86px] left-4 z-30 w-[200px] overflow-hidden rounded-lg border border-border-light bg-bg-card shadow-[0_18px_48px_rgba(0,0,0,0.38)]">
+              <div className="border-b border-border px-4 py-3 text-xs text-text-primary">系统管理员</div>
+              <button
+                onClick={() => openSettings('account')}
+                className="block w-full border-b border-border px-4 py-3 text-left text-xs text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
+              >
+                账号设置
+              </button>
+              <button
+                onClick={() => openSettings('team')}
+                className="block w-full border-b border-border px-4 py-3 text-left text-xs text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
+              >
+                团队管理
+              </button>
+              <button
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  showToast('已演示退出登录', 'info');
+                }}
+                className="block w-full px-4 py-3 text-left text-xs text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-accent-red"
+              >
+                退出登录
+              </button>
+            </div>
+          </>
+        )}
         <button
-          onClick={() => handleNavClick('/settings', '设置')}
+          onClick={() => setUserMenuOpen((open) => !open)}
           className={clsx(
             'flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors',
             activeKey === 'settings' ? 'bg-gradient-to-r from-accent-purple/20 to-accent-blue/10 text-accent-blue' : 'hover:bg-bg-tertiary',
           )}
         >
-          <div className="w-8 h-8 rounded-full bg-accent-blue/20 flex items-center justify-center text-accent-blue text-xs font-bold">
-            管
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-500/20 text-xs font-bold text-teal-300">
+            系
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="text-sm text-text-primary">系统管理员</div>
             <div className="text-xs text-text-muted">华东区域 · admin</div>
           </div>
+          <ChevronDown size={14} className={clsx('shrink-0 text-text-muted transition-transform', userMenuOpen && 'rotate-180')} />
         </button>
       </div>
     </aside>
