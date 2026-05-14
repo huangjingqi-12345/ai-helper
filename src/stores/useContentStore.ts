@@ -1,12 +1,21 @@
 import { create } from 'zustand';
-import type { Content, ContentFilter } from '@/types';
-import { getContentList, getContentById, createContent, updateContent, deleteContent } from '@/api/endpoints/content';
-import type { CreateContentDTO, UpdateContentDTO } from '@/types';
+import type { Content, ContentFilter, ContentRequestProject } from '@/types';
+import {
+  getContentList,
+  getContentById,
+  createContent,
+  updateContent,
+  deleteContent,
+  getContentRequestProjects,
+  submitContentRequest,
+} from '@/api/endpoints/content';
+import type { CreateContentDTO, SubmitContentRequestDTO, UpdateContentDTO } from '@/types';
 import { logger } from '@/utils/logger';
 
 interface ContentState {
   items: Content[];
   selectedItem: Content | null;
+  requestProjects: ContentRequestProject[];
   total: number;
   loading: boolean;
   error: string | null;
@@ -14,7 +23,9 @@ interface ContentState {
   setFilter: (filter: Partial<ContentFilter>) => void;
   fetchList: () => Promise<void>;
   fetchById: (id: string) => Promise<void>;
+  fetchRequestProjects: () => Promise<void>;
   create: (data: CreateContentDTO) => Promise<void>;
+  submitRequest: (data: SubmitContentRequestDTO) => Promise<Content>;
   update: (id: string, data: UpdateContentDTO) => Promise<void>;
   remove: (id: string) => Promise<void>;
   clearSelected: () => void;
@@ -23,6 +34,7 @@ interface ContentState {
 export const useContentStore = create<ContentState>((set, get) => ({
   items: [],
   selectedItem: null,
+  requestProjects: [],
   total: 0,
   loading: false,
   error: null,
@@ -63,6 +75,18 @@ export const useContentStore = create<ContentState>((set, get) => ({
     }
   },
 
+  fetchRequestProjects: async () => {
+    try {
+      const res = await getContentRequestProjects();
+      set({ requestProjects: res.data });
+      logger.feature('Content request projects loaded', { count: res.data.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load content request projects';
+      set({ error: message });
+      logger.error('Failed to load content request projects', err);
+    }
+  },
+
   create: async (data) => {
     set({ loading: true, error: null });
     try {
@@ -73,6 +97,21 @@ export const useContentStore = create<ContentState>((set, get) => ({
       const message = err instanceof Error ? err.message : 'Failed to create content';
       set({ error: message, loading: false });
       logger.error('Failed to create content', err);
+    }
+  },
+
+  submitRequest: async (data) => {
+    set({ loading: true, error: null });
+    try {
+      const res = await submitContentRequest(data);
+      logger.action('Content request submitted', { requestName: data.requestName, contentId: res.data.content.id });
+      await get().fetchList();
+      return res.data.content;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to submit content request';
+      set({ error: message, loading: false });
+      logger.error('Failed to submit content request', err);
+      throw err;
     }
   },
 

@@ -92,7 +92,7 @@ docker compose --env-file .env.compose.production.local \
 - [ ] PostgreSQL 连接、迁移、备份、恢复演练完成。
 - [ ] OIDC/JWKS/MFA 与客户 IdP 联调完成。
 - [ ] 权限矩阵和字段脱敏验收完成。
-- [ ] 审计日志覆盖审批、导出、权限、设置、内容发布。
+- [ ] 审计日志覆盖审批、导出、权限、设置、内容发布和药企选题诉求提交。
 - [ ] 导出 k-anonymity 阈值和导出审批策略确认。
 - [ ] 财务若进入 v1，财务 DB/API/规则/UAT 完成；否则生产隐藏或标记 demo。
 - [ ] `npm run build:all` 通过。

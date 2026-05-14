@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Search, Filter } from 'lucide-react';
+import { ArrowRight, Search, Filter, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -10,7 +10,9 @@ import { Spinner } from '@/components/ui/Spinner';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PipelineCards } from './PipelineCards';
+import { SubmitRequestModal } from './SubmitRequestModal';
 import { useContentStore } from '@/stores/useContentStore';
+import { useTenantStore } from '@/stores/useTenantStore';
 import { useLogger } from '@/hooks/useLogger';
 import { CONTENT_STATUS_MAP, PIPELINE_STAGE_MAP, CONTENT_TYPE_LABELS } from '@/utils/constants';
 import { formatDateOnly, formatNumber } from '@/utils/formatters';
@@ -25,14 +27,7 @@ const STATUS_OPTIONS = [
 
 const PROJECT_OPTIONS = [
   { value: '', label: '全部项目' },
-  { value: 'proj-diabetes', label: '2型糖尿病' },
   { value: 'proj-breast', label: '乳腺癌' },
-  { value: 'proj-mm', label: '多发性骨髓瘤' },
-  { value: 'proj-hf', label: '慢性心力衰竭' },
-  { value: 'proj-copd', label: '慢阻肺(COPD)' },
-  { value: 'proj-ra', label: '类风湿关节炎' },
-  { value: 'proj-lung', label: '肺癌(NSCLC)' },
-  { value: 'proj-hypertension', label: '高血压' },
 ];
 
 const PIPELINE_STAGE_OPTIONS: PipelineStage[] = [
@@ -45,21 +40,24 @@ const PIPELINE_STAGE_OPTIONS: PipelineStage[] = [
 ];
 
 const CONTENT_PROJECT_BRIEFS: Record<string, string> = {
-  'CNT-101': '项目 · 诺欣妥 · 慢性心衰患教计划 · 诉求 · 利尿剂调整 · 出院 30 天指引',
-  'CNT-102': '项目 · 诺欣妥 · 慢性心衰患教计划 · 诉求 · 心衰营养 · 低盐调查表',
-  'CNT-103': '项目 · 优泌乐 · 胰岛素手法规范 · 诉求 · 注射部位轮换 · 8 步图示升级',
-  'CNT-104': '项目 · 甲氨蝶呤 · RA 用药依从性 · 诉求 · 周服法术语解读手册',
-  'CNT-105': '项目 · 赫赛汀 · HER2+ 术后随访教育 · 诉求 · 术后护理 KOL 解读海报',
+  'CNT-101': '项目 · 赫赛汀 · HER2+ 术后辅助随访计划 · 诉求 · 12 周随访节点提醒',
+  'CNT-102': '项目 · 优赫得 · HER2 ADC 重点随访 · 诉求 · 首输 6 周内安全信号识别',
+  'CNT-103': '项目 · 帕杰特 · HER2+ 双抗联合靶向计划 · 诉求 · 12 周随访节点提醒',
+  'CNT-104': '项目 · 爱博新 · CDK4/6 口服依从性 · 诉求 · 启药 6 周依从性提醒',
+  'CNT-105': '项目 · 他莫昔芬 · 内分泌依从性 · 诉求 · 5 年辅助服药遗忘补救 5 问',
 };
 
 export function ContentWorkshop(): JSX.Element {
   const { items, total, loading, error, filter, setFilter, fetchList } = useContentStore();
+  const { currentTenant, isOps } = useTenantStore();
   const { log } = useLogger('ContentWorkshop');
   const navigate = useNavigate();
   const location = useLocation();
   const [searchTerm, setSearchTerm] = useState('');
   const [activePipelineStage, setActivePipelineStage] = useState<PipelineStage | undefined>();
   const [pageSize, setPageSize] = useState('20');
+  const [submitRequestOpen, setSubmitRequestOpen] = useState(false);
+  const isPharma = !isOps;
 
   useEffect(() => {
     log.nav('Content Workshop page loaded');
@@ -268,9 +266,34 @@ export function ContentWorkshop(): JSX.Element {
         </Badge>
         <h1 className="text-2xl font-bold text-text-primary">患教内容工坊</h1>
         <p className="text-sm text-text-secondary max-w-3xl">
-          运营视图作为合规枢纽：承接药企需求、调度 DX 生产、完成医学审核与上下架；指标仅来自患者侧触达 / 阅读 / 互动。
+          {isPharma
+            ? '药企视图作为诉求方：可发起选题需求、设定优先级与期望上线日；不参与生产、审核与上下架，只可查看已上架内容与抽查样片。'
+            : '运营视图作为合规枢纽：承接药企需求、调度 DX 生产、完成医学审核与上下架；指标仅来自患者侧触达 / 阅读 / 互动。'}
         </p>
       </div>
+
+      {isPharma && (
+        <button
+          type="button"
+          onClick={() => setSubmitRequestOpen(true)}
+          className="group relative w-full overflow-hidden rounded-2xl border border-accent-yellow/40 bg-gradient-to-br from-accent-yellow/15 via-bg-secondary to-bg-tertiary p-5 text-left transition-colors hover:border-accent-yellow/70"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-xl bg-accent-purple/20 text-accent-purple">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-base font-semibold text-text-primary">发起选题需求</div>
+                <div className="mt-1 text-xs text-text-secondary">
+                  {currentTenant.shortName} 作为诉求方提交主题、优先级与期望上线日，运营接单后排期生产。
+                </div>
+              </div>
+            </div>
+            <ArrowRight className="h-4 w-4 text-text-muted transition-transform group-hover:translate-x-1" />
+          </div>
+        </button>
+      )}
 
       {/* Section header with count + metrics label */}
       <div className="flex items-center justify-between">
@@ -343,6 +366,8 @@ export function ContentWorkshop(): JSX.Element {
           </>
         )}
       </Card>
+
+      <SubmitRequestModal open={submitRequestOpen} onClose={() => setSubmitRequestOpen(false)} />
     </div>
   );
 }

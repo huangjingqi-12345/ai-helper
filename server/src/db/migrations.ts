@@ -17,6 +17,31 @@ const migrations = [
       DROP TABLE IF EXISTS behavior_events;
     `,
   },
+  {
+    id: '20260514-content-request-workflow',
+    sql: `
+      CREATE TABLE IF NOT EXISTS content_requests (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        content_id TEXT,
+        request_name TEXT NOT NULL,
+        title TEXT NOT NULL,
+        priority TEXT DEFAULT 'P1' CHECK(priority IN ('P0','P1','P2')),
+        expected_date TEXT,
+        theme_format_matrix TEXT DEFAULT '{}',
+        total_count INTEGER DEFAULT 0,
+        note TEXT DEFAULT '',
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending','accepted','rejected','converted')),
+        submitted_by TEXT,
+        submitted_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        FOREIGN KEY (content_id) REFERENCES content(id)
+      );
+    `,
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

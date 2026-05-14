@@ -12,6 +12,7 @@
 - [x] Docker 本地 demo 栈与 production override。
 - [x] 总览页面与 API。
 - [x] 内容工坊列表/详情与 API 基础。
+- [x] 药企视图“发起选题需求”前端抽屉、后端 API、`content_requests` 数据表与 E2E 覆盖。
 - [x] 行为洞察与聚合指标 API 基础。
 - [x] 分发项目列表/详情与 API 基础。
 - [x] 审批任务列表与单条通过/驳回 API。

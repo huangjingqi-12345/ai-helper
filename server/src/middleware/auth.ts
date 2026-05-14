@@ -17,6 +17,7 @@ export type Permission =
   | 'overview:read'
   | 'content:read'
   | 'content:write'
+  | 'content:submit_request'
   | 'behavior:read'
   | 'distribution:read'
   | 'distribution:write'
@@ -60,6 +61,7 @@ const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
   px_distribution_ops: [
     'overview:read',
     'content:read',
+    'content:submit_request',
     'behavior:read',
     'distribution:read',
     'distribution:write',
@@ -71,6 +73,7 @@ const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
   pharma_admin: [
     'overview:read',
     'content:read',
+    'content:submit_request',
     'behavior:read',
     'approval:read',
     'approval:write',

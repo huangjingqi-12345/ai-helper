@@ -129,6 +129,54 @@ paths:
           description: 内容已创建
         '403':
           description: 无内容写权限
+  /content/request-projects:
+    get:
+      summary: 获取药企选题诉求可关联项目
+      description: 药企租户优先返回本租户项目；若 demo 数据未直接绑定租户，则按租户疾病/品牌范围回退返回可演示项目。
+      responses:
+        '200':
+          description: 可关联项目列表
+        '403':
+          description: 无内容读取权限
+  /content/requests:
+    post:
+      summary: 药企提交选题诉求
+      description: 写入 `content_requests`，并生成一条 `requirement_submitted` 草稿内容；不授予药企普通内容写权限。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, requestName, priority, expectedDate, themeFormatMatrix]
+              properties:
+                projectId:
+                  type: string
+                requestName:
+                  type: string
+                priority:
+                  type: string
+                  enum: [P0, P1, P2]
+                expectedDate:
+                  type: string
+                  format: date
+                themeFormatMatrix:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    additionalProperties:
+                      type: integer
+                note:
+                  type: string
+      responses:
+        '201':
+          description: 诉求和草稿内容已创建
+        '400':
+          description: 请求格式无效
+        '403':
+          description: 无药企诉求提交权限
+        '404':
+          description: 项目不存在
   /content/{id}:
     get:
       summary: 获取内容详情

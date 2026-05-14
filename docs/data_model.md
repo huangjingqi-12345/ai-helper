@@ -37,14 +37,20 @@
 | `project_topics` | 项目话题/内容主题 | 项目需要覆盖的话题数量 | 用途可复用，是否替代“诉求”待确认 |
 | `project_formats` | 项目内容形式 | 图文、视频、海报等格式目标数量 | 可复用 |
 | `content` | 内容主表 | 内容列表、详情、指标、状态、生命周期字段 | 核心表，可复用 |
+| `content_requests` | 药企选题诉求 | 存储项目、诉求名、优先级、期望上线日、主题 × 形式矩阵、备注、生成内容 ID | 已实现，用于 `/content` 药企发起诉求 |
 | `content_versions` | 内容版本 | 存储版本标题、正文、摘要、审核清单、哈希、批准人等 | 核心表，可复用；版本规则待确认 |
 | `tags` | 标签字典 | 疾病/话题/格式/自定义标签 | 可复用 |
 | `content_tags` | 内容-标签关系 | 内容多标签关联 | 可复用 |
 | `content_assets` | 内容素材 | 图片、视频、PDF、海报等资产元数据 | 表已存在，上传/存储规则待确认 |
 
+**当前关系**：
+
+- `content_requests.project_id → projects.id`，药企诉求必须关联已有项目。
+- `content_requests.content_id → content.id`，提交诉求时会生成一条 `requirement_submitted` 草稿内容，供运营后续受理和拆单。
+
 **待确认关系**：
 
-- “内容需求/诉求”是否应独立建表，而不是只用 `project_topics` 或前端硬编码。
+- `content_requests` 后续是否需要拆成多条医生制作任务，还是继续以内容草稿承载。
 - 一个项目可以包含多少内容、多少话题、多少格式，目标数量如何验收。
 - 内容是否必须从项目发起，是否允许独立内容。
 
@@ -133,6 +139,7 @@ tenants
   ├─ tenant_scopes
   ├─ users
   ├─ projects
+  ├─ content_requests
   ├─ content
   ├─ behavior_daily_metrics
   ├─ distribution_projects
@@ -147,6 +154,7 @@ tenants
 projects
   ├─ project_topics
   ├─ project_formats
+  ├─ content_requests
   └─ content
         ├─ content_versions
         ├─ content_tags ─ tags
@@ -154,7 +162,7 @@ projects
         └─ approval_tasks
 ```
 
-待确认：内容需求是否需要插入在 `projects` 与 `content` 之间。
+当前：药企选题诉求已通过 `content_requests` 插入在 `projects` 与 `content` 之间；待确认的是诉求拆单后是否继续新增医生任务实体。
 
 ### 4.3 审批关系
 

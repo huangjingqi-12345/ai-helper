@@ -79,3 +79,54 @@ export interface UpdateContentDTO {
   tags?: string[];
   status?: ContentStatus;
 }
+
+export interface ContentRequestProject {
+  id: string;
+  tenantId?: string;
+  name: string;
+  title?: string;
+  disease: string;
+  brand?: string;
+  owner?: string;
+  status?: string;
+  contentCount?: number;
+  publishedCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type ContentRequestFormat = 'article' | 'poster' | 'checklist';
+export type ContentRequestMatrix = Record<string, Partial<Record<ContentRequestFormat, number>>>;
+
+export interface SubmitContentRequestDTO {
+  projectId: string;
+  requestName: string;
+  priority: ContentPriority;
+  expectedDate: string;
+  themeFormatMatrix: ContentRequestMatrix;
+  note?: string;
+}
+
+export interface ContentRequestRecord {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  contentId?: string;
+  requestName: string;
+  title: string;
+  priority: ContentPriority;
+  expectedDate?: string;
+  themeFormatMatrix: ContentRequestMatrix;
+  totalCount: number;
+  note?: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'converted';
+  submittedBy?: string;
+  submittedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubmitContentRequestResult {
+  request: ContentRequestRecord;
+  content: Content;
+}

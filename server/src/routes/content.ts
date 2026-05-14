@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { getContentList, getContentById, createContent, updateContent, deleteContent } from '../db/repositories.js';
+import { getContentList, getContentById, createContent, updateContent, deleteContent, getContentRequestProjects, submitContentRequest } from '../db/repositories.js';
 import { logger } from '../utils/logger.js';
 import { asyncRoute } from './asyncRoute.js';
 import { requirePermission } from '../middleware/auth.js';
 import { appendAuditLog } from '../utils/audit.js';
-import { asObject, enumValue, optionalString, requiredString, stringArray } from '../utils/validation.js';
+import { asObject, enumValue, optionalString, requiredString, stringArray, ValidationError } from '../utils/validation.js';
 
 const router = Router();
 
@@ -12,6 +12,8 @@ router.use(requirePermission('content:read'));
 
 const contentTypes = ['article', 'video', 'infographic', 'quiz', 'qa', 'checklist', 'poster'] as const;
 const contentStatuses = ['draft', 'under_review', 'approved', 'published', 'archived', 'offline'] as const;
+const contentPriorities = ['P0', 'P1', 'P2'] as const;
+const requestFormats = ['article', 'poster', 'checklist', 'longtext', 'manual'] as const;
 
 function validateCreateContent(body: unknown): Record<string, unknown> {
   const data = asObject(body);
@@ -41,6 +43,48 @@ function validateUpdateContent(body: unknown): Record<string, unknown> {
   return result;
 }
 
+function validateThemeFormatMatrix(value: unknown): Record<string, Record<string, number>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ValidationError('themeFormatMatrix must be an object');
+  }
+
+  const result: Record<string, Record<string, number>> = {};
+  let total = 0;
+  for (const [theme, formats] of Object.entries(value as Record<string, unknown>)) {
+    if (!theme.trim()) throw new ValidationError('theme key is required');
+    if (!formats || typeof formats !== 'object' || Array.isArray(formats)) {
+      throw new ValidationError(`themeFormatMatrix.${theme} must be an object`);
+    }
+    const row: Record<string, number> = {};
+    for (const [format, rawCount] of Object.entries(formats as Record<string, unknown>)) {
+      if (!requestFormats.includes(format as (typeof requestFormats)[number])) {
+        throw new ValidationError(`format must be one of: ${requestFormats.join(', ')}`);
+      }
+      const count = Number(rawCount);
+      if (!Number.isInteger(count) || count < 0 || count > 99) {
+        throw new ValidationError(`themeFormatMatrix.${theme}.${format} must be an integer between 0 and 99`);
+      }
+      if (count > 0) row[format] = count;
+      total += count;
+    }
+    if (Object.keys(row).length > 0) result[theme] = row;
+  }
+  if (total <= 0) throw new ValidationError('themeFormatMatrix must contain at least 1 requested piece');
+  return result;
+}
+
+function validateSubmitContentRequest(body: unknown): Record<string, unknown> {
+  const data = asObject(body);
+  return {
+    projectId: requiredString(data.projectId, 'projectId', 80),
+    requestName: requiredString(data.requestName, 'requestName', 160),
+    priority: enumValue(data.priority ?? 'P1', 'priority', contentPriorities),
+    expectedDate: requiredString(data.expectedDate, 'expectedDate', 40),
+    themeFormatMatrix: validateThemeFormatMatrix(data.themeFormatMatrix),
+    note: optionalString(data.note, 'note', 1000) ?? '',
+  };
+}
+
 router.get('/', asyncRoute(async (req, res) => {
   logger.info({ query: req.query }, 'GET /api/content');
   const { status, type, projectId, pipelineStage, priority, search, page = '1', pageSize = '20' } = req.query;
@@ -68,6 +112,32 @@ router.get('/', asyncRoute(async (req, res) => {
     },
     timestamp: new Date().toISOString(),
   });
+}));
+
+router.get('/request-projects', requirePermission('content:read'), asyncRoute(async (req, res) => {
+  logger.info('GET /api/content/request-projects');
+  const projects = await getContentRequestProjects(req.user!);
+  res.json({ success: true, data: projects, timestamp: new Date().toISOString() });
+}));
+
+router.post('/requests', requirePermission('content:submit_request'), asyncRoute(async (req, res) => {
+  logger.info({ body: req.body }, 'POST /api/content/requests');
+  const submitted = await submitContentRequest(validateSubmitContentRequest(req.body), req.user!);
+  if (!submitted) {
+    return res.status(404).json({
+      success: false,
+      data: null,
+      message: 'Project not found',
+      timestamp: new Date().toISOString(),
+    });
+  }
+  await appendAuditLog(req, {
+    action: 'content.request.submit',
+    resourceType: 'content_request',
+    resourceId: String((submitted.request as Record<string, unknown> | null)?.id ?? ''),
+    after: submitted,
+  });
+  res.status(201).json({ success: true, data: submitted, timestamp: new Date().toISOString() });
 }));
 
 router.get('/:id', asyncRoute(async (req, res) => {

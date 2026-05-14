@@ -79,6 +79,41 @@ describe('Backend API Integration Tests', () => {
         expect(item.type).toBe('article');
       });
     });
+
+    it('allows pharma admins to submit a content request without content write permission', async () => {
+      const projectsRes = await fetch(`${BASE_URL}/content/request-projects`, {
+        headers: { Authorization: 'Bearer dev-pharma-admin' },
+      });
+      expect(projectsRes.status).toBe(200);
+      const projectsBody = await projectsRes.json();
+      expect(projectsBody.success).toBe(true);
+      expect(projectsBody.data.length).toBeGreaterThan(0);
+
+      const submitRes = await fetch(`${BASE_URL}/content/requests`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer dev-pharma-admin',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId: projectsBody.data[0].id,
+          requestName: 'API 自动化选题诉求',
+          priority: 'P1',
+          expectedDate: '2026-06-10',
+          themeFormatMatrix: {
+            treatment: { article: 1, poster: 1 },
+          },
+          note: 'API test request.',
+        }),
+      });
+      expect(submitRes.status).toBe(201);
+      const submitBody = await submitRes.json();
+      expect(submitBody.success).toBe(true);
+      expect(submitBody.data.request.id).toMatch(/^REQ-/);
+      expect(submitBody.data.content.title).toContain('API 自动化选题诉求');
+      expect(submitBody.data.content.priority).toBe('P1');
+      expect(submitBody.data.content.expectedDate).toBe('2026-06-10');
+    });
   });
 
   describe('GET /api/behavior', () => {
@@ -219,6 +254,24 @@ describe('Backend API Integration Tests', () => {
           title: 'Viewer should not create',
           type: 'article',
           content: 'Read-only user cannot create content.',
+        }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('blocks pharma viewers from submitting content requests', async () => {
+      const res = await fetch(`${BASE_URL}/content/requests`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer dev-pharma-viewer',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId: 'proj-breast',
+          requestName: 'Viewer should not submit',
+          priority: 'P2',
+          expectedDate: '2026-06-10',
+          themeFormatMatrix: { treatment: { article: 1 } },
         }),
       });
       expect(res.status).toBe(403);

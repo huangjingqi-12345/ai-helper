@@ -196,26 +196,172 @@ export async function createContent(data: Record<string, unknown>, scope?: Query
   const now = new Date().toISOString();
   const projectId = String(data.projectId || 'proj-hf');
   const tenantId = scope?.tenantId || 'T-PX';
+  const status = String(data.status || 'draft');
+  const workflowState = String(data.workflowState || 'draft');
+  const pipelineStage = String(data.pipelineStage || 'requirement_submitted');
+  const priority = String(data.priority || 'P2');
 
   await dbRun(`
-    INSERT INTO content (id, tenant_id, project_id, title, type, status, workflow_state, pipeline_stage, priority, author, excerpt, content, tags, push_count, read_users, read_count, like_count, dislike_count, bookmark_count, share_count, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, 'draft', 'draft', 'requirement_submitted', 'P2', ?, ?, ?, ?${jsonCast}, 0, 0, 0, 0, 0, 0, 0, ?, ?)
+    INSERT INTO content (id, tenant_id, project_id, title, type, status, workflow_state, pipeline_stage, priority, author, excerpt, content, tags, push_count, read_users, read_count, like_count, dislike_count, bookmark_count, share_count, expected_date, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, 0, 0, 0, 0, 0, 0, 0, ?, ?, ?)
   `, [
     id,
     tenantId,
     projectId,
     String(data.title || '未命名内容'),
     String(data.type || 'article'),
+    status,
+    workflowState,
+    pipelineStage,
+    priority,
     String(data.author || '系统管理员'),
     typeof data.excerpt === 'string' ? data.excerpt : null,
     String(data.content || ''),
     JSON.stringify(Array.isArray(data.tags) ? data.tags.map(String) : []),
+    typeof data.expectedDate === 'string' ? data.expectedDate : null,
     now,
     now,
   ]);
 
   await createContentVersion(id, data, scope, 'initial draft created');
   return getContentById(id, scope);
+}
+
+function matrixTotal(matrix: Record<string, Record<string, number>>): number {
+  return Object.values(matrix).reduce(
+    (sum, row) => sum + Object.values(row ?? {}).reduce((rowSum, value) => rowSum + (Number(value) || 0), 0),
+    0
+  );
+}
+
+function matrixLabels(matrix: Record<string, Record<string, number>>): string[] {
+  const formatLabels: Record<string, string> = { article: '长图文', poster: '海报', checklist: '手册', longtext: '长图文', manual: '手册' };
+  const totals: Record<string, number> = {};
+  Object.values(matrix).forEach((row) => {
+    Object.entries(row ?? {}).forEach(([format, count]) => {
+      totals[format] = (totals[format] ?? 0) + (Number(count) || 0);
+    });
+  });
+  return Object.entries(totals)
+    .filter(([, count]) => count > 0)
+    .map(([format, count]) => `${formatLabels[format] ?? format}×${count}`);
+}
+
+export async function getContentRequestProjects(scope?: QueryScope) {
+  const baseSql = `
+    SELECT
+      p.id,
+      p.tenant_id,
+      p.name,
+      p.title,
+      p.disease,
+      p.status,
+      p.content_count,
+      p.published_count,
+      p.created_at,
+      p.updated_at,
+      COALESCE(b.name, '') as brand,
+      COALESCE(u.name, 'PX 运营组') as owner
+    FROM projects p
+    LEFT JOIN brands b ON b.id = p.brand_id
+    LEFT JOIN users u ON u.id = p.owner_user_id
+  `;
+
+  if (isPxAdmin(scope)) {
+    const rows = await dbAll<Record<string, unknown>>(`${baseSql} WHERE p.status != 'archived' ORDER BY p.updated_at DESC`);
+    return rows.map(toCamel);
+  }
+
+  const ownRows = await dbAll<Record<string, unknown>>(`${baseSql} WHERE p.tenant_id = ? AND p.status != 'archived' ORDER BY p.updated_at DESC`, [scope!.tenantId]);
+  if (ownRows.length > 0) return ownRows.map(toCamel);
+
+  const scopeRow = await dbGet<{ disease_ids?: unknown; brand_ids?: unknown }>('SELECT disease_ids, brand_ids FROM tenant_scopes WHERE tenant_id = ?', [scope!.tenantId]);
+  const diseases = parseJson<string[]>(scopeRow?.disease_ids, []);
+  const brands = parseJson<string[]>(scopeRow?.brand_ids, []);
+  const conditions: string[] = ["p.status != 'archived'"];
+  const params: unknown[] = [];
+
+  if (!diseases.includes('*') && diseases.length > 0) {
+    conditions.push(`p.disease IN (${diseases.map(() => '?').join(', ')})`);
+    params.push(...diseases);
+  }
+  if (!brands.includes('*') && brands.length > 0) {
+    conditions.push(`(b.name IS NULL OR b.name = '' OR b.name IN (${brands.map(() => '?').join(', ')}))`);
+    params.push(...brands);
+  }
+
+  const rows = await dbAll<Record<string, unknown>>(`${baseSql} WHERE ${conditions.join(' AND ')} ORDER BY p.updated_at DESC`, params);
+  return rows.map((row) => ({ ...toCamel(row), tenantId: scope!.tenantId }));
+}
+
+export async function submitContentRequest(data: Record<string, unknown>, scope?: QueryScope) {
+  const tenantId = scope?.tenantId || 'T-PX';
+  const projectId = String(data.projectId);
+  const project = await dbGet<Record<string, unknown>>('SELECT * FROM projects WHERE id = ?', [projectId]);
+  if (!project) return null;
+
+  const matrix = data.themeFormatMatrix as Record<string, Record<string, number>>;
+  const totalCount = matrixTotal(matrix);
+  const requestName = String(data.requestName);
+  const projectName = String(project.name || project.title || projectId);
+  const disease = String(project.disease || '未分配病种');
+  const priority = String(data.priority || 'P1');
+  const expectedDate = typeof data.expectedDate === 'string' ? data.expectedDate : null;
+  const note = typeof data.note === 'string' ? data.note : '';
+  const rows = await dbAll<{ id: string }>("SELECT id FROM content_requests WHERE id LIKE 'REQ-%'");
+  const nextNumber = Math.max(2031, ...rows.map((item) => Number(item.id.replace(/\D/g, '')) || 2031)) + 1;
+  const requestId = `REQ-${nextNumber}`;
+  const title = `${projectName} · ${requestName}`;
+  const content = await createContent({
+    projectId,
+    title,
+    type: 'article',
+    author: scope?.name || '药企提交',
+    excerpt: `共 ${totalCount} 篇 · ${disease} · ${matrixLabels(matrix).join(' / ')}`,
+    content: [
+      `# ${title}`,
+      '',
+      `- 本次诉求总量：${totalCount} 篇`,
+      `- 期望上线日：${expectedDate ?? '未填写'}`,
+      `- 优先级：${priority}`,
+      `- 备注：${note || '无'}`,
+    ].join('\n'),
+    tags: [disease, '选题诉求', priority],
+    priority,
+    expectedDate,
+    pipelineStage: 'requirement_submitted',
+    workflowState: 'draft',
+    status: 'draft',
+    classification: 'content_request',
+    diseaseArea: disease,
+  }, scope);
+
+  const contentId = String((content as Record<string, unknown> | null)?.id ?? '');
+  const now = new Date().toISOString();
+  await dbRun(`
+    INSERT INTO content_requests (id, tenant_id, project_id, content_id, request_name, title, priority, expected_date, theme_format_matrix, total_count, note, status, submitted_by, submitted_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, 'pending', ?, ?, ?, ?)
+  `, [
+    requestId,
+    tenantId,
+    projectId,
+    contentId,
+    requestName,
+    title,
+    priority,
+    expectedDate,
+    JSON.stringify(matrix),
+    totalCount,
+    note,
+    scope?.name || tenantId,
+    now,
+    now,
+    now,
+  ]);
+
+  await dbRun('UPDATE projects SET content_count = COALESCE(content_count, 0) + ?, total_pieces = COALESCE(total_pieces, 0) + ?, updated_at = ? WHERE id = ?', [1, totalCount, now, projectId]);
+  const request = await dbGet<Record<string, unknown>>('SELECT * FROM content_requests WHERE id = ?', [requestId]);
+  return { request: request ? parseJsonFields(toCamel(request), ['themeFormatMatrix']) : null, content };
 }
 
 export async function updateContent(id: string, data: Record<string, unknown>, scope?: QueryScope) {

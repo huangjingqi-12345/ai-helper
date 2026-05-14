@@ -31,8 +31,11 @@
 ### 2.2 当前可能流程
 
 ```text
-需求/项目准备
-  → 内容创建或医生制作
+药企发起选题诉求（content_requests）
+  → 选择项目、优先级、期望上线日、主题 × 形式矩阵
+  → 自动生成需求草稿内容（content.pipeline_stage=requirement_submitted）
+  → 运营受理 / 拆单
+  → 医生制作
   → 编辑审核
   → Px 审核
   → 药企审核
@@ -45,15 +48,15 @@
 
 | 阶段 | 当前状态 |
 |---|---|
-| 需求/项目准备 | `projects`、`project_topics`、`project_formats`、`distribution_projects` 均有相关字段，但“诉求”是否独立还未确认 |
-| 内容创建 | 后端内容 CRUD 能力存在；前端 PM demo 更偏展示 |
+| 需求/项目准备 | `content_requests` 已作为药企选题诉求实体；`GET /api/content/request-projects` 提供可关联项目 |
+| 内容创建 | `POST /api/content/requests` 会生成诉求记录和需求草稿内容；后端内容 CRUD 能力仍保留给运营 |
 | 版本管理 | `content_versions` 已存在，审批通过/驳回会影响最新版本部分字段 |
 | 审批 | 审批任务 API 已存在，默认 3 节点 demo 流 |
 | 发布/下线 | 字段存在，但完整发布/下线操作规则待确认 |
 
 ### 2.4 生产待确认
 
-- 内容是否必须先有项目/诉求。
+- 内容是否必须先有项目/诉求（当前药企发起路径必须关联项目）。
 - 医生制作是否产生独立任务。
 - 每次修改是否必须生成新版本。
 - 发布后修改是否需要重新审批。
@@ -300,7 +303,7 @@ users → user_roles → roles → role_permissions → permissions
 |---|---|---|
 | 审批 3 节点 vs 分发详情 6 节点 | 两个页面展示不一致 | 统一内容/分发/审批工作流 |
 | 项目表重复 | `projects` 和 `distribution_projects` 都像项目 | 明确主表和关系 |
-| 诉求缺失 | 前端部分需求硬编码，DB 无独立诉求表 | 是否新增需求实体 |
+| 诉求后续拆单 | `content_requests` 已存在，但审批/分发详情仍有部分需求展示硬编码 | 统一诉求、医生任务、审批任务、分发项目关系 |
 | 财务无后端 | 页面有，数据库/API 无 | 是否纳入 v1 |
 | 设置成员本地状态 | 与 `users` 表未打通 | 统一账号管理入口 |
 

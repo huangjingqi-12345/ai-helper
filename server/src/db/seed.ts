@@ -90,6 +90,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     'content_tags',
     'content_versions',
     'content_assets',
+    'content_requests',
     'content',
     'project_topics',
     'project_formats',
@@ -216,6 +217,61 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
         item.createdAt,
       ]);
     }
+  }
+
+  const requestSeeds = contentList.slice(0, 5).map((item, index) => ({
+    id: `REQ-${2031 - index}`,
+    tenantId: ['T-NV', 'T-AZ', 'T-RC', 'T-LL', 'T-NV'][index] ?? 'T-NV',
+    projectId: item.projectId,
+    contentId: item.id,
+    requestName: item.title.split(' · ').slice(-1)[0] || item.title,
+    title: `乳腺癌 · ${item.title}`,
+    priority: item.priority,
+    expectedDate: item.expectedDate ?? '2026-05-30',
+    matrix: { treatment: { article: item.type === 'article' ? 1 : 0, poster: item.type === 'poster' ? 1 : 0, checklist: item.type === 'checklist' ? 1 : 0 } },
+    totalCount: 1,
+    note: 'Demo seeded pharma content request.',
+    submittedBy: item.author,
+    submittedAt: item.createdAt,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  }));
+
+  for (const request of requestSeeds) {
+    await run(`
+      INSERT INTO content_requests (id, tenant_id, project_id, content_id, request_name, title, priority, expected_date, theme_format_matrix, total_count, note, status, submitted_by, submitted_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, 'pending', ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        tenant_id = excluded.tenant_id,
+        project_id = excluded.project_id,
+        content_id = excluded.content_id,
+        request_name = excluded.request_name,
+        title = excluded.title,
+        priority = excluded.priority,
+        expected_date = excluded.expected_date,
+        theme_format_matrix = excluded.theme_format_matrix,
+        total_count = excluded.total_count,
+        note = excluded.note,
+        submitted_by = excluded.submitted_by,
+        submitted_at = excluded.submitted_at,
+        updated_at = excluded.updated_at
+    `, [
+      request.id,
+      request.tenantId,
+      request.projectId,
+      request.contentId,
+      request.requestName,
+      request.title,
+      request.priority,
+      request.expectedDate,
+      json(request.matrix),
+      request.totalCount,
+      request.note,
+      request.submittedBy,
+      request.submittedAt,
+      request.createdAt,
+      request.updatedAt,
+    ]);
   }
 
   await run('DELETE FROM behavior_trends');

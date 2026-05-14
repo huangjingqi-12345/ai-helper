@@ -66,15 +66,16 @@
 **当前已完成**
 
 - 内容列表、详情、筛选、主要状态展示。
-- `content`、`content_versions`、`content_assets`、`tags` 等表。
-- 后端 CRUD 能力。
+- 药企视图“发起选题需求”抽屉：项目选择、优先级、期望上线日、主题 × 形式矩阵、备注、提交成功回写列表。
+- `content`、`content_requests`、`content_versions`、`content_assets`、`tags` 等表。
+- 后端 CRUD 能力，以及 `POST /api/content/requests` 药企诉求提交 API。
 
 **生产待确认**
 
 - 前端是否开放完整创建/编辑器。
 - 版本生成规则。
 - 发布后修改和下线流程。
-- 是否新增“诉求/需求”实体。
+- `content_requests` 与医生制作/审批拆单的后续状态机细节。
 
 ### F-004 行为洞察
 
@@ -116,7 +117,7 @@
 **demo-only / 待确认**
 
 - 批量通过/驳回只 toast。
-- `requirementByContent` 前端硬编码。
+- 审批列表中的部分需求分组仍通过前端 `requirementByContent` 硬编码，后续应接入 `content_requests` 或审批任务扩展字段。
 - 多节点推进和驳回策略待确认。
 
 ### F-007 平台管理/Admin

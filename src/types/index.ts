@@ -9,6 +9,12 @@ export type {
   UpdateContentDTO,
   PipelineStage,
   ContentPriority,
+  ContentRequestProject,
+  ContentRequestFormat,
+  ContentRequestMatrix,
+  SubmitContentRequestDTO,
+  ContentRequestRecord,
+  SubmitContentRequestResult,
 } from './content';
 export type {
   BehaviorSummary,
