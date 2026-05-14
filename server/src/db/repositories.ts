@@ -109,7 +109,7 @@ export async function getOverviewProjects(scope?: QueryScope) {
 export async function getContentList(filters: { status?: string; type?: string; projectId?: string; pipelineStage?: string; priority?: string; search?: string; page: number; pageSize: number; scope?: QueryScope }) {
   const conditions: string[] = [];
   const params: unknown[] = [];
-  const normalizedStatus = filters.status === 'offline' ? 'archived' : filters.status;
+  const normalizedStatus = filters.status;
   const tenant = tenantCondition('c', filters.scope);
 
   if (tenant.sql) { conditions.push(tenant.sql); params.push(...tenant.params); }

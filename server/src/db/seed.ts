@@ -30,13 +30,13 @@ async function replaceRowsForSqlite(tables: string[]): Promise<void> {
 
 async function seedTenants(now: string): Promise<void> {
   const tenants = [
-    ['T-PX', 'Px 自营运营组', 'Px Ops', 'ops', 'active', '未签约', '齐晓川', 'ops-admin@px.health', 'Px 平台合规枢纽租户，可管理全量租户配置与聚合指标。', boolValue(true)],
-    ['T-NV', '诺华制药（中国）', '诺华', 'pharma', 'active', 'PXC-2025-A001', '林筱', 'compliance@novartis.cn', '心血管与肿瘤线脱敏聚合数据视图。', boolValue(true)],
-    ['T-AZ', '阿斯利康（中国）', '阿斯利康', 'pharma', 'active', 'PXC-2025-A002', '顾承', 'compliance@astrazeneca.cn', '慢病项目脱敏聚合数据视图。', boolValue(true)],
-    ['T-MSD', '默沙东（中国）', '默沙东', 'pharma', 'active', 'PXC-2025-A003', '韦珂', 'compliance@msd.cn', '肿瘤项目脱敏聚合查看，不开放导出。', boolValue(false)],
-    ['T-RC', '罗氏制药', '罗氏', 'pharma', 'inactive', 'PXC-2025-A004', '贺珏', 'compliance@roche.cn', '租户暂停中，仅保留历史审计记录。', boolValue(false)],
-    ['T-LL', '礼来制药', '礼来', 'pharma', 'active', 'PXC-2026-A005', '禾未', 'compliance@lilly.cn', '代谢领域脱敏聚合视图。', boolValue(true)],
-    ['T-SY', '石药集团', '石药', 'pharma', 'draft', '未签约', '周予安', 'compliance@cspc.cn', '草稿租户，等待合同与合规范围确认。', boolValue(false)],
+    ['T-PX', 'Px 自营运营组', 'Px Ops', 'ops', 'active', '未签约', '齐晓川', 'ops-admin@px.health', 'Px 平台合规枢纽租户，唯一可见全量明文。', boolValue(true)],
+    ['T-NV', '诺华制药（中国）', '诺华', 'pharma', 'active', 'PXC-2025-A001', '林筱', 'compliance@novartis.cn', '乳腺癌靶向与 CDK4/6 线，脱敏聚合供三区表现。', boolValue(true)],
+    ['T-AZ', '阿斯利康（中国）', '阿斯利康', 'pharma', 'active', 'PXC-2025-A002', '顾承', 'compliance@astrazeneca.cn', '乳腺癌 HER2 ADC + PARP 抑制维持线，灰度上限 30%。', boolValue(true)],
+    ['T-MSD', '默沙东（中国）', '默沙东', 'pharma', 'active', 'PXC-2025-A003', '韦珂', 'compliance@msd.cn', '乳腺癌免疫联合线，灰度上限 20%、k-匿名 100。', boolValue(false)],
+    ['T-RC', '罗氏制药', '罗氏', 'pharma', 'inactive', 'PXC-2025-A004', '贺珏', 'compliance@roche.cn', '因合规审查暂停服务（2026-04-26），暂停期内账号全部冻结。', boolValue(false)],
+    ['T-LL', '礼来制药', '礼来', 'pharma', 'active', 'PXC-2026-A005', '禾未', 'compliance@lilly.cn', '乳腺癌内分泌依从与随访依从线，灰度上限 30%。', boolValue(true)],
+    ['T-SY', '石药集团', '石药', 'pharma', 'draft', '未签约', '周予安', 'compliance@cspc.cn', '尚未签约，租户处于草稿状态。', boolValue(false)],
   ];
 
   for (const tenant of tenants) {
@@ -58,12 +58,12 @@ async function seedTenants(now: string): Promise<void> {
   }
 
   const scopes = [
-    ['scope-T-PX', 'T-PX', [], [], [], 100, 0, boolValue(true), boolValue(true)],
-    ['scope-T-NV', 'T-NV', ['慢性心力衰竭', '乳腺癌'], ['诺欣妥', '爱博新'], ['华东', '华南'], 50, 50, boolValue(true), boolValue(true)],
-    ['scope-T-AZ', 'T-AZ', ['慢性心力衰竭', '2型糖尿病', '慢阻肺(COPD)'], ['安达唐', '可定'], ['全国'], 30, 50, boolValue(true), boolValue(true)],
-    ['scope-T-MSD', 'T-MSD', ['肺癌(NSCLC)', '乳腺癌'], ['可瑞达'], ['华东', '华北'], 20, 100, boolValue(true), boolValue(false)],
-    ['scope-T-RC', 'T-RC', ['乳腺癌', '肺癌(NSCLC)'], ['赫赛汀', '泰圣奇'], ['华东'], 10, 100, boolValue(true), boolValue(false)],
-    ['scope-T-LL', 'T-LL', ['2型糖尿病'], ['优泌乐'], ['华东', '华南'], 30, 50, boolValue(true), boolValue(true)],
+    ['scope-T-PX', 'T-PX', ['*'], ['*'], ['*'], 100, 0, boolValue(true), boolValue(true)],
+    ['scope-T-NV', 'T-NV', ['乳腺癌'], ['飞赛尔', '来曲唑'], ['华东', '华北', '华南'], 50, 50, boolValue(true), boolValue(true)],
+    ['scope-T-AZ', 'T-AZ', ['乳腺癌'], ['优赫得', '利普卓'], ['*'], 30, 50, boolValue(true), boolValue(true)],
+    ['scope-T-MSD', 'T-MSD', ['乳腺癌'], ['可瑞达'], ['华东', '华南'], 20, 100, boolValue(true), boolValue(false)],
+    ['scope-T-RC', 'T-RC', ['乳腺癌'], ['赫赛汀', '帕杰特'], ['*'], 10, 100, boolValue(true), boolValue(false)],
+    ['scope-T-LL', 'T-LL', ['乳腺癌'], ['依西美坦片', '他莫昔芬'], ['*'], 30, 50, boolValue(true), boolValue(true)],
     ['scope-T-SY', 'T-SY', [], [], [], 0, 100, boolValue(true), boolValue(false)],
   ];
 
@@ -307,9 +307,9 @@ async function seedStrategies(now: string): Promise<void> {
 
   const strategies = [
     ['str-001', 'T-NV', '乳腺癌春季推送计划', 'proj-breast', ['华东', '华南'], ['乳腺癌'], 3200, ['CNT-105', 'CNT-112'], 'recurring', '2026-03-01T00:00:00Z', '2026-05-31T23:59:59Z', 'weekly', 'active', 3200, 3050, 2100, 1800, '2026-02-20T08:00:00Z', now],
-    ['str-002', 'T-MSD', '肺癌科普专项推送', 'proj-lung', ['华北', '西南'], ['肺癌(NSCLC)'], 2800, ['CNT-106'], 'scheduled', '2026-04-01T00:00:00Z', '2026-06-30T23:59:59Z', null, 'active', 2800, 2650, 1800, 1500, '2026-03-15T08:00:00Z', now],
-    ['str-003', 'T-AZ', '糖尿病管理推送', 'proj-diabetes', ['全国'], ['2型糖尿病'], 4500, ['CNT-104', 'CNT-114'], 'recurring', '2026-02-01T00:00:00Z', '2026-07-31T23:59:59Z', 'monthly', 'active', 4500, 4200, 3100, 2600, '2026-01-25T08:00:00Z', now],
-    ['str-004', 'T-PX', '高血压患者关怀', 'proj-hypertension', ['华中'], ['高血压'], 2300, ['CNT-110'], 'immediate', null, null, null, 'paused', 2300, 2100, 1400, 1100, '2026-03-10T08:00:00Z', now],
+    ['str-002', 'T-MSD', '肺癌科普专项推送', 'proj-breast', ['华北', '西南'], ['肺癌(NSCLC)'], 2800, ['CNT-106'], 'scheduled', '2026-04-01T00:00:00Z', '2026-06-30T23:59:59Z', null, 'active', 2800, 2650, 1800, 1500, '2026-03-15T08:00:00Z', now],
+    ['str-003', 'T-AZ', '糖尿病管理推送', 'proj-breast', ['全国'], ['2型糖尿病'], 4500, ['CNT-104', 'CNT-114'], 'recurring', '2026-02-01T00:00:00Z', '2026-07-31T23:59:59Z', 'monthly', 'active', 4500, 4200, 3100, 2600, '2026-01-25T08:00:00Z', now],
+    ['str-004', 'T-PX', '高血压患者关怀', 'proj-breast', ['华中'], ['高血压'], 2300, ['CNT-110'], 'immediate', null, null, null, 'paused', 2300, 2100, 1400, 1100, '2026-03-10T08:00:00Z', now],
   ];
 
   for (const strategy of strategies) {
@@ -402,20 +402,20 @@ async function seedApproval(now: string): Promise<void> {
   }
 
   const taskSeeds = [
-    ['task-CNT-101', 'CNT-101', 'proj-hf', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-102', 'CNT-102', 'proj-hf', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '484h / 8h'],
-    ['task-CNT-104', 'CNT-104', 'proj-diabetes', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-101', 'CNT-101', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-102', 'CNT-102', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '484h / 8h'],
+    ['task-CNT-104', 'CNT-104', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
     ['task-CNT-105', 'CNT-105', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '460h / 8h'],
-    ['task-CNT-106', 'CNT-106', 'proj-lung', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '484h / 8h'],
-    ['task-CNT-107', 'CNT-107', 'proj-ra', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '412h / 8h'],
-    ['task-CNT-103', 'CNT-103', 'proj-diabetes', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-108', 'CNT-108', 'proj-ra', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-110', 'CNT-110', 'proj-hypertension', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-111', 'CNT-111', 'proj-copd', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-109', 'CNT-109', 'proj-mm', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-106', 'CNT-106', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '484h / 8h'],
+    ['task-CNT-107', 'CNT-107', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '412h / 8h'],
+    ['task-CNT-103', 'CNT-103', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-108', 'CNT-108', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-110', 'CNT-110', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-111', 'CNT-111', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-109', 'CNT-109', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
     ['task-CNT-112', 'CNT-112', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-113', 'CNT-113', 'proj-hf', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-114', 'CNT-114', 'proj-diabetes', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-113', 'CNT-113', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-114', 'CNT-114', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
   ];
 
   for (const task of taskSeeds) {
