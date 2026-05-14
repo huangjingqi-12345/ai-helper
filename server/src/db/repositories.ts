@@ -609,7 +609,7 @@ function mapRequestDistributionBatch(row: Record<string, unknown>) {
 
 export async function getRequestDistributionBatches(requestId: string) {
   const rows = await dbAll<Record<string, unknown>>(
-    'SELECT * FROM request_distribution_batches WHERE LOWER(request_id) = LOWER(?) ORDER BY submitted_at DESC, created_at DESC',
+    'SELECT * FROM request_distribution_batches WHERE LOWER(request_id) = LOWER(?) ORDER BY submitted_at ASC, created_at ASC',
     [requestId]
   );
   return rows.map(mapRequestDistributionBatch);

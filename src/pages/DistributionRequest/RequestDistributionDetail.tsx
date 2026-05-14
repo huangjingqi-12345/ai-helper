@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
+  Activity,
   ArrowLeft,
   Building2,
   Calendar,
+  CheckSquare,
   History,
-  Inbox,
   Layers,
   Minus,
   PackagePlus,
@@ -14,18 +15,17 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
-  Stethoscope,
+  Square,
+  Users,
 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
 import { showToast } from '@/components/ui/Toast';
 import {
-  acceptDistributionRequest,
   getDistributionRequestWorkbench,
   saveRequestDistributionConfig,
   submitRequestDistributionBatch,
@@ -55,8 +55,10 @@ const FORMAT_OPTIONS = [
   { key: 'checklist', label: '手册' },
 ] as const;
 
+const TITLE_OPTIONS = ['主任医师', '副主任医师', '主治医师', '住院医师'];
+
 type FormatKey = (typeof FORMAT_OPTIONS)[number]['key'];
-type ActiveModal = 'accept' | 'doctor' | 'patient' | null;
+type DoctorAssignment = { doctorId: string; count: number };
 
 const STATUS_LABELS: Record<DistributionRequestStatus, { label: string; color: 'yellow' | 'blue' | 'red' | 'green' }> = {
   pending: { label: '待受理', color: 'yellow' },
@@ -65,27 +67,45 @@ const STATUS_LABELS: Record<DistributionRequestStatus, { label: string; color: '
   converted: { label: '已转生产', color: 'green' },
 };
 
-const DEPARTMENT_OPTIONS = ['乳腺外科', '肿瘤内科', '放射治疗科', '中医康复科', '临床心理科'];
-const TITLE_OPTIONS = ['主任医师', '副主任医师', '主治医师'];
-const REGION_OPTIONS = ['全国', '华东', '华南', '华北', '西南', '华中'];
-const TAG_OPTIONS = ['KOL', '患教经验丰富', 'HER2 靶向', '术后管理', 'CDK4/6 专家', '科普达人'];
-const PATIENT_CHANNEL_OPTIONS = ['微信公众号', '短信', 'App Push', '企微随访', 'H5 落地页'];
-const PATIENT_TAG_OPTIONS = ['术后随访', 'HER2 靶向', '服药依从', '高互动', '新诊断', '复诊提醒'];
 const EMPTY_DOCTORS: DoctorCandidate[] = [];
 const EMPTY_BATCHES: DistributionRequestWorkbench['batches'] = [];
 
-const REQUEST_PROJECT_OVERRIDES: Record<string, { projectName: string; disease: string; brand: string; pharma: string }> = {
+const DOCTOR_SCORE: Record<string, number> = {
+  doc_1001: 1820,
+  doc_1002: 1560,
+  doc_1003: 1440,
+  doc_1008: 1340,
+  doc_1004: 1280,
+  doc_1006: 1180,
+  doc_1007: 980,
+  doc_1005: 760,
+};
+
+const DOCTOR_PENDING: Record<string, number> = {
+  doc_1001: 1,
+  doc_1002: 0,
+  doc_1003: 0,
+  doc_1004: 0,
+  doc_1005: 1,
+  doc_1006: 0,
+  doc_1007: 0,
+  doc_1008: 0,
+};
+
+const REQUEST_PROJECT_OVERRIDES: Record<string, { projectId: string; projectName: string; disease: string; brand: string; pharma: string }> = {
   'REQ-2030': {
+    projectId: 'PRJ-1001',
     projectName: '优赫得 · HER2 ADC 重点随访',
     disease: '乳腺癌',
     brand: '优赫得',
     pharma: '阿斯利康',
   },
   'REQ-2031': {
-    projectName: '优赫得 · HER2 ADC 重点随访',
+    projectId: 'PRJ-1000',
+    projectName: '赫赛汀 · HER2+ 术后辅助随访计划',
     disease: '乳腺癌',
-    brand: '优赫得',
-    pharma: '阿斯利康',
+    brand: '赫赛汀',
+    pharma: '罗氏',
   },
 };
 
@@ -106,14 +126,51 @@ function matrixCells(matrix: RequestDistributionMatrix | undefined): string[] {
     Object.entries(row ?? {}).forEach(([format, count]) => {
       if (!count) return;
       const formatLabel = FORMAT_OPTIONS.find((item) => item.key === format)?.label ?? format;
-      cells.push(`${THEME_LABELS[theme] ?? theme} · ${formatLabel} × ${count}`);
+      cells.push(`${THEME_LABELS[theme] ?? theme}·${formatLabel}×${count}`);
     });
   });
   return cells;
 }
 
-function unique(values: string[]): string[] {
-  return Array.from(new Set(values.filter(Boolean)));
+function doctorScore(doctor: DoctorCandidate): number {
+  return DOCTOR_SCORE[doctor.id] ?? 0;
+}
+
+function doctorPending(doctor: DoctorCandidate): number {
+  return DOCTOR_PENDING[doctor.id] ?? 0;
+}
+
+function sortByInteractionDesc(doctors: DoctorCandidate[]): DoctorCandidate[] {
+  return [...doctors].sort((a, b) => doctorScore(b) - doctorScore(a));
+}
+
+function allocateStrategy(candidates: DoctorCandidate[], contentCount: number): DoctorAssignment[] {
+  if (contentCount <= 0 || candidates.length === 0) return [];
+  if (contentCount > candidates.length) {
+    const base = Math.floor(contentCount / candidates.length);
+    let remainder = contentCount - base * candidates.length;
+    return candidates.map((doctor) => {
+      const extra = remainder > 0 ? 1 : 0;
+      if (extra) remainder -= 1;
+      return { doctorId: doctor.id, count: base + extra };
+    });
+  }
+  return candidates.slice(0, contentCount).map((doctor) => ({ doctorId: doctor.id, count: 1 }));
+}
+
+function defaultDoctorDistributionConfig(config: RequestDistributionConfig): RequestDistributionConfig {
+  return {
+    ...config,
+    assignmentMode: 'strategy',
+    whitelistEnabled: false,
+    strategyEnabled: true,
+    departmentFilters: [],
+    titleFilters: TITLE_OPTIONS,
+    regionFilters: [],
+    tagFilters: [],
+    whitelistDoctorIds: [],
+    whitelistDoctorQuota: {},
+  };
 }
 
 export function RequestDistributionDetail(): JSX.Element {
@@ -122,8 +179,6 @@ export function RequestDistributionDetail(): JSX.Element {
   const [workbench, setWorkbench] = useState<DistributionRequestWorkbench | null>(null);
   const [config, setConfig] = useState<RequestDistributionConfig | null>(null);
   const [batchMatrix, setBatchMatrix] = useState<RequestDistributionMatrix>({});
-  const [acceptNote, setAcceptNote] = useState('运营已完成合规预审，进入医生派单。');
-  const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -153,6 +208,7 @@ export function RequestDistributionDetail(): JSX.Element {
   const doctors = workbench?.doctors ?? EMPTY_DOCTORS;
   const batches = workbench?.batches ?? EMPTY_BATCHES;
   const batchTotal = useMemo(() => matrixTotal(batchMatrix), [batchMatrix]);
+  const defaultConfig = useMemo(() => config ? defaultDoctorDistributionConfig(config) : null, [config]);
   const whitelistQuotaTotal = useMemo(() => {
     if (!config?.whitelistEnabled) return 0;
     return Object.entries(config.whitelistDoctorQuota ?? {})
@@ -162,17 +218,6 @@ export function RequestDistributionDetail(): JSX.Element {
   const whitelistTotal = Math.min(batchTotal, whitelistQuotaTotal);
   const strategyTotal = config?.strategyEnabled ? Math.max(0, batchTotal - whitelistTotal) : 0;
   const unassignedTotal = Math.max(0, batchTotal - whitelistTotal - strategyTotal);
-
-  const filteredDoctors = useMemo(() => {
-    if (!config) return doctors;
-    return doctors.filter((doctor) => {
-      const deptOk = config.departmentFilters.length === 0 || config.departmentFilters.includes(doctor.dept);
-      const titleOk = config.titleFilters.length === 0 || config.titleFilters.includes(doctor.title);
-      const regionOk = config.regionFilters.length === 0 || config.regionFilters.includes(doctor.region) || config.regionFilters.includes('全国');
-      const tagOk = config.tagFilters.length === 0 || doctor.tags.some((tag) => config.tagFilters.includes(tag));
-      return deptOk && titleOk && regionOk && tagOk;
-    });
-  }, [config, doctors]);
 
   const saveConfig = async (nextConfig = config) => {
     if (!nextConfig || !ticketId) return;
@@ -184,21 +229,6 @@ export function RequestDistributionDetail(): JSX.Element {
       showToast('诉求级分发策略已保存', 'success');
     } catch {
       showToast('保存策略失败，请检查后端服务', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleAccept = async () => {
-    if (!request) return;
-    setSaving(true);
-    try {
-      const res = await acceptDistributionRequest(request.id, acceptNote.trim());
-      setWorkbench((current) => current ? { ...current, request: res.data } : current);
-      showToast(`已受理拆单：${request.id}`, 'success');
-      setActiveModal(null);
-    } catch {
-      showToast('受理拆单失败，请检查权限或后端服务', 'error');
     } finally {
       setSaving(false);
     }
@@ -248,7 +278,7 @@ export function RequestDistributionDetail(): JSX.Element {
 
   if (error) return <ErrorState message={error} onRetry={load} />;
 
-  if (!request || !config) {
+  if (!request || !config || !defaultConfig) {
     return (
       <div className="space-y-4">
         <button onClick={() => navigate('/distribute')} className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-text-primary"><ArrowLeft className="h-3.5 w-3.5" /> 返回分发策略</button>
@@ -259,6 +289,7 @@ export function RequestDistributionDetail(): JSX.Element {
 
   const status = STATUS_LABELS[request.status] ?? STATUS_LABELS.pending;
   const projectOverride = REQUEST_PROJECT_OVERRIDES[request.id];
+  const displayProjectId = projectOverride?.projectId || request.project?.id || request.projectId;
   const displayProjectName = projectOverride?.projectName || request.project?.name || request.project?.title || request.projectId;
   const displayDisease = projectOverride?.disease || request.project?.disease || '—';
   const displayBrand = projectOverride?.brand || request.project?.brand || '—';
@@ -268,7 +299,7 @@ export function RequestDistributionDetail(): JSX.Element {
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-xs text-text-muted">
         <Link to="/distribute" className="inline-flex items-center gap-1 hover:text-text-primary"><ArrowLeft className="h-3.5 w-3.5" /> 返回分发策略</Link>
-        {displayProjectName && <><span>/</span><span>项目 · {displayProjectName}</span></>}
+        {displayProjectName && <><span>/</span><Link to={`/distribute/${displayProjectId}`} className="hover:text-text-primary">项目 · {displayProjectName}</Link></>}
       </div>
 
       <PageHeader
@@ -290,7 +321,7 @@ export function RequestDistributionDetail(): JSX.Element {
       <RequestMatrixSummary matrix={request.themeFormatMatrix} />
 
       <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
-        <Inbox className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <Users className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <div>
           当前显示<strong className="mx-0.5">项目默认医生分发策略</strong>。任何修改将作为本诉求专属策略保存，不再随项目变化。
         </div>
@@ -300,8 +331,6 @@ export function RequestDistributionDetail(): JSX.Element {
         sourceMatrix={request.themeFormatMatrix}
         batchMatrix={batchMatrix}
         batchTotal={batchTotal}
-        whitelistTotal={whitelistTotal}
-        strategyTotal={strategyTotal}
         unassignedTotal={unassignedTotal}
         onFill={() => setBatchMatrix(cloneMatrix(request.themeFormatMatrix))}
         onClear={() => setBatchMatrix({})}
@@ -310,55 +339,17 @@ export function RequestDistributionDetail(): JSX.Element {
         saving={saving}
       />
 
-      <Card className="space-y-4 bg-card/60">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-[14px] font-semibold text-foreground">分发方式（可同时启用）</div>
-            <p className="mt-1 text-[12px] text-muted-foreground">指定分发与策略分发均会写入诉求级分发配置；策略分发按医生互动数 desc 自动派发剩余额度。</p>
-          </div>
-          <Button size="sm" onClick={() => void saveConfig()} disabled={saving}><Save className="h-4 w-4" />保存策略</Button>
-        </div>
-        <DoctorPolicyPanel config={config} doctors={doctors} filteredDoctors={filteredDoctors} onChange={setConfig} />
-      </Card>
+      <DoctorPolicyEditor
+        config={config}
+        defaultConfig={defaultConfig}
+        doctors={doctors}
+        contentCount={batchTotal}
+        saving={saving}
+        onChange={setConfig}
+        onSave={saveConfig}
+      />
 
       <HistoryCard batches={batches} />
-
-      <Modal
-        open={activeModal === 'accept'}
-        onClose={() => setActiveModal(null)}
-        title="受理拆单"
-        footer={<><Button variant="secondary" onClick={() => setActiveModal(null)}>取消</Button><Button onClick={handleAccept} disabled={saving}>确认受理</Button></>}
-      >
-        <div className="space-y-4">
-          <div className="rounded-lg border border-border bg-bg-tertiary p-3 text-sm text-text-secondary">
-            受理后，工单会进入医生派单与内容制作流程，并在审计日志中留痕。当前状态：<span className="text-text-primary">{status.label}</span>
-          </div>
-          <label className="block text-sm text-text-secondary">
-            受理备注
-            <textarea value={acceptNote} onChange={(event) => setAcceptNote(event.target.value)} className="mt-1 h-24 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-blue" />
-          </label>
-        </div>
-      </Modal>
-
-      <Modal
-        open={activeModal === 'doctor'}
-        onClose={() => setActiveModal(null)}
-        title="医生分发策略"
-        maxWidth="max-w-5xl"
-        footer={<><Button variant="secondary" onClick={() => setActiveModal(null)}>关闭</Button><Button onClick={() => { void saveConfig(); setActiveModal(null); }} disabled={saving}>保存医生策略</Button></>}
-      >
-        <DoctorPolicyPanel config={config} doctors={doctors} filteredDoctors={filteredDoctors} onChange={setConfig} />
-      </Modal>
-
-      <Modal
-        open={activeModal === 'patient'}
-        onClose={() => setActiveModal(null)}
-        title="患者分发策略"
-        maxWidth="max-w-3xl"
-        footer={<><Button variant="secondary" onClick={() => setActiveModal(null)}>关闭</Button><Button onClick={() => { void saveConfig(); setActiveModal(null); }} disabled={saving}>保存患者策略</Button></>}
-      >
-        <PatientPolicyPanel config={config} onChange={setConfig} />
-      </Modal>
     </div>
   );
 }
@@ -403,7 +394,7 @@ function RequestMatrixSummary({ matrix }: { matrix: RequestDistributionMatrix })
   );
 }
 
-function Tag({ children }: { children: React.ReactNode }): JSX.Element {
+function Tag({ children }: { children: ReactNode }): JSX.Element {
   return <span className="rounded border border-border bg-muted/30 px-2 py-0.5">{children}</span>;
 }
 
@@ -411,8 +402,6 @@ function BatchMatrixCard({
   sourceMatrix,
   batchMatrix,
   batchTotal,
-  whitelistTotal,
-  strategyTotal,
   unassignedTotal,
   onFill,
   onClear,
@@ -423,8 +412,6 @@ function BatchMatrixCard({
   sourceMatrix: RequestDistributionMatrix;
   batchMatrix: RequestDistributionMatrix;
   batchTotal: number;
-  whitelistTotal: number;
-  strategyTotal: number;
   unassignedTotal: number;
   onFill: () => void;
   onClear: () => void;
@@ -437,15 +424,19 @@ function BatchMatrixCard({
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2"><PackagePlus className="h-4 w-4 text-accent-blue" /><h2 className="text-base font-semibold text-text-primary">本次分发批次 · 主题 × 形式篇数</h2></div>
-          <p className="mt-1 text-xs text-text-muted">每次提交批次都写入数据库，历史批次可用于核对每次消化的诉求额度。</p>
+          <div className="flex items-center gap-2"><PackagePlus className="h-4 w-4 text-accent-blue" /><h2 className="text-base font-semibold text-text-primary">本次分发批次 · 主题 × 形式 篇数</h2></div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge color="blue">本批 {batchTotal} 篇</Badge>
+          <div className="flex items-center gap-1 rounded border border-accent-blue/35 bg-accent-blue/15 px-2 py-1 text-[11px] text-accent-blue">
+            <span>本批合计</span>
+            <span className="tabular-nums text-sm font-semibold text-foreground">{batchTotal}</span>
+            <span>篇</span>
+          </div>
           <Button variant="secondary" size="sm" onClick={onFill}><Sparkles className="h-3.5 w-3.5" />按诉求额度回填</Button>
           <Button variant="secondary" size="sm" onClick={onClear}>清空</Button>
         </div>
       </div>
+      <p className="mt-3 max-w-3xl text-xs leading-relaxed text-text-muted">每次分发需明确诉求中的主题 + 形式篇数； 合计将作为本次分发的总篇数，下方医生分发策略据此分配。</p>
 
       {themes.length === 0 ? (
         <div className="mt-4 rounded-lg border border-dashed border-border bg-bg-secondary p-8 text-center text-sm text-text-muted">诉求未设置主题 × 形式矩阵。</div>
@@ -491,8 +482,6 @@ function BatchMatrixCard({
       )}
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4 text-xs text-text-muted">
-        <span>指定医生 {whitelistTotal} 篇</span>
-        <span>策略自动 {strategyTotal} 篇</span>
         {unassignedTotal > 0 && <span className="text-accent-red">未分配 {unassignedTotal} 篇</span>}
         <Button onClick={onSubmit} disabled={saving || batchTotal <= 0}><Send className="h-4 w-4" />提交本批分发</Button>
       </div>
@@ -500,126 +489,343 @@ function BatchMatrixCard({
   );
 }
 
-function DoctorPolicyPanel({
+function DoctorPolicyEditor({
   config,
+  defaultConfig,
   doctors,
-  filteredDoctors,
+  contentCount,
+  saving,
   onChange,
+  onSave,
 }: {
   config: RequestDistributionConfig;
+  defaultConfig: RequestDistributionConfig;
   doctors: DoctorCandidate[];
-  filteredDoctors: DoctorCandidate[];
+  contentCount: number;
+  saving: boolean;
   onChange: (config: RequestDistributionConfig) => void;
+  onSave: (config: RequestDistributionConfig) => void | Promise<void>;
 }): JSX.Element {
+  const wlEnabled = config.whitelistEnabled;
+  const stEnabled = config.strategyEnabled;
+  const wlIds = config.whitelistDoctorIds;
+  const wlQuota = config.whitelistDoctorQuota;
+  const selectedTitles = config.titleFilters.length ? config.titleFilters : TITLE_OPTIONS;
+
+  const whitelistCandidates = useMemo(() => sortByInteractionDesc(doctors.filter((doctor) => selectedTitles.includes(doctor.title))), [doctors, selectedTitles]);
+  const strategyCandidates = useMemo(
+    () => sortByInteractionDesc(doctors.filter((doctor) => selectedTitles.includes(doctor.title) && doctorPending(doctor) === 0 && !wlIds.includes(doctor.id))),
+    [doctors, selectedTitles, wlIds]
+  );
+  const selectedDoctors = useMemo(() => wlIds.map((id) => doctors.find((doctor) => doctor.id === id)).filter(Boolean) as DoctorCandidate[], [doctors, wlIds]);
+  const wlAssignedTotal = selectedDoctors.reduce((sum, doctor) => sum + Math.max(0, wlQuota[doctor.id] ?? 0), 0);
+  const strategyRemaining = Math.max(0, contentCount - wlAssignedTotal);
+  const strategyAssignments = stEnabled ? allocateStrategy(strategyCandidates, strategyRemaining) : [];
+  const strategyAssignedTotal = strategyAssignments.reduce((sum, assignment) => sum + assignment.count, 0);
+
   const patch = (partial: Partial<RequestDistributionConfig>) => onChange({ ...config, ...partial });
-  const toggleDoctor = (doctorId: string) => {
-    const selected = config.whitelistDoctorIds.includes(doctorId);
-    const nextIds = selected ? config.whitelistDoctorIds.filter((id) => id !== doctorId) : [...config.whitelistDoctorIds, doctorId];
-    const nextQuota = { ...config.whitelistDoctorQuota };
+
+  const toggleTitle = (title: string) => {
+    const nextTitles = config.titleFilters.includes(title)
+      ? config.titleFilters.filter((item) => item !== title)
+      : [...config.titleFilters, title];
+    patch({ titleFilters: nextTitles });
+  };
+
+  const toggleMode = (mode: 'whitelist' | 'strategy') => {
+    if (mode === 'whitelist') {
+      const nextEnabled = !wlEnabled;
+      patch({
+        whitelistEnabled: nextEnabled,
+        assignmentMode: nextEnabled && !stEnabled ? 'whitelist' : stEnabled ? 'mixed' : 'strategy',
+      });
+      return;
+    }
+    const nextEnabled = !stEnabled;
+    patch({
+      strategyEnabled: nextEnabled,
+      assignmentMode: nextEnabled && !wlEnabled ? 'strategy' : wlEnabled ? 'mixed' : 'whitelist',
+    });
+  };
+
+  const toggleWhitelistDoctor = (doctorId: string) => {
+    const selected = wlIds.includes(doctorId);
+    const nextIds = selected ? wlIds.filter((id) => id !== doctorId) : [...wlIds, doctorId];
+    const nextQuota = { ...wlQuota };
     if (selected) delete nextQuota[doctorId];
     else nextQuota[doctorId] = nextQuota[doctorId] ?? 1;
     patch({ whitelistDoctorIds: nextIds, whitelistDoctorQuota: nextQuota });
   };
 
-  return (
-    <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
-      <section className="space-y-4 rounded-xl border border-border bg-bg-primary/40 p-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-text-primary"><ShieldCheck className="h-4 w-4 text-accent-blue" />分发方式</div>
-        <label className="flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-3 text-sm text-text-secondary">
-          指定分发
-          <input type="checkbox" checked={config.whitelistEnabled} onChange={(event) => patch({ whitelistEnabled: event.target.checked })} />
-        </label>
-        <label className="flex items-center justify-between rounded-lg border border-border bg-bg-tertiary p-3 text-sm text-text-secondary">
-          策略分发（互动数 desc）
-          <input type="checkbox" checked={config.strategyEnabled} onChange={(event) => patch({ strategyEnabled: event.target.checked })} />
-        </label>
-        <div>
-          <div className="mb-2 text-xs text-text-muted">科室</div>
-          <Chips values={config.departmentFilters} options={unique([...DEPARTMENT_OPTIONS, ...doctors.map((doctor) => doctor.dept)])} onChange={(departmentFilters) => patch({ departmentFilters })} />
-        </div>
-        <div>
-          <div className="mb-2 text-xs text-text-muted">职称</div>
-          <Chips values={config.titleFilters} options={unique([...TITLE_OPTIONS, ...doctors.map((doctor) => doctor.title)])} onChange={(titleFilters) => patch({ titleFilters })} />
-        </div>
-        <div>
-          <div className="mb-2 text-xs text-text-muted">区域</div>
-          <Chips values={config.regionFilters} options={unique([...REGION_OPTIONS, ...doctors.map((doctor) => doctor.region)])} onChange={(regionFilters) => patch({ regionFilters })} />
-        </div>
-        <div>
-          <div className="mb-2 text-xs text-text-muted">标签</div>
-          <Chips values={config.tagFilters} options={unique([...TAG_OPTIONS, ...doctors.flatMap((doctor) => doctor.tags)])} onChange={(tagFilters) => patch({ tagFilters })} />
-        </div>
-      </section>
+  const updateQuota = (doctorId: string, nextValue: number) => {
+    patch({ whitelistDoctorQuota: { ...wlQuota, [doctorId]: Math.max(0, Math.floor(nextValue || 0)) } });
+  };
 
-      <section className="space-y-3 rounded-xl border border-border bg-bg-primary/40 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-text-primary"><Stethoscope className="h-4 w-4 text-accent-blue" />候选医生池</div>
-            <div className="mt-1 text-xs text-text-muted">命中 {filteredDoctors.length} / {doctors.length} 位，可勾选医生并填写指定篇数。</div>
-          </div>
-          <Button variant="secondary" size="sm" onClick={() => {
-            const ids = filteredDoctors.map((doctor) => doctor.id);
-            const quota = { ...config.whitelistDoctorQuota };
-            ids.forEach((id) => { quota[id] = quota[id] ?? 1; });
-            patch({ whitelistDoctorIds: ids, whitelistDoctorQuota: quota });
-          }}>全选命中</Button>
+  const toggleSelectAll = () => {
+    const candidateIds = whitelistCandidates.map((doctor) => doctor.id);
+    const allSelected = candidateIds.length > 0 && candidateIds.every((id) => wlIds.includes(id));
+    const nextIdSet = new Set(wlIds);
+    const nextQuota = { ...wlQuota };
+    if (allSelected) {
+      candidateIds.forEach((id) => {
+        nextIdSet.delete(id);
+        delete nextQuota[id];
+      });
+    } else {
+      candidateIds.forEach((id) => {
+        nextIdSet.add(id);
+        nextQuota[id] = nextQuota[id] ?? 1;
+      });
+    }
+    patch({ whitelistDoctorIds: Array.from(nextIdSet), whitelistDoctorQuota: nextQuota });
+  };
+
+  const distributeEvenly = () => {
+    if (selectedDoctors.length === 0 || contentCount <= 0) return;
+    const base = Math.floor(contentCount / selectedDoctors.length);
+    let remainder = contentCount - base * selectedDoctors.length;
+    const nextQuota: Record<string, number> = {};
+    selectedDoctors.forEach((doctor) => {
+      const extra = remainder > 0 ? 1 : 0;
+      if (extra) remainder -= 1;
+      nextQuota[doctor.id] = base + extra;
+    });
+    patch({ whitelistDoctorQuota: nextQuota });
+    showToast('已按本批总数平均分配', 'success');
+  };
+
+  const handleSave = () => {
+    if (!wlEnabled && !stEnabled) return showToast('请至少启用一种分发方式', 'error');
+    if (wlEnabled && selectedDoctors.length === 0) return showToast('已开启指定分发，请勾选医生并填写本人篇数', 'error');
+    if (wlEnabled && wlAssignedTotal === 0) return showToast('指定分发已勾选医生但篇数仍为 0，请填写各医生承担篇数', 'error');
+    if (contentCount > 0 && wlAssignedTotal > contentCount) return showToast(`指定分发合计 ${wlAssignedTotal} 篇 已超过本次分发总篇数 ${contentCount}`, 'error');
+    void onSave(config);
+  };
+
+  const selectedCandidateIds = whitelistCandidates.map((doctor) => doctor.id);
+  const allSelectedInCandidates = selectedCandidateIds.length > 0 && selectedCandidateIds.every((id) => wlIds.includes(id));
+  const strategyAssignmentByDoctor = new Map(strategyAssignments.map((assignment) => [assignment.doctorId, assignment.count]));
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+      <div className="rounded-lg border border-border bg-card/60 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.14)]">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-4 w-4 text-primary" />
+          <h3 className="text-[14px] font-semibold text-foreground">分发方式（可同时启用）</h3>
         </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          {filteredDoctors.map((doctor) => {
-            const selected = config.whitelistDoctorIds.includes(doctor.id);
-            return (
-              <div key={doctor.id} className={`rounded-lg border p-3 ${selected ? 'border-accent-blue bg-accent-blue/10' : 'border-border bg-bg-secondary/60'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <button type="button" onClick={() => toggleDoctor(doctor.id)} className="text-left">
-                    <div className="text-sm font-semibold text-text-primary">{doctor.name} · {doctor.title}</div>
-                    <div className="mt-1 text-xs text-text-muted">{doctor.dept} · {doctor.region} · {doctor.hospital || '—'}</div>
-                    <div className="mt-2 flex flex-wrap gap-1">{doctor.tags.map((tag) => <Badge key={tag} color="gray">{tag}</Badge>)}</div>
-                  </button>
-                  <input type="checkbox" checked={selected} onChange={() => toggleDoctor(doctor.id)} />
-                </div>
-                {selected && (
-                  <label className="mt-3 block text-xs text-text-muted">
-                    指定篇数
-                    <input type="number" min={0} value={config.whitelistDoctorQuota[doctor.id] ?? 1} onChange={(event) => patch({ whitelistDoctorQuota: { ...config.whitelistDoctorQuota, [doctor.id]: Math.max(0, Number(event.target.value) || 0) } })} className="mt-1 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary" />
-                  </label>
+        <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+          产品规则：先用<strong className="mx-0.5 text-foreground">指定分发</strong>给勾选医生派指定篇数；
+          剩余 <span className="tabular-nums text-foreground">{strategyRemaining}</span> 篇由
+          <strong className="mx-0.5 text-foreground">策略分发</strong>按医生<strong className="text-foreground"> 互动数（点赞 + 收藏） </strong>
+          desc 自动派发。
+        </p>
+
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <ModeCard
+            active={wlEnabled}
+            onClick={() => toggleMode('whitelist')}
+            title="指定分发"
+            desc="在职称命中的候选池中勾选医生，并为每位医生填写本人篇数"
+            icon={<Users className="h-4 w-4" />}
+          />
+          <ModeCard
+            active={stEnabled}
+            onClick={() => toggleMode('strategy')}
+            title="策略分发"
+            desc="按互动数（点赞 + 收藏）desc 排序，自动平均派发剩余篇数"
+            icon={<Activity className="h-4 w-4" />}
+          />
+        </div>
+
+        {stEnabled && (
+          <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11.5px] leading-relaxed text-emerald-200">
+            <div className="mb-0.5 font-semibold text-emerald-100">策略分发 · 互动派发逻辑</div>
+            <div>
+              <span className="font-medium text-emerald-100">互动分</span> = 该医生历史内容的<strong className="mx-0.5">点赞数</strong>+<strong className="mx-0.5">收藏数</strong>之和。
+              系统对候选池按<strong className="mx-0.5">互动分 desc</strong>排序后，将剩余篇数<strong className="mx-0.5">平均派发</strong>给前 N 位医生；
+              当出现余数时优先补给互动分更高的医生。已被指定分发选中的医生<strong className="mx-0.5">不再参与</strong>策略分发，避免重复。
+            </div>
+          </div>
+        )}
+
+        <h3 className="mb-3 mt-6 text-[14px] font-semibold text-foreground">Step 1 · 候选筛选范围</h3>
+        <div>
+          <div className="mb-1.5 text-[11.5px] text-muted-foreground">职称（必选）</div>
+          <div className="flex flex-wrap gap-1.5">
+            {TITLE_OPTIONS.map((title) => {
+              const active = config.titleFilters.includes(title);
+              return (
+                <button
+                  key={title}
+                  type="button"
+                  onClick={() => toggleTitle(title)}
+                  className={`rounded border px-2 py-0.5 text-[11.5px] transition ${
+                    active
+                      ? 'border-primary/50 bg-primary/15 text-primary'
+                      : 'border-border bg-muted/30 text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {title}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {wlEnabled && (
+          <>
+            <div className="mb-3 mt-6 flex items-center justify-between gap-3">
+              <h3 className="text-[14px] font-semibold text-foreground">Step 2 · 勾选指定医生并填写篇数</h3>
+              <div className="flex items-center gap-2">
+                <Badge color="gray" className="text-[11px]">候选 {whitelistCandidates.length} · 已选 {selectedDoctors.length}</Badge>
+                {whitelistCandidates.length > 0 && (
+                  <Button variant="secondary" size="sm" className="h-7 px-2 text-[11.5px]" onClick={toggleSelectAll}>
+                    {allSelectedInCandidates ? <><Square className="h-3 w-3" />取消全选</> : <><CheckSquare className="h-3 w-3" />全选候选</>}
+                  </Button>
                 )}
               </div>
-            );
-          })}
+            </div>
+
+            {whitelistCandidates.length === 0 ? (
+              <div className="rounded border border-dashed border-border bg-muted/20 p-6 text-center text-[12px] text-muted-foreground">请先在 Step 1 选择 <span className="font-semibold text-foreground">职称</span> 以命中候选医生。</div>
+            ) : (
+              <div className="max-h-[320px] space-y-1.5 overflow-y-auto rounded border border-border bg-background/40 p-2">
+                {whitelistCandidates.map((doctor) => {
+                  const selected = wlIds.includes(doctor.id);
+                  const quota = wlQuota[doctor.id] ?? 0;
+                  return (
+                    <div key={doctor.id} className={`flex items-center gap-2 rounded border px-2.5 py-2 transition ${selected ? 'border-primary/60 bg-primary/10' : 'border-border bg-background/40 hover:border-primary/40'}`}>
+                      <button type="button" onClick={() => toggleWhitelistDoctor(doctor.id)} className={`grid h-5 w-5 place-items-center rounded border text-[11px] ${selected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40 bg-background text-muted-foreground'}`}>{selected ? '✓' : ''}</button>
+                      <button type="button" onClick={() => toggleWhitelistDoctor(doctor.id)} className="flex flex-1 items-center gap-2 text-left">
+                        <span className="text-[12.5px] font-medium text-foreground">{doctor.name}</span>
+                        <span className="text-[11px] text-muted-foreground">· {doctor.dept} · {doctor.title} · {doctor.region}</span>
+                        <span className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <span>互动 {doctorScore(doctor)}</span>
+                          <span className={doctorPending(doctor) === 0 ? 'text-emerald-400' : 'text-amber-400'}>· 待写 {doctorPending(doctor)}</span>
+                        </span>
+                      </button>
+                      <div className={`flex items-center gap-1 transition ${selected ? 'opacity-100' : 'pointer-events-none opacity-30'}`}>
+                        <button type="button" onClick={() => updateQuota(doctor.id, quota - 1)} className="grid h-6 w-6 place-items-center rounded border border-border bg-background hover:border-primary/50"><Minus className="h-3 w-3" /></button>
+                        <input type="number" min={0} value={quota} onChange={(event) => updateQuota(doctor.id, Number(event.target.value))} className="h-6 w-10 rounded border border-border bg-background text-center text-[12px] tabular-nums outline-none focus:border-primary/50" />
+                        <button type="button" onClick={() => updateQuota(doctor.id, quota + 1)} className="grid h-6 w-6 place-items-center rounded border border-border bg-background hover:border-primary/50"><Plus className="h-3 w-3" /></button>
+                        <span className="ml-0.5 text-[10.5px] text-muted-foreground">篇</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {selectedDoctors.length > 0 && contentCount > 0 && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-[12px]">
+                <div className="text-muted-foreground">
+                  指定分发已分 <span className="tabular-nums font-semibold text-foreground">{wlAssignedTotal}</span> / 本批 <span className="tabular-nums font-semibold text-foreground">{contentCount}</span> 篇
+                  {wlAssignedTotal > contentCount && <span className="ml-2 text-rose-300">已超出 {wlAssignedTotal - contentCount} 篇</span>}
+                </div>
+                <Button variant="secondary" size="sm" className="h-7 px-2 text-[11.5px]" onClick={distributeEvenly}><Sparkles className="h-3 w-3" />按本批总数平均分配</Button>
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <Button variant="secondary" size="sm" onClick={() => onChange(defaultConfig)}>恢复默认</Button>
+          <Button size="sm" onClick={handleSave} disabled={saving}><Save className="h-3.5 w-3.5" />保存策略</Button>
         </div>
-      </section>
+      </div>
+
+      <div className="rounded-lg border border-border bg-card/60 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.14)]">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[14px] font-semibold text-foreground">本次分发预览</h3>
+          <Badge color="gray" className="text-[11px]">合计 {contentCount} 篇</Badge>
+        </div>
+        <p className="mt-1 text-[12px] text-muted-foreground">
+          {wlEnabled && stEnabled
+            ? '上半区为指定医生及其篇数；下半区为剩余篇数按互动数 desc 的策略分发预估。'
+            : wlEnabled
+              ? '仅启用指定分发：仅按已勾选医生派发对应篇数。'
+              : '仅启用策略分发：按候选医生互动数 desc 平均派发。'}
+        </p>
+
+        {wlEnabled && (
+          <div className="mt-4">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[12.5px] font-semibold text-foreground">指定分发 · {selectedDoctors.length} 位医生</div>
+              <Badge color="gray" className="text-[11px]">{wlAssignedTotal} 篇</Badge>
+            </div>
+            <div className="max-h-[200px] space-y-1.5 overflow-y-auto pr-1">
+              {selectedDoctors.length === 0 && <div className="rounded border border-dashed border-border bg-muted/20 p-4 text-center text-[12px] text-muted-foreground">尚未勾选指定医生。</div>}
+              {selectedDoctors.map((doctor, index) => <DoctorRow key={doctor.id} doctor={doctor} rank={index + 1} assigned={wlQuota[doctor.id] ?? 0} />)}
+            </div>
+          </div>
+        )}
+
+        {stEnabled && (
+          <div className="mt-5">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-[12.5px] font-semibold text-foreground">策略分发 · 候选 {strategyCandidates.length} 位</div>
+              <Badge color="gray" className="text-[11px]">{strategyAssignedTotal} 篇</Badge>
+            </div>
+            {strategyCandidates.length === 0 ? (
+              <div className="rounded border border-dashed border-border bg-muted/20 p-4 text-center text-[12px] text-muted-foreground">当前筛选条件下没有命中的候选医生。</div>
+            ) : strategyRemaining === 0 ? (
+              <div className="rounded border border-dashed border-border bg-muted/20 p-4 text-center text-[12px] text-muted-foreground">指定分发已覆盖全部 {contentCount} 篇，无需走策略分发。</div>
+            ) : (
+              <div className="max-h-[260px] space-y-1.5 overflow-y-auto pr-1">
+                {strategyAssignments.map((assignment, index) => {
+                  const doctor = strategyCandidates.find((item) => item.id === assignment.doctorId);
+                  if (!doctor) return null;
+                  return <DoctorRow key={doctor.id} doctor={doctor} rank={index + 1} assigned={strategyAssignmentByDoctor.get(doctor.id) ?? assignment.count} />;
+                })}
+                {strategyAssignments.length === 0 && <div className="rounded border border-dashed border-border bg-muted/20 p-4 text-center text-[12px] text-muted-foreground">尚未指定本批总篇数（contentCount=0），暂无可分配预估。</div>}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function PatientPolicyPanel({ config, onChange }: { config: RequestDistributionConfig; onChange: (config: RequestDistributionConfig) => void }): JSX.Element {
-  const patch = (partial: Partial<RequestDistributionConfig>) => onChange({ ...config, ...partial });
+function ModeCard({ active, onClick, title, desc, icon }: { active: boolean; onClick: () => void; title: string; desc: string; icon: ReactNode }): JSX.Element {
   return (
-    <div className="space-y-5">
-      <div className="grid gap-4 md:grid-cols-2">
-        <section className="rounded-xl border border-border bg-bg-primary/40 p-4">
-          <div className="mb-2 text-sm font-semibold text-text-primary">触达渠道</div>
-          <Chips values={config.patientChannels} options={PATIENT_CHANNEL_OPTIONS} onChange={(patientChannels) => patch({ patientChannels })} />
-        </section>
-        <section className="rounded-xl border border-border bg-bg-primary/40 p-4">
-          <div className="mb-2 text-sm font-semibold text-text-primary">患者标签</div>
-          <Chips values={config.patientTags} options={PATIENT_TAG_OPTIONS} onChange={(patientTags) => patch({ patientTags })} />
-        </section>
-        <section className="rounded-xl border border-border bg-bg-primary/40 p-4">
-          <div className="mb-2 text-sm font-semibold text-text-primary">区域</div>
-          <Chips values={config.patientRegions} options={REGION_OPTIONS} onChange={(patientRegions) => patch({ patientRegions })} />
-        </section>
-        <section className="rounded-xl border border-border bg-bg-primary/40 p-4">
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="text-xs text-text-muted">灰度比例（%）<input type="number" min={0} max={100} value={config.patientGrayPercent} onChange={(event) => patch({ patientGrayPercent: Math.max(0, Math.min(100, Number(event.target.value) || 0)) })} className="mt-1 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary" /></label>
-            <label className="text-xs text-text-muted">患者上限<input type="number" min={0} value={config.patientCap} onChange={(event) => patch({ patientCap: Math.max(0, Number(event.target.value) || 0) })} className="mt-1 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary" /></label>
-          </div>
-        </section>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex flex-col gap-1 rounded border px-3 py-2.5 text-left transition ${
+        active
+          ? 'border-primary/60 bg-primary/10'
+          : 'border-border bg-background/40 hover:border-primary/40'
+      }`}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className={active ? 'text-primary' : 'text-muted-foreground'}>{icon}</span>
+        <span className={`text-[13px] font-semibold ${active ? 'text-primary' : 'text-foreground'}`}>{title}</span>
+        {active && <span className="ml-auto rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">已启用</span>}
       </div>
-      <label className="block text-sm text-text-secondary">
-        策略备注
-        <textarea value={config.note ?? ''} onChange={(event) => patch({ note: event.target.value })} className="mt-1 h-24 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-blue" />
-      </label>
+      <div className="text-[11.5px] leading-snug text-muted-foreground">{desc}</div>
+    </button>
+  );
+}
+
+function DoctorRow({ doctor, rank, assigned }: { doctor: DoctorCandidate; rank: number; assigned: number }): JSX.Element {
+  return (
+    <div className="flex items-center gap-3 rounded border border-border bg-background/40 px-3 py-2">
+      <div className="grid h-7 w-7 place-items-center rounded-full bg-primary/15 text-[11.5px] font-semibold text-primary">{doctor.name.slice(0, 1)}</div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-foreground">
+          <span className="tabular-nums text-[11px] text-muted-foreground">#{rank}</span>
+          {doctor.name}
+          <span className="text-[11px] text-muted-foreground">· {doctor.title}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span>{doctor.dept}</span>
+          <span>·</span>
+          <span className="inline-flex items-center gap-0.5 rounded bg-emerald-500/15 px-1.5 py-0.5 font-medium text-emerald-300">互动 {doctorScore(doctor)}</span>
+          <span className={doctorPending(doctor) === 0 ? 'text-emerald-400' : 'text-amber-400'}>· 待写 {doctorPending(doctor)}</span>
+        </div>
+      </div>
+      {assigned > 0 && <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary">{assigned} 篇</span>}
     </div>
   );
 }
@@ -639,17 +845,5 @@ function HistoryCard({ batches }: { batches: DistributionRequestWorkbench['batch
         </div>
       )}
     </Card>
-  );
-}
-
-function Chips({ values, options, onChange }: { values: string[]; options: string[]; onChange: (values: string[]) => void }): JSX.Element {
-  const valueSet = new Set(values);
-  return (
-    <div className="flex flex-wrap gap-2">
-      {options.map((option) => {
-        const active = valueSet.has(option);
-        return <button key={option} type="button" onClick={() => onChange(active ? values.filter((item) => item !== option) : [...values, option])} className={`rounded border px-2 py-1 text-xs transition-colors ${active ? 'border-accent-blue bg-accent-blue/15 text-accent-blue' : 'border-border bg-bg-tertiary text-text-muted hover:text-text-primary'}`}>{option}</button>;
-      })}
-    </div>
   );
 }

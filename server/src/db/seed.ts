@@ -134,6 +134,49 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     `, [project.id, project.name, project.name, project.disease, project.contentCount, project.publishedCount, project.pushCount, project.readUsers, project.readCount, project.interactionCount, project.status, project.createdAt, project.updatedAt]);
   }
 
+  for (const project of distributionProjects) {
+    await run(`
+      INSERT INTO projects (
+        id, tenant_id, name, title, disease, priority, content_count, published_count,
+        status, expected_date, total_pieces, cadence, patient_cap, progress_percent,
+        created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        tenant_id = excluded.tenant_id,
+        name = excluded.name,
+        title = excluded.title,
+        disease = excluded.disease,
+        priority = excluded.priority,
+        content_count = excluded.content_count,
+        published_count = excluded.published_count,
+        status = excluded.status,
+        expected_date = excluded.expected_date,
+        total_pieces = excluded.total_pieces,
+        cadence = excluded.cadence,
+        patient_cap = excluded.patient_cap,
+        progress_percent = excluded.progress_percent,
+        updated_at = excluded.updated_at
+    `, [
+      project.id,
+      project.tenantId,
+      project.title,
+      project.title,
+      project.disease,
+      project.priority,
+      project.contentCount,
+      project.publishedCount,
+      project.status,
+      project.expectedDate,
+      project.totalPieces,
+      project.cadence,
+      project.patientCap,
+      project.progress,
+      project.createdAt ?? project.expectedDate,
+      project.updatedAt ?? project.createdAt ?? project.expectedDate,
+    ]);
+  }
+
   for (const item of contentList) {
     const itemStatus = String(item.status);
     await run(`
@@ -223,6 +266,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
 
   const requestOverrides: Record<string, Partial<{
     tenantId: string;
+    projectId: string;
     requestName: string;
     title: string;
     priority: 'P0' | 'P1' | 'P2';
@@ -235,6 +279,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
   }>> = {
     'REQ-2030': {
       tenantId: 'T-AZ',
+      projectId: 'PRJ-1001',
       requestName: '首输 6 周内安全信号识别',
       title: '乳腺癌 · 优赫得 · 首输 6 周内安全信号识别',
       priority: 'P1',
@@ -246,16 +291,21 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
       submittedAt: '2026-05-07 14:10',
     },
     'REQ-2031': {
-      tenantId: 'T-AZ',
-      requestName: '机制对比 · 驳回',
-      title: '乳腺癌 · 优赫得 · 机制对比 · 驳回',
-      priority: 'P2',
-      expectedDate: '2026-05-22',
-      matrix: { awareness: { article: 2 } },
-      totalCount: 2,
-      note: '已驳回',
-      status: 'rejected',
-      submittedAt: '2026-04-02 11:25',
+      tenantId: 'T-RC',
+      projectId: 'PRJ-1000',
+      requestName: '12 周随访节点提醒 · 多子项诉求',
+      title: '乳腺癌 · 赫赛汀 · 12 周随访节点提醒 · 多子项诉求',
+      priority: 'P0',
+      expectedDate: '2026-05-18',
+      matrix: {
+        awareness: { article: 2, poster: 1 },
+        treatment: { article: 1, poster: 1 },
+        followup: { checklist: 1 },
+      },
+      totalCount: 6,
+      note: '等待运营受理与合规预审',
+      status: 'pending',
+      submittedAt: '2026-05-07 09:42',
     },
   };
 
@@ -265,7 +315,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     return {
       id,
       tenantId: override.tenantId ?? ['T-NV', 'T-AZ', 'T-RC', 'T-LL', 'T-NV'][index] ?? 'T-NV',
-      projectId: item.projectId,
+      projectId: override.projectId ?? item.projectId,
       contentId: item.id,
       requestName: override.requestName ?? (item.title.split(' · ').slice(-1)[0] || item.title),
       title: override.title ?? `乳腺癌 · ${item.title}`,
@@ -297,6 +347,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
         theme_format_matrix = excluded.theme_format_matrix,
         total_count = excluded.total_count,
         note = excluded.note,
+        status = excluded.status,
         submitted_by = excluded.submitted_by,
         submitted_at = excluded.submitted_at,
         updated_at = excluded.updated_at
@@ -321,7 +372,8 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
   }
 
   for (const request of requestSeeds.slice(0, 3)) {
-    const strategyOnly = request.id === 'REQ-2030';
+    const manuscriptStrategyOnly = request.id === 'REQ-2031';
+    const strategyOnly = manuscriptStrategyOnly || request.id === 'REQ-2030';
     await run(`
       INSERT INTO request_distribution_configs (
         request_id, assignment_mode, whitelist_enabled, strategy_enabled,
@@ -330,7 +382,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
         patient_channels, patient_regions, patient_tags, patient_gray_percent, patient_cap,
         note, updated_by, created_at, updated_at
       )
-      VALUES (?, 'mixed', ?, ?, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, 30, 5000, ?, 'PX 运营组', ?, ?)
+      VALUES (?, ?, ?, ?, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, 30, 5000, ?, 'PX 运营组', ?, ?)
       ON CONFLICT(request_id) DO UPDATE SET
         assignment_mode = excluded.assignment_mode,
         whitelist_enabled = excluded.whitelist_enabled,
@@ -351,12 +403,13 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
         updated_at = excluded.updated_at
     `, [
       request.id,
+      manuscriptStrategyOnly ? 'strategy' : strategyOnly ? 'strategy' : 'mixed',
       boolValue(!strategyOnly),
       boolValue(true),
-      json(['乳腺外科', '肿瘤内科']),
+      json(manuscriptStrategyOnly ? [] : ['乳腺外科', '肿瘤内科']),
       json(strategyOnly ? ['主任医师', '副主任医师', '主治医师', '住院医师'] : ['主任医师', '副主任医师']),
-      json(['华东', '华南']),
-      json(['KOL', '患教经验丰富']),
+      json(manuscriptStrategyOnly ? [] : ['华东', '华南']),
+      json(manuscriptStrategyOnly ? [] : ['KOL', '患教经验丰富']),
       json(strategyOnly ? [] : ['doc_1001', 'doc_1002']),
       json(strategyOnly ? {} : { doc_1001: 1, doc_1002: 1 }),
       json(['微信公众号', '短信']),
@@ -368,50 +421,52 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     ]);
   }
 
-  const firstRequest = requestSeeds[0];
-  if (firstRequest) {
-    await run(`
-      INSERT INTO request_distribution_batches (id, request_id, batch_matrix, total_count, whitelist_total, strategy_total, operator, submitted_at, created_at)
-      VALUES (?, ?, ?${jsonCast}, ?, 1, 0, '陆玟昕', '2026-04-22 10:14', ?)
-      ON CONFLICT(id) DO UPDATE SET
-        batch_matrix = excluded.batch_matrix,
-        total_count = excluded.total_count,
-        whitelist_total = excluded.whitelist_total,
-        strategy_total = excluded.strategy_total,
-        operator = excluded.operator,
-        submitted_at = excluded.submitted_at
-    `, [
-      `BATCH-${firstRequest.id}-001`,
-      firstRequest.id,
-      json(firstRequest.matrix),
-      firstRequest.totalCount,
-      firstRequest.createdAt,
-    ]);
-  }
-
-  const azRequest = requestSeeds.find((request) => request.id === 'REQ-2030');
-  if (azRequest) {
-    const batches = [
-      {
-        id: 'BATCH-REQ-2030-1',
-        matrix: { treatment: { article: 2 } },
-        total: 2,
-        whitelist: 1,
-        strategy: 1,
-        operator: '陆玟昕',
-        submittedAt: '2026-04-22 10:14',
-      },
-      {
-        id: 'BATCH-REQ-2030-2',
-        matrix: { adverse: { checklist: 1 } },
-        total: 1,
-        whitelist: 0,
-        strategy: 1,
-        operator: '祝景琰',
-        submittedAt: '2026-04-25 16:32',
-      },
-    ];
-    for (const batch of batches) {
+  await run("DELETE FROM request_distribution_batches WHERE request_id IN ('REQ-2031', 'REQ-2030')");
+  const requestHistoryBatches = [
+    {
+      requestId: 'REQ-2031',
+      id: 'BATCH-REQ-2031-1',
+      matrix: { awareness: { article: 2 } },
+      total: 2,
+      whitelist: 1,
+      strategy: 1,
+      operator: '陆玟昕',
+      submittedAt: '2026-04-22 10:14',
+    },
+    {
+      requestId: 'REQ-2031',
+      id: 'BATCH-REQ-2031-2',
+      matrix: { treatment: { article: 1 } },
+      total: 1,
+      whitelist: 0,
+      strategy: 1,
+      operator: '祝景琰',
+      submittedAt: '2026-04-25 16:32',
+    },
+    {
+      requestId: 'REQ-2030',
+      id: 'BATCH-REQ-2030-1',
+      matrix: { treatment: { article: 2 } },
+      total: 2,
+      whitelist: 1,
+      strategy: 1,
+      operator: '陆玟昕',
+      submittedAt: '2026-04-22 10:14',
+    },
+    {
+      requestId: 'REQ-2030',
+      id: 'BATCH-REQ-2030-2',
+      matrix: { adverse: { checklist: 1 } },
+      total: 1,
+      whitelist: 0,
+      strategy: 1,
+      operator: '祝景琰',
+      submittedAt: '2026-04-25 16:32',
+    },
+  ];
+  for (const batch of requestHistoryBatches) {
+    const seededRequest = requestSeeds.find((request) => request.id === batch.requestId);
+    if (seededRequest) {
       await run(`
         INSERT INTO request_distribution_batches (id, request_id, batch_matrix, total_count, whitelist_total, strategy_total, operator, submitted_at, created_at)
         VALUES (?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?)
@@ -424,14 +479,14 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
           submitted_at = excluded.submitted_at
       `, [
         batch.id,
-        azRequest.id,
+        batch.requestId,
         json(batch.matrix),
         batch.total,
         batch.whitelist,
         batch.strategy,
         batch.operator,
         batch.submittedAt,
-        azRequest.createdAt,
+        seededRequest.createdAt,
       ]);
     }
   }

@@ -162,7 +162,11 @@ describe('Backend API Integration Tests', () => {
       const detailBody = await detailRes.json();
       expect(detailBody.success).toBe(true);
       expect(detailBody.data.request.id).toBe('REQ-2031');
+      expect(detailBody.data.request.requestName).toBe('12 周随访节点提醒 · 多子项诉求');
+      expect(detailBody.data.request.totalCount).toBe(6);
       expect(detailBody.data.config.requestId).toBe('REQ-2031');
+      expect(detailBody.data.config.strategyEnabled).toBe(true);
+      expect(detailBody.data.config.whitelistEnabled).toBe(false);
       expect(Array.isArray(detailBody.data.doctors)).toBe(true);
 
       const configRes = await fetch(`${BASE_URL}/distribution/requests/REQ-2031/config`, {

@@ -40,17 +40,22 @@ test('pharma content request drawer can select a project and submit', async ({ p
 });
 
 test('request-level distribution workbench implements Manus actions', async ({ page }) => {
-  await page.goto('/distribute/request/REQ-2030');
-  await expect(page.getByRole('heading', { name: /诉求 ·/ })).toBeVisible();
-  await expect(page.getByText('本次分发批次 · 主题 × 形式篇数')).toBeVisible();
+  await page.goto('/distribute/request/REQ-2031');
+  await expect(page.getByRole('heading', { name: '诉求 · 12 周随访节点提醒 · 多子项诉求' })).toBeVisible();
+  await expect(page.getByText('本次分发批次 · 主题 × 形式 篇数')).toBeVisible();
+  await expect(page.getByText('策略分发 · 互动派发逻辑')).toBeVisible();
+  await expect(page.getByText('策略分发 · 候选 6 位')).toBeVisible();
 
   await page.getByRole('button', { name: '保存策略' }).click();
   await expect(page.getByText('诉求级分发策略已保存').last()).toBeVisible();
 
+  await page.getByRole('button', { name: '清空' }).click();
+  await expect(page.getByText('合计 0 篇').first()).toBeVisible();
   await page.getByRole('button', { name: /按诉求额度回填/ }).click();
+  await expect(page.getByText('合计 6 篇').first()).toBeVisible();
   await page.getByRole('button', { name: /提交本批分发/ }).click();
   await expect(page.getByText(/已提交本批分发 \d+ 篇/)).toBeVisible();
-  await expect(page.getByText(/BATCH-REQ-2030/).first()).toBeVisible();
+  await expect(page.getByText(/BATCH-REQ-2031/).first()).toBeVisible();
 });
 
 test('finance data platform route is implemented', async ({ page }) => {

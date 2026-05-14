@@ -104,7 +104,7 @@
 - `distribution_projects`、`distribution_strategies`、`doctors`、`distribution_records` 等表。
 - `request_distribution_configs`、`request_distribution_batches` 支撑 Manus 的 `/distribute/request/:ticketId` 功能。
 - 项目化分发列表、项目详情、诉求级分发详情页已同步 Manus 风格。
-- Seed/API 增加 PRJ-1001 / REQ-2030 live demo 场景，支持项目详情到诉求分发工作台联动。
+- Seed/API 增加 PRJ-1000 / REQ-2031 live demo 场景：赫赛汀 12 周随访节点提醒、多子项矩阵、策略分发预览与历史批次均可从项目详情联动进入。
 
 **demo-only / 待确认**
 

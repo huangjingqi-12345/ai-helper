@@ -81,6 +81,8 @@
 | `request_distribution_configs` | 诉求级分发策略 | 存储每条 `content_requests` 的医生筛选、指定医生额度、患者渠道、灰度比例、患者上限 | 已实现，用于 `/distribute/request/:ticketId` |
 | `request_distribution_batches` | 诉求分发批次 | 记录每次提交的主题 × 形式篇数、指定医生篇数、策略自动篇数、操作人和提交时间 | 已实现，用于诉求级分发历史 |
 
+Seed baseline: `REQ-2031` maps to `PRJ-1000`（赫赛汀 · HER2+ 术后辅助随访计划），默认矩阵为疾病认知/规范治疗/康复与随访共 6 篇，并预置 `BATCH-REQ-2031-1`、`BATCH-REQ-2031-2` 两条历史批次以匹配 demo 页。
+
 **待确认关系**：
 
 - `distribution_projects.project_id` 是否应该引用 `projects.id`，还是两者各自独立。

@@ -141,7 +141,7 @@ Ported Manus gaps now covered in current source:
 - Distribution batch submission and history backed by `request_distribution_batches`.
 - `/finance/data` route for the Manus “业财数据基座” page.
 - Manus-style shell, `PageHeader`, KPI cards, content/detail pages, distribution project/detail pages, request distribution workbench, and admin page visual treatment.
-- Backend/DB seed data now includes the live-style PRJ-1001 / REQ-2030 distribution scenario used by the Manus demo.
+- Backend/DB seed data now includes the live-style PRJ-1000 / REQ-2031 distribution scenario used by the Manus demo, including the 6-piece matrix, strategy-only doctor policy, and two historical batches.
 
 Still intentionally not copied wholesale:
 
