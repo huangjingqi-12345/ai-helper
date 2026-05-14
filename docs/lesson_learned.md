@@ -1,83 +1,72 @@
-# Px Lite 药企患教内容运营与行为洞察平台 — Lessons Learned
+# Px Lite 经验教训记录
 
-> This document is updated iteratively throughout development.
-> Each entry captures insights, pitfalls, and recommendations for future reference.
+最后更新时间：2026-05-14  
+用途：记录项目推进中的决策、踩坑、风险和后续复用经验。
 
----
+## 1. 总结
 
-## Entry Template
+当前最大的经验是：**PM demo parity 不等于生产业务规则确认**。当页面、API、数据库都已经初步打通后，继续“边看 demo 边补逻辑”会很容易把未经确认的口径写死。更合理的方式是先把 demo、代码现状、假设和开放问题整理成中文规格包，再让 Leader/PM/CEO 决策。
 
-```markdown
-### [Date] — [Topic]
+## 2. 关键经验
 
-**Context:** What was being worked on
-**Lesson:** What was learned
-**Impact:** How it affected the project
-**Recommendation:** What to do differently next time
-```
+### L-001：先区分 DB 驱动、seed 驱动和前端硬编码
 
----
+当前很多页面运行时确实从数据库读取，但 demo 数据来自 `server/src/data/*.ts` 和 `server/src/db/seed.ts`。同时财务、设置成员、分发详情部分数据仍在前端硬编码。
 
-## Phase 0: Planning & Investigation
+**经验**：讨论“数据是否来自数据库”时，需要拆成三层：
 
-### 2026-05-12 — Prototype investigation Challenges
+1. 页面运行时是否通过 API 读 DB。
+2. DB 的数据是否来自 demo seed。
+3. 是否仍有前端常量绕过 DB。
 
-**Context:** Investigating the Manus-generated prototype website at https://pxlite-5pyii99t.manus.space/ to understand the UI structure and requirements.
+### L-002：PM demo 是展示基线，不是业务规则来源
 
-**Lesson:** Browser automation (Puppeteer) click interactions failed repeatedly on the prototype site, preventing navigation to all 6 sidebar pages. Only the Overview page could be captured via screenshot.
+PM demo 可以帮助对齐页面和按钮，但不能自动决定 KPI、审批状态机、分发进度、财务金额等规则。
 
-**Impact:** The implementation plan for pages 2-6 (Content Workshop, Behavior Insights, Distribution Strategy, Approval Center, Platform Management) is based on domain knowledge and common patterns rather than exact prototype replication. These pages may need design adjustments once actual requirements are clarified.
+**经验**：每个按钮和数字都要标注来源：已确认、demo-only、假设、开放问题。
 
-**Recommendation:** 
-- Request the PM to provide screenshots of ALL pages, not just rely on a prototype
-- Consider having the PM export the Manus project source code if possible
-- For future prototypes, request a walkthrough video or detailed wireframes
-- The Overview page design is well-captured and will serve as the design language baseline for other pages
+### L-003：财务页面有 UI 不代表后端已实现
 
----
+当前财务模块页面完整度较高，但数据全部是 `FinancePages.tsx` 常量，没有数据库表、API 和计算规则。
 
-## Phase 1: Project Setup
+**经验**：财务类功能一定要先确认范围、金额口径、状态流、权限和审计，再开发后端。
 
-_To be updated during implementation._
+### L-004：审批和分发工作流必须统一
 
----
+当前审批中心 seed 是 3 节点：编辑审核 → Px 审核 → 药企审核。分发详情页展示的是 6 节点：医生制作 → 编辑审核 → 编辑修改 → Px 审核 → 药企审核 → 发布。
 
-## Phase 2: Design System
+**经验**：跨页面出现工作流不一致时，不能局部修页面，应先统一状态机。
 
-_To be updated during implementation._
+### L-005：规格文档应使用中文
 
----
+项目涉及 Leader/PM/CEO 评审，中文文档更适合业务确认；技术名词、表名、字段名、API 路径保留英文即可。
 
-## Phase 3: Backend Development
+**经验**：对外/评审文档使用中文；代码、schema、API path 保持英文技术语义。
 
-_To be updated during implementation._
+### L-006：server 测试当前依赖运行中的 backend
 
----
+`npm run test:server` 如果没有 `localhost:3001` 后端，会出现 `ECONNREFUSED`。启动 test backend 后测试可通过。
 
-## Phase 4: Page Implementation
+**经验**：后续可考虑把 server integration tests 改成自动启动 app 或 supertest 直接注入，减少测试前置条件。
 
-_To be updated during implementation._
+### L-007：不要轻易新建 repo 重写
 
----
+当前仓库已经有较多可复用资产：页面、组件、API、schema、Docker、测试。新建 repo 会损失这些基础，也可能重复踩坑。
 
-## Phase 5: Testing
+**经验**：规格确认后，优先在当前仓库做生产化重构；只有架构根本错误才考虑重建。
 
-_To be updated during implementation._
+## 3. 已形成的项目规则
 
----
+1. 未确认规则进入 `docs/open_questions.md`。
+2. demo-only 行为必须在文档和 UI 中明确标识。
+3. 新增/更新文档默认使用中文。
+4. 技术名词、路径、字段名可以保留英文。
+5. 生产化开发必须能追溯到确认版规格文档。
+6. 财务、分发、审批、权限等高风险模块必须先有规格再写代码。
 
-## Phase 6: Containerization & Deployment
+## 4. 后续建议
 
-_To be updated during implementation._
-
----
-
-## Phase 7: UAT
-
-_To be updated during implementation._
-
----
-
-## Summary & Key Takeaways
-
-_To be compiled after project completion._
+- 每次 PM demo 更新后，先更新 `docs/current_state_audit.md` 和 `docs/open_questions.md`。
+- 每次业务规则确认后，更新 `docs/product_spec.md`、`docs/business_rules.md`、`docs/workflows.md`。
+- 每次生产代码实现后，更新 `docs/features.md` 和 `docs/todo.md`。
+- 每次发现真实缺陷，记录到 `docs/bugs.md`，不要混入开放问题。

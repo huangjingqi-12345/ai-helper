@@ -1,254 +1,171 @@
-# Px Lite 药企患教内容运营与行为洞察平台 — Project Rules & Conventions
+# Px Lite 项目规则与约定
 
-> Last Updated: 2026-05-12
+最后更新时间：2026-05-14  
+适用范围：当前仓库后续文档、前端、后端、数据库、测试和部署工作。
 
----
+## 1. 总原则
 
-## 1. Code Style & Formatting
+1. 当前仓库继续作为生产化基础，不轻易新建 repo 重写。
+2. PM demo 是展示基线，不是生产业务规则自动来源。
+3. 未经 PM/CEO/Leader 确认的规则，不写入生产逻辑。
+4. demo-only 行为必须明确标注，不能伪装成生产完成。
+5. 所有评审文档默认使用中文；表名、字段名、API 路径、代码标识可保留英文。
 
-### TypeScript
-- **Strict mode** enabled (`"strict": true` in tsconfig.json)
-- Use **functional components** only (no class components except ErrorBoundary)
-- Use **named exports** (not default exports) for components and functions
-- Use **interfaces** for object shapes, **types** for unions/aliases
-- Prefer **const** over let; never use var
-- All functions must have explicit return types
+## 2. 文档规则
 
-### Naming Conventions
+| 文档 | 维护规则 |
+|---|---|
+| `docs/spec_review_packet.md` | 给 Leader/PM/CEO 的入口文档，保持简洁 |
+| `docs/open_questions.md` | 所有未确认问题必须进入这里 |
+| `docs/product_spec.md` | 记录产品模块、角色、确认/待确认行为 |
+| `docs/data_model.md` | 记录表、实体关系、存储值/计算值 |
+| `docs/business_rules.md` | 记录 KPI、审批、分发、行为、财务规则 |
+| `docs/workflows.md` | 记录内容、审批、分发、行为、平台、财务流程 |
+| `docs/current_state_audit.md` | PM demo 或代码变化后更新现状 |
+| `docs/features.md` | 实现状态变化后更新 |
+| `docs/todo.md` | 任务计划变化后更新 |
+| `docs/bugs.md` | 只记录真实缺陷或明确 demo 限制，不替代开放问题 |
+| `docs/openapi.yaml` | API 变化后同步更新 |
 
-| Element | Convention | Example |
-|---------|-----------|---------|
-| Components | PascalCase | `StatCard.tsx` |
-| Hooks | camelCase with `use` prefix | `useLogger.ts` |
-| Stores | camelCase with `use` prefix | `useOverviewStore.ts` |
-| Utilities | camelCase | `formatters.ts` |
-| Types/Interfaces | PascalCase | `OverviewStats` |
-| Constants | UPPER_SNAKE_CASE | `API_BASE_URL` |
-| CSS classes | kebab-case (via Tailwind) | `bg-card-primary` |
-| API endpoints | kebab-case | `/api/behavior-insights` |
-| Environment variables | UPPER_SNAKE_CASE with `VITE_` prefix | `VITE_API_BASE_URL` |
-| Test files | Same name + `.test.tsx` | `Card.test.tsx` |
-| E2E test files | kebab-case + `.spec.ts` | `overview.spec.ts` |
+## 3. 代码规则
 
-### File Organization
-- One component per file
-- Co-locate tests with source files (`Component.tsx` + `Component.test.tsx`)
-- Co-locate page sub-components in page directory
-- Keep files under 300 lines; split if larger
+### 3.1 TypeScript
 
----
+- 优先使用显式类型，避免不必要的 `any`。
+- 前端组件使用具名导出。
+- API response/request 类型应与后端契约一致。
+- 状态值应集中定义，避免页面散落字符串。
 
-## 2. Git Workflow
+### 3.2 前端结构
 
-### Branch Naming
-```
-feature/[feature-id]-short-description
-bugfix/[bug-id]-short-description
-hotfix/critical-issue-description
-```
+| 类型 | 位置 |
+|---|---|
+| 页面 | `src/pages/*` |
+| 布局 | `src/components/layout/*` |
+| 通用组件 | `src/components/ui/*` |
+| API client | `src/api/client.ts` |
+| API endpoint | `src/api/endpoints/*` |
+| store | `src/stores/*` |
+| 类型 | `src/types/*` |
+| 工具 | `src/utils/*` |
 
-Examples:
-```
-feature/F-001-app-shell
-feature/F-002-overview-dashboard
-bugfix/B-001-kpi-number-format
-```
+### 3.3 后端结构
 
-### Commit Messages
+| 类型 | 位置 |
+|---|---|
+| 路由 | `server/src/routes/*` |
+| 数据库连接 | `server/src/db/connection.ts` |
+| schema | `server/src/db/schema.ts` |
+| repository | `server/src/db/repositories.ts` |
+| seed | `server/src/db/seed.ts`、`server/src/data/*` |
+| middleware | `server/src/middleware/*` |
+| audit/logging | `server/src/utils/*` |
 
-Follow **Conventional Commits**:
+### 3.4 API 响应约定
 
-```
-type(scope): description
+成功响应：
 
-[optional body]
-[optional footer]
-```
-
-Types:
-| Type | Usage |
-|------|-------|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `docs` | Documentation |
-| `style` | Formatting (no code change) |
-| `refactor` | Code restructuring |
-| `test` | Adding/updating tests |
-| `chore` | Build, tooling, config |
-
-Examples:
-```
-feat(overview): add KPI stat cards with formatted numbers
-fix(sidebar): correct active page highlight on navigation
-test(overview): add unit tests for ProjectTable component
-docs: update implementation plan with logging strategy
-chore: configure Docker multi-stage build
-```
-
-### Git Rules
-- Never commit directly to `main`
-- All work on feature/bugfix branches
-- Squash merge to main
-- Every commit must pass `npm run test` locally
-- Keep `.gitignore` updated (no node_modules, logs, .env.local)
-
----
-
-## 3. Code Quality
-
-### ESLint Rules
-- Extend `eslint:recommended`, `@typescript-eslint/recommended`, `plugin:react-hooks/recommended`
-- No unused variables (`@typescript-eslint/no-unused-vars: error`)
-- No `any` type (`@typescript-eslint/no-explicit-any: warn`)
-- React hooks rules enforced
-- Import order: external → internal → types → styles
-
-### Prettier Config
 ```json
 {
-  "semi": true,
-  "singleQuote": true,
-  "tabWidth": 2,
-  "trailingComma": "es5",
-  "printWidth": 100,
-  "bracketSpacing": true
+  "success": true,
+  "data": {},
+  "timestamp": "2026-05-14T00:00:00.000Z"
 }
 ```
 
----
+分页响应：
 
-## 4. Component Guidelines
-
-### Component Structure
-```tsx
-// 1. Imports (external → internal → types → styles)
-import { useState } from 'react';
-import { useLogger } from '@/hooks/useLogger';
-import type { CardProps } from '@/types';
-
-// 2. Type definition
-interface Props {
-  title: string;
-  value: number;
-}
-
-// 3. Component (named export)
-export function StatCard({ title, value }: Props): JSX.Element {
-  const { log } = useLogger('StatCard');
-
-  // 4. Hooks
-  // 5. Derived state
-  // 6. Handlers (with logging)
-  const handleClick = () => {
-    log.ui('StatCard clicked', { title });
-    // ...
-  };
-
-  // 7. Render
-  return (
-    <div onClick={handleClick}>
-      {/* ... */}
-    </div>
-  );
+```json
+{
+  "success": true,
+  "data": [],
+  "pagination": {
+    "page": 1,
+    "pageSize": 20,
+    "total": 100,
+    "totalPages": 5
+  },
+  "timestamp": "2026-05-14T00:00:00.000Z"
 }
 ```
 
-### Mandatory Logging
-Every interactive component MUST log:
-- Button clicks → `log.ui('Button clicked', { button: '...', context: '...' })`
-- Form submissions → `log.action('Form submitted', { form: '...', data: {...} })`
-- Navigation → `log.nav('Navigate to', { path: '...' })`
-- API calls → Handled automatically by API client interceptors
-- Errors → `log.error('Error description', error)`
+错误响应：
 
----
-
-## 5. API Conventions
-
-### Frontend API Calls
-- All API calls go through `src/api/client.ts` (Axios instance)
-- Each domain has its own endpoint file (`src/api/endpoints/overview.ts`)
-- Always handle loading, success, and error states
-- All requests/responses automatically logged by interceptors
-
-### Backend API Routes
-- RESTful conventions
-- Response format: `{ success: boolean, data: T, message?: string, timestamp: string }`
-- Paginated responses include: `{ pagination: { page, pageSize, total, totalPages } }`
-- Error responses: `{ success: false, message: string, error?: string }`
-- HTTP status codes: 200 (OK), 201 (Created), 400 (Bad Request), 404 (Not Found), 500 (Server Error)
-
-### API Route Naming
-```
-GET    /api/[resource]          → List
-GET    /api/[resource]/:id      → Get by ID
-POST   /api/[resource]          → Create
-PUT    /api/[resource]/:id      → Update
-DELETE /api/[resource]/:id      → Delete
+```json
+{
+  "success": false,
+  "data": null,
+  "message": "错误说明",
+  "timestamp": "2026-05-14T00:00:00.000Z"
+}
 ```
 
----
+## 4. 数据库与 demo 数据规则
 
-## 6. Testing Rules
+1. 生产事实源必须是数据库/API，不允许前端长期硬编码业务主数据。
+2. `server/src/data/*.ts` 和 `server/src/db/seed.ts` 只作为 demo/dev/test fixture。
+3. 生产默认 `RUN_DEMO_SEED=false`。
+4. 生产默认 `ALLOW_DEMO_AUTH=false`。
+5. SQLite 用于本地/demo，PostgreSQL 用于生产。
+6. schema 修改必须同步更新 `docs/data_model.md` 和 `docs/openapi.yaml`（如涉及 API）。
 
-### Mandatory Tests
-- Every UI component MUST have a unit test
-- Every page MUST have an integration test
-- Every backend route MUST have an API test
-- Every E2E flow MUST have a Playwright test
-- Every store MUST have a unit test
+## 5. demo-only 处理规则
 
-### Test Naming
-```typescript
-describe('ComponentName', () => {
-  it('should render correctly with default props', () => {});
-  it('should display formatted number with thousands separator', () => {});
-  it('should call onClick handler when button is clicked', () => {});
-  it('should show loading skeleton while fetching data', () => {});
-  it('should show error state when API fails', () => {});
-});
+| 情况 | 处理 |
+|---|---|
+| 财务前端常量 | 未确认前保持 demo-only，不补生产后端 |
+| 设置团队成员硬编码 | 等确认后接 `users`/team API 或移出设置页 |
+| 审批批量操作 toast | 等确认后实现真实批量 API 和审计 |
+| 分发详情硬编码 flow/request | 等统一工作流和需求实体后替换 |
+| 租户 fallback | 生产应关闭或仅作为错误兜底，不作为真实数据 |
+
+## 6. 测试规则
+
+每次改业务代码至少运行：
+
+```bash
+npm run build:all
+npm test
+npm run test:server
+npm run test:e2e
 ```
 
-### Test Rules
-- No `.skip()` or `.only()` in committed tests
-- Tests must be deterministic (no random, no real API calls)
-- Use mock data consistent with backend seed data
-- Test both happy path and error scenarios
-- Coverage must meet targets before feature is marked done
+当前注意事项：
 
----
+- `npm run test:server` 依赖 `localhost:3001` backend。
+- 如果 3001 未启动，先运行：
 
-## 7. Docker Conventions
+```bash
+cd server
+NODE_ENV=test ALLOW_DEMO_AUTH=true RUN_DEMO_SEED=true RESET_DEMO_DATA=true PORT=3001 npm run dev
+```
 
-- Dockerfiles use multi-stage builds
-- Base images: `node:20-alpine`, `nginx:alpine`
-- `.dockerignore` mirrors `.gitignore` + additional exclusions
-- Environment variables injected at runtime (not baked into image)
-- Health checks on all containers
-- Log rotation configured (max 10MB, 3 files)
-- Production images must be <50MB (frontend) and <200MB (backend)
+## 7. Git 与提交规则
 
----
+推荐 Conventional Commits：
 
-## 8. Documentation Rules
+| 类型 | 用途 |
+|---|---|
+| `feat` | 新功能 |
+| `fix` | 缺陷修复 |
+| `docs` | 文档更新 |
+| `refactor` | 重构 |
+| `test` | 测试更新 |
+| `chore` | 工具、构建、配置 |
 
-- **todo.md**: Updated after every feature completion
-- **bugs.md**: Updated immediately when bug is discovered
-- **lesson_learned.md**: Updated after each phase completion
-- **features.md**: Status updated as features progress
-- All documentation in Markdown format
-- Code examples in documentation must be current and working
+示例：
 
----
+```bash
+docs: update Chinese product spec packet
+fix(approval): persist batch action audit log
+feat(distribution): compute project progress from workflow nodes
+```
 
-## 9. Environment Variables
+## 8. 生产安全规则
 
-| Variable | Dev Value | Prod Value | Description |
-|----------|-----------|------------|-------------|
-| `VITE_API_BASE_URL` | `http://localhost:3001/api` | `https://api.px.senzco.com` | API base URL |
-| `VITE_APP_TITLE` | `Px Lite 药企患教内容运营与行为洞察平台` | `Px Lite 药企患教内容运营与行为洞察平台` | App title |
-| `VITE_APP_VERSION` | `V1.0 · LOCAL` | `V1.0` | Version display |
-| `VITE_LOG_LEVEL` | `DEBUG` | `WARN` | Frontend log level |
-| `VITE_ENABLE_DEV_PANEL` | `true` | `false` | Show debug panel |
-| `NODE_ENV` | `development` | `production` | Node environment |
-| `PORT` | `3001` | `3001` | Backend port |
+1. 不在代码中提交真实密钥、token、数据库密码。
+2. 生产 CORS 必须使用明确 allowlist。
+3. 生产登录必须通过 OIDC/JWKS/客户 IdP。
+4. 关键操作必须写审计日志。
+5. 导出必须检查权限和 k-anonymity。
+6. 不保存患者 PII 或患者级行为事件，除非未来有新的合规设计和审批。

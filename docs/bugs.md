@@ -1,75 +1,87 @@
-# Px Lite 药企患教内容运营与行为洞察平台 — Bug Tracking Log
+# Px Lite 缺陷与已知问题跟踪
 
-> Last Updated: 2026-05-12
-> Severity: 🔴 Critical | 🟠 High | 🟡 Medium | 🟢 Low
-> Status: 🔲 Open | 🟡 In Progress | ✅ Fixed | ❌ Won't Fix
+最后更新时间：2026-05-14  
+用途：记录真实缺陷、测试失败、以及需要和产品区分的已知 demo 限制。  
+说明：业务规则未确认的问题统一放在 `docs/open_questions.md`，不在本文件中伪装成 bug。
 
----
+## 1. 严重级别
 
-## Bug Template
+| 级别 | 含义 |
+|---|---|
+| 🔴 Critical | 阻塞构建/启动/核心页面不可用/数据安全风险 |
+| 🟠 High | 核心流程不可用或高风险错误 |
+| 🟡 Medium | 局部功能异常，有替代路径 |
+| 🟢 Low | 文案、样式、易用性、小范围问题 |
 
-When logging a bug, copy this template:
+## 2. 状态说明
+
+| 状态 | 含义 |
+|---|---|
+| 🔲 Open | 已确认缺陷，尚未修复 |
+| 🟡 In Progress | 正在修复 |
+| ✅ Fixed | 已修复并验证 |
+| ❌ Won't Fix | 明确不修复 |
+| 🧭 Spec Pending | 不是代码缺陷，等待规格确认 |
+
+## 3. 当前真实运行缺陷
+
+截至 2026-05-14，本轮文档更新没有发现新的真实运行缺陷。最近一次验证：
+
+| 命令 | 结果 |
+|---|---|
+| `npm run build:all` | ✅ 通过 |
+| `npm test` | ✅ 38 tests passed |
+| `npm run test:server` | ✅ 20 tests passed，需先启动 3001 backend |
+| `npm run test:e2e` | ✅ 2 tests passed |
+
+## 4. 已知非缺陷限制 / demo-only 项
+
+| ID | 级别 | 状态 | 模块 | 描述 | 处理方式 |
+|---|---|---|---|---|---|
+| K-001 | 🟠 High | 🧭 Spec Pending | 财务 | 财务页面数据为前端常量，没有 DB/API | 等财务是否进 v1 后再建模 |
+| K-002 | 🟡 Medium | 🧭 Spec Pending | 设置 | 团队成员为前端硬编码，本地修改不持久化 | 决定是否接 `users`/team API |
+| K-003 | 🟡 Medium | 🧭 Spec Pending | 审批中心 | 批量通过/驳回只显示演示 toast | 决定是否进入 v1；若进入需批量 API |
+| K-004 | 🟠 High | 🧭 Spec Pending | 分发详情 | `liveRequests` 与 6 节点 flow 为前端硬编码 | 统一分发/审批工作流后实现 |
+| K-005 | 🟡 Medium | 🧭 Spec Pending | 总览/行为 | KPI 口径部分来自快照/seed，生产口径待确认 | 关闭 `open_questions.md` 后开发 |
+| K-006 | 🟢 Low | 🧭 Spec Pending | 测试运行 | `npm run test:server` 依赖本地 3001 backend | 可后续改为测试自动启动或 supertest 模式 |
+
+## 5. 缺陷记录模板
 
 ```markdown
-## B-XXX: [Short Description]
+## B-XXX: 简短标题
 
-| Field | Value |
-|-------|-------|
-| **Severity** | 🔴/🟠/🟡/🟢 |
-| **Status** | 🔲 Open |
-| **Page** | [Page name] |
-| **Feature** | F-XXX |
-| **Reported** | YYYY-MM-DD |
-| **Fixed** | — |
+| 字段 | 内容 |
+|---|---|
+| 严重级别 | 🔴/🟠/🟡/🟢 |
+| 状态 | 🔲 Open |
+| 模块 | 总览 / 内容 / 行为 / 分发 / 审批 / 平台 / 设置 / 财务 / 基础设施 |
+| 发现日期 | YYYY-MM-DD |
+| 修复日期 | — |
+| 关联功能 | F-XXX |
 
-**Description:**
-[What happened]
+### 问题描述
 
-**Steps to Reproduce:**
-1. Step 1
-2. Step 2
-3. Step 3
+### 复现步骤
+1. 
+2. 
+3. 
 
-**Expected Behavior:**
-[What should happen]
+### 期望结果
 
-**Actual Behavior:**
-[What actually happened]
+### 实际结果
 
-**Screenshots/Logs:**
-[Paste relevant logs or attach screenshots]
+### 日志/截图
 
-**Fix Reference:**
-[Commit hash or PR link once fixed]
+### 根因
 
-**Root Cause:**
-[Explanation of why it happened, filled after investigation]
+### 修复方案
+
+### 验证结果
 ```
 
----
+## 6. 维护规则
 
-## Active Bugs
-
-_No bugs logged yet. Bugs will be tracked here during implementation and testing phases._
-
----
-
-## Resolved Bugs
-
-_No resolved bugs yet._
-
----
-
-## Bug Statistics
-
-| Metric | Count |
-|--------|-------|
-| Total Reported | 0 |
-| Open | 0 |
-| In Progress | 0 |
-| Fixed | 0 |
-| Won't Fix | 0 |
-| Critical (🔴) | 0 |
-| High (🟠) | 0 |
-| Medium (🟡) | 0 |
-| Low (🟢) | 0 |
+1. 真实 bug 进入本文件。
+2. 产品未确认事项进入 `docs/open_questions.md`。
+3. demo-only 限制可以在本文件记录，但状态必须标记为 `Spec Pending`。
+4. 每次修复后补充验证命令和结果。

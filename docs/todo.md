@@ -1,322 +1,96 @@
-# Px Lite 药企患教内容运营与行为洞察平台 — Master TODO
+# Px Lite 待办清单
 
-> Last updated: 2026-05-12
-> Status Legend: ⬜ Pending | 🟡 In Progress | ✅ Done | ❌ Blocked
+最后更新时间：2026-05-14  
+状态：已按当前代码和中文规格包重新整理。  
+规则：未确认业务规则的事项先进入规格评审，不直接进入生产开发。
 
----
+## 1. 当前已完成
 
-## Phase 1: Project Setup & Infrastructure
+- [x] 前端 React/Vite 基础项目。
+- [x] 后端 Express/TypeScript 基础服务。
+- [x] SQLite demo DB 与 PostgreSQL production schema。
+- [x] Docker 本地 demo 栈与 production override。
+- [x] 总览页面与 API。
+- [x] 内容工坊列表/详情与 API 基础。
+- [x] 行为洞察与聚合指标 API 基础。
+- [x] 分发项目列表/详情与 API 基础。
+- [x] 审批任务列表与单条通过/驳回 API。
+- [x] 平台管理租户/账号/审批流/审计日志基础。
+- [x] 设置页和财务 demo 页面。
+- [x] 中文规格文档包：现状审计、产品规格、数据模型、业务规则、工作流、开放问题、评审包。
+- [x] 当前验证命令最近一次通过：`build:all`、`test`、`test:server`、`test:e2e`。
 
-- [ ] Initialize Vite + React 19 + TypeScript project
-- [ ] Configure Tailwind CSS with dark theme tokens
-- [ ] Set up project folder structure (src/, server/, docker/, docs/, e2e/)
-- [ ] Configure ESLint + Prettier
-- [ ] Set up Git with .gitignore
-- [ ] Create environment files (.env.development, .env.production)
-- [ ] Set up Vitest + React Testing Library
-- [ ] Set up Playwright for E2E
-- [ ] Configure path aliases (@/ for src/)
+## 2. 当前阻塞：必须先确认
 
-## Phase 2: Design System & Layout
+| ID | 待办 | 负责人建议 | 状态 |
+|---|---|---|---|
+| TODO-SPEC-001 | 评审 `docs/spec_review_packet.md` | PM/Leader/CEO | ⬜ Pending |
+| TODO-SPEC-002 | 关闭 `docs/open_questions.md` 中 v1 P0/P1 问题 | PM/CEO | ⬜ Pending |
+| TODO-SPEC-003 | 确认财务是否进入 v1 production | CEO/PM | ⬜ Pending |
+| TODO-SPEC-004 | 确认 `projects` 与 `distribution_projects` 关系 | PM/Leader | ⬜ Pending |
+| TODO-SPEC-005 | 确认是否新增“诉求/需求”实体 | PM | ⬜ Pending |
+| TODO-SPEC-006 | 统一审批 3 节点与分发详情 6 节点流程 | PM/Leader | ⬜ Pending |
+| TODO-SPEC-007 | 确认总览、行为、分发、审批 KPI 口径 | PM/数据负责人 | ⬜ Pending |
+| TODO-SPEC-008 | 确认药企/Px/字段级权限矩阵 | PM/合规/Leader | ⬜ Pending |
 
-- [ ] Define theme tokens (colors, spacing, typography, border-radius)
-- [ ] Import Google Fonts (DM Sans, JetBrains Mono)
-- [ ] Build base UI components:
-  - [ ] Button
-  - [ ] Card / StatCard
-  - [ ] Badge
-  - [ ] Table
-  - [ ] Input / SearchInput
-  - [ ] Sidebar / NavItem
-  - [ ] Header / Breadcrumb
-  - [ ] Icon system (Lucide or custom)
-  - [ ] Loading Spinner / Skeleton
-  - [ ] Error State component
-  - [ ] Empty State component
-  - [ ] Modal / Dialog
-  - [ ] Form components (Select, Checkbox, Radio, DatePicker)
-  - [ ] Toast / Notification
-- [ ] Build AppLayout (Sidebar + Header + Content area)
-- [ ] Implement React Router v6 routing skeleton
-- [ ] Write component unit tests
+## 3. 规格确认后待办
 
-## Phase 3: Local Backend
+### 3.1 数据模型
 
-- [ ] Initialize Express.js + TypeScript server
-- [ ] Set up pino logger (app.log, error.log, access.log)
-- [ ] Create request logging middleware
-- [ ] Create health check endpoint (`GET /api/health`)
-- [ ] Define API routes:
-  - [ ] `GET /api/overview` — Dashboard overview data
-  - [ ] `GET /api/overview/projects` — Project list with metrics
-  - [ ] `GET /api/content` — Content list
-  - [ ] `GET /api/content/:id` — Content detail
-  - [ ] `POST /api/content` — Create content
-  - [ ] `PUT /api/content/:id` — Update content
-  - [ ] `GET /api/behavior` — Behavior analytics
-  - [ ] `GET /api/behavior/trends` — Trend data
-  - [ ] `GET /api/distribution` — Distribution strategies
-  - [ ] `POST /api/distribution` — Create strategy
-  - [ ] `PUT /api/distribution/:id` — Update strategy
-  - [ ] `GET /api/approval` — Approval queue
-  - [ ] `PUT /api/approval/:id` — Approve/reject
-  - [ ] `GET /api/platform/users` — User list
-  - [ ] `PUT /api/platform/settings` — Update settings
-  - [ ] `POST /api/logs` — Frontend log ingestion
-- [ ] Seed mock data for all endpoints
-- [ ] Write backend route tests (Vitest + Supertest)
+- [ ] 根据确认版 `docs/data_model.md` 调整 schema。
+- [ ] 如需要，新增“诉求/需求”实体。
+- [ ] 明确 `approval_items` 是否保留或迁移。
+- [ ] 明确 `overview_stats` 是否作为生产快照表。
+- [ ] 若财务进入 v1，新增合同/账单/发票/回款相关表。
 
-## Phase 4: Frontend Logging System
+### 3.2 后端 API
 
-- [ ] Create frontend logger service (`src/utils/logger.ts`)
-- [ ] Implement log categories (NAV, UI, API, ACTION, AUTH, FEATURE, PERF, ERROR)
-- [ ] Create useLogger React hook
-- [ ] Create API client with request/response logging
-- [ ] Create DevPanel component (dev mode debug panel, Ctrl+Shift+D)
-- [ ] Write logger tests
+- [ ] 更新 `docs/openapi.yaml` 到确认版。
+- [ ] 按确认状态机完善审批逐节点推进。
+- [ ] 如确认批量审批，新增批量 API 和逐条审计。
+- [ ] 按确认规则计算分发进度。
+- [ ] 替换或封装 demo-only 数据源。
+- [ ] 完善导出 TTL、存储、水印、审批或权限规则。
+- [ ] 补齐权限矩阵和字段脱敏。
 
-## Phase 5: Page Implementation
+### 3.3 前端
 
-### 5.1 总览 (Overview)
-- [ ] Build Overview page layout
-- [ ] Implement 6 KPI stat cards
-- [ ] Implement project overview table
-- [ ] Add navigation links (进入内容工坊, 行为洞察, 进入项目)
-- [ ] Connect to API (overview endpoint)
-- [ ] Add loading/error states
-- [ ] Add logging for all interactions
-- [ ] Write unit tests
-- [ ] Iterate until tests pass ✅
+- [ ] 财务：若进入 v1，接 API；否则隐藏或标记 demo-only。
+- [ ] 设置：团队成员接真实 `users`/team API，或改为只读/跳转账号管理。
+- [ ] 审批中心：批量操作接 API 或移除生产入口。
+- [ ] 分发详情：`liveRequests` 和 `flowNodes` 改为 API/DB 驱动。
+- [ ] 总览/行为：所有指标文案补充数据口径。
+- [ ] 按权限隐藏或禁用不可用按钮。
 
-### 5.2 患教内容工坊 (Content Workshop)
-- [ ] Build Content Workshop page layout
-- [ ] Implement content list view
-- [ ] Implement content detail view
-- [ ] Implement content create/edit forms
-- [ ] Implement status workflow (Draft → Review → Approved → Published → Archived)
-- [ ] Add filters and search
-- [ ] Connect to API (content endpoints)
-- [ ] Add loading/error states
-- [ ] Add logging for all interactions
-- [ ] Write unit tests
-- [ ] Iterate until tests pass ✅
+### 3.4 测试与 UAT
 
-### 5.3 患者行为洞察 (Behavior Insights)
-- [ ] Build Behavior Insights page layout
-- [ ] Implement analytics charts (read counts, interactions)
-- [ ] Implement date range filter
-- [ ] Implement project/disease filter
-- [ ] Implement data tables
-- [ ] Connect to API (behavior endpoints)
-- [ ] Add loading/error states
-- [ ] Add logging for all interactions
-- [ ] Write unit tests
-- [ ] Iterate until tests pass ✅
+- [ ] 根据确认规格补充 server tests。
+- [ ] 根据确认规格补充前端页面 tests。
+- [ ] 增加核心流程 e2e：内容 → 审批 → 发布 → 分发 → 行为回流。
+- [ ] 增加权限 e2e：Px admin vs 药企用户。
+- [ ] 更新 `docs/UAT_evaluation.md` 为正式生产验收报告。
 
-### 5.4 分发策略 (Distribution Strategy)
-- [ ] Build Distribution Strategy page layout
-- [ ] Implement strategy list
-- [ ] Implement strategy create/edit
-- [ ] Implement target audience configuration
-- [ ] Implement status toggles (active/paused/draft)
-- [ ] Connect to API (distribution endpoints)
-- [ ] Add loading/error states
-- [ ] Add logging for all interactions
-- [ ] Write unit tests
-- [ ] Iterate until tests pass ✅
+### 3.5 部署与生产准备
 
-### 5.5 审批中心 (Approval Center)
-- [ ] Build Approval Center page layout
-- [ ] Implement approval queue
-- [ ] Implement content preview before approval
-- [ ] Implement approve/reject actions
-- [ ] Implement approval history
-- [ ] Connect to API (approval endpoints)
-- [ ] Add loading/error states
-- [ ] Add logging for all interactions
-- [ ] Write unit tests
-- [ ] Iterate until tests pass ✅
+- [ ] 连接真实 PostgreSQL/managed DB。
+- [ ] 配置客户 OIDC/JWKS/MFA。
+- [ ] 配置 secret manager、CORS allowlist、WAF。
+- [ ] 完成备份恢复演练。
+- [ ] 完成导出文件对象存储与过期策略。
+- [ ] 完成 MLPS/安全/渗透测试材料。
 
-### 5.6 平台管理 (Platform Management)
-- [ ] Build Platform Management page layout
-- [ ] Implement user list/management
-- [ ] Implement role assignment (admin/editor/viewer)
-- [ ] Implement system settings
-- [ ] Implement platform info display
-- [ ] Connect to API (platform endpoints)
-- [ ] Add loading/error states
-- [ ] Add logging for all interactions
-- [ ] Write unit tests
-- [ ] Iterate until tests pass ✅
+## 4. 不应立即执行的待办
 
-## Phase 6: E2E Testing
+- [ ] 不在财务未确认时补财务后端。
+- [ ] 不在审批/分发流程未统一时写死 6 节点或 3 节点。
+- [ ] 不在项目关系未确认时重构 `projects` / `distribution_projects`。
+- [ ] 不在权限矩阵未确认时承诺药企生产可见范围。
 
-- [ ] Write E2E tests for Overview page
-- [ ] Write E2E tests for Content Workshop
-- [ ] Write E2E tests for Behavior Insights
-- [ ] Write E2E tests for Distribution Strategy
-- [ ] Write E2E tests for Approval Center
-- [ ] Write E2E tests for Platform Management
-- [ ] Write E2E tests for cross-page navigation
-- [ ] Run full E2E suite → iterate until all green ✅
+## 5. 常用验证命令
 
-## Phase 7: Containerization & Deployment
-
-- [ ] Create Frontend Dockerfile (multi-stage: build → nginx)
-- [ ] Create nginx.conf (SPA routing, gzip, caching)
-- [ ] Create Backend Dockerfile
-- [ ] Create docker-compose.yml (development)
-- [ ] Create docker-compose.prod.yml (production)
-- [ ] Create .dockerignore
-- [ ] Test `docker-compose up --build` (dev)
-- [ ] Test `docker-compose -f docker-compose.prod.yml up --build` (prod)
-- [ ] Verify health checks work
-- [ ] Verify log persistence
-
-## Phase 8: UAT — Pharma Manager Evaluation
-
-- [ ] Overview: All 6 KPI cards display correct, formatted numbers
-- [ ] Overview: Project table shows all disease projects
-- [ ] Overview: Navigation links work correctly
-- [ ] Content Workshop: Content list with status workflow
-- [ ] Content Workshop: CRUD operations functional
-- [ ] Behavior Insights: Charts render with correct data
-- [ ] Behavior Insights: Filters work (date range, disease)
-- [ ] Distribution Strategy: Strategy management works
-- [ ] Approval Center: Approve/reject workflow functions
-- [ ] Platform Management: User/role management works
-- [ ] Global: Sidebar navigation highlights active page
-- [ ] Global: Header breadcrumb updates correctly
-- [ ] Global: Dark theme consistent across all pages
-- [ ] Global: Fonts render correctly
-- [ ] Global: Loading/error states shown properly
-- [ ] Global: Logging captures all user interactions
-- [ ] Docker: Production build works end-to-end
-
-## Phase 9: Final Polish
-
-- [ ] Fix all bugs found during UAT
-- [ ] Update all documentation
-- [ ] Final `npm run test:all` — all green ✅
-- [ ] Final Docker production verification
-- [ ] Update lesson_learned.md
-- [ ] Project sign-off
-
----
-
-## Phase 10: Reference Site Gap Remediation 🔴 HIGH PRIORITY
-
-> Gaps identified by comparing reference site (https://pxlite-5pyii99t.manus.space/) against local codebase.
-> See `docs/implementation_plan.md` → [Gap Analysis] section for full details.
-
-### Step 1: Data Model Updates (Backend + Types)
-- [ ] Update `src/types/content.ts` — Add `PipelineStage`, `ContentPriority` types; extend `Content` with `pipelineStage`, `priority`, `expectedDate`, `rejectionNote`, `projectName`, `projectColor`; extend `ContentFilter`
-- [ ] Update `src/types/overview.ts` — Add `draftCount`, `archivedCount` to `Project` interface
-- [ ] Update `src/utils/constants.ts` — Add `PIPELINE_STAGE_MAP`, `PRIORITY_MAP`, `PROJECT_COLOR_MAP`
-- [ ] Update `server/src/data/content.ts` — Add new fields to all 14 mock content items
-- [ ] Update `server/src/data/overview.ts` — Add `draftCount`, `archivedCount` to project mock data
-- [ ] Update `server/src/routes/content.ts` (and `server/src/db/repositories.ts`) — Support `pipelineStage` and `priority` query params
-
-### Step 2: Content Workshop — Pipeline Cards (GAP 1)
-- [ ] Create `src/pages/ContentWorkshop/PipelineCards.tsx` — 6 pipeline stage cards (需求已提交, 医生分发中, 医生制作中, 三方审核中, 内部审核中, 已发布)
-- [ ] Update `ContentWorkshop.tsx` — Replace existing 5 stat cards with `PipelineCards` component
-- [ ] Implement click-to-filter: clicking a pipeline card filters the content table by that stage
-
-### Step 3: Content Workshop — Table Enhancements (GAPs 2-5b)
-- [ ] Add 项目流程 column with color-coded project badges (GAP 2)
-- [ ] Add priority (P0/P1/P2) badges to title column (GAP 3)
-- [ ] Add "行为数据口径：推送 / 阅读 / 互动" label above table (GAP 4)
-- [ ] Add expected date display and rejection note display (GAP 5)
-- [ ] Update content type labels to match reference: "图文文章", "短视频", "海报/长图" (GAP 5b)
-- [ ] Add content ID display (e.g., "CNT-101") inline with title (GAP 5b)
-- [ ] Update page description text to operations-focused copy (GAP 5b)
-
-### Step 4: Content Workshop — Filter Enhancements (GAP 2)
-- [ ] Add project filter dropdown to filter bar
-- [ ] Update `useContentStore` to handle `pipelineStage` filter
-- [ ] Wire up all new filters to API calls
-
-### Step 5: Overview Minor Fixes (GAPs 6-7)
-- [ ] Add "运营视图" tag to Overview header near timestamp (GAP 6)
-- [ ] Add project sub-text ("已发布 X 条 · 草稿/下架 Y 条") to ProjectTable rows (GAP 7)
-
-### Step 6: Route Path Alignment (GAP 8)
-- [ ] Update `src/router.tsx` — Change route paths to match reference: `/content`, `/audience`, `/distribute`, `/approvals`, `/settings`
-- [ ] Update `src/utils/constants.ts` NAV_ITEMS — Update paths in navigation configuration
-- [ ] Add missing detail routes: `/content/:id`, `/distribute/:id`
-- [ ] Add admin routes stub: `/admin`, `/admin/tenants`, `/admin/accounts`, `/admin/approval-flows`
-- [ ] Update `src/components/layout/Sidebar.tsx` — Ensure nav items match new paths
-
-### Step 7: Distribution Strategy Page Overhaul (GAP 9) 🔴 MAJOR
-- [ ] Redesign Distribution page to be project-centric (not strategy-centric)
-- [ ] Add tenant info display ("当前租户: Px 自营运营组", "项目总数: 13")
-- [ ] Add 5 project pipeline status cards (受理中, 制作中, 分发中, 已完成, 已归档)
-- [ ] Add search + filters (project name/disease/brand, 项目状态, 优先级)
-- [ ] Create rich project cards with: priority badge, status badge, responsible person, disease, team, target date, content totals, frequency, patient cap, content type tags, approval flow progress
-- [ ] Add "进入项目 →" action button per project card
-
-### Step 8: Approval Center Page Overhaul (GAP 10) 🔴 MAJOR
-- [ ] Add "审批流配置 >" button in page header
-- [ ] Add info tags: 租户, 当前流, 节点数, 打回策略
-- [ ] Update tabs to: 待我审批, 已通过(全流程), 驳回中, 全部任务 (with counts)
-- [ ] Add 当前节点 column showing multi-node review stage (e.g., "PX 运营审核", "DX 小编审核")
-- [ ] Add visual progress bar column showing review flow progress (e.g., 2/5)
-- [ ] Add SLA timer column with clock icon (e.g., "446h / 24h")
-- [ ] Add "查看/处理" action button per approval item
-
-### Step 9: Behavior Insights Enhancements (GAP 11)
-- [ ] Add project filter with "项目筛选" label and "+ 选择项目" chip button
-- [ ] Add trend percentage indicators to stat cards (↗ 6.4% 较上周) with green/red colors
-- [ ] Add "内容 TopN" ranking section with toggle: "按阅读次数" / "按互动数"
-- [ ] Ranked content list with position number, title, CNT ID, disease, and 4 metric columns
-
-### Step 10: Settings Page Buttons (GAP 12)
-- [ ] Add "修改密码" button in 我的账号 section
-- [ ] Add "保存" button in 我的账号 section
-- [ ] Add "+ 邀请成员" button in 团队成员 section
-- [ ] Add role dropdown per member (管理员/编辑/查看者) with inline change
-- [ ] Add "移除" action button per team member
-- [ ] Show last login time per member
-
-### Step 12: Content Detail Page (GAP 13) 🔴 MAJOR — New Page
-- [ ] Create `src/pages/ContentWorkshop/ContentDetail.tsx` — Full content detail page
-- [ ] Add route `/content/:id` in router
-- [ ] Add "← 返回内容列表" back navigation button
-- [ ] Add badge "CONTENT · CNT-XXX" with content ID
-- [ ] Add content title, description preview, and metadata tags (type, disease, publish date, author)
-- [ ] Add **"编辑" button** and **"发布" button** (teal/prominent) in header
-- [ ] Add 4 stat cards with trend percentages (推送人数, 阅读人数, 阅读次数, 互动数 with breakdown)
-- [ ] Add "发布后 14 天 — 触达 vs 阅读" line chart (D1-D14 daily aggregation)
-- [ ] Add backend API: `GET /api/content/:id/metrics` for detail page data
-
-### Step 13: Platform Management Admin Sub-pages (GAP 14) 🔴 MAJOR — 3 New Pages
-- [ ] Update Sidebar to support expandable sub-menu for "平台管理" with 3 sub-items (租户管理, 账号管理, 审批流配置)
-
-**13a. 租户管理 (`/admin/tenants`):**
-- [ ] Create tenant management page with title "租户与可见范围"
-- [ ] Add **"新增租户" button** (teal)
-- [ ] Add 5 stat cards (全部租户, 药企租户, 已启用, 已停用, 账号合计)
-- [ ] Add search bar + status filter dropdown
-- [ ] Add tenant table with: name, type/status badge, contract info, visible scope tags, account count, **toggle switch**, **"详情 >" button**
-
-**13b. 账号管理 (`/admin/accounts`):**
-- [ ] Create account management page with title "账号·角色·字段级权限"
-- [ ] Add **"邀请账号" button** (teal)
-- [ ] Add 6 stat cards (全部账号, 运营视图, 药企视图, 已冻结, 已开二步验证)
-- [ ] Add search + 3 filter dropdowns (全部租户, 全部视图, 全部状态)
-- [ ] Add account table with: name/email, tenant, view/role tags, status badge, 2FA icon, last login, **toggle switch**, **"激活" button**, **"详情 >" button**
-
-**13c. 审批流配置 (`/admin/approval-flows`):**
-- [ ] Create approval flow configuration page with title "自定义审批流"
-- [ ] Add left panel: flow list with **"+ 新建" button**, each flow showing name, node count, status
-- [ ] Add right panel: flow editor with name input, chain description textarea, **"停用" button**
-- [ ] Add "打回策略" dropdown and "选择租户" dropdown
-- [ ] Add node sequence table with: node name, reviewer type dropdown, SLA hours input, timeout policy dropdown
-- [ ] Add **"+ 新增节点" button** and per-node **up/down reorder arrows** and **delete (trash) button**
-
-### Step 14: Testing & Verification
-- [ ] Write/update unit tests for PipelineCards, ContentWorkshop, ProjectTable
-- [ ] Write/update tests for ContentDetail, Distribution, Approval, Behavior, Settings pages
-- [ ] Write/update tests for Admin sub-pages (Tenants, Accounts, Approval Flows)
-- [ ] Run `npm run test` → iterate until green
-- [ ] Manual visual verification against reference site for ALL pages and sub-pages
+```bash
+npm run build:all
+npm test
+npm run test:server
+npm run test:e2e
+```

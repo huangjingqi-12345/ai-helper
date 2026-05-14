@@ -2,7 +2,8 @@ openapi: 3.0.3
 info:
   title: Px Lite Production API
   version: 1.0.0
-  description: Pharma patient-education operations and aggregate analytics API with no automated content-judgment capability.
+  description: >-
+    Px Lite 医药患教内容运营与聚合行为洞察 API。当前契约基于代码现状整理；财务模块仍为前端 demo-only，暂未提供生产 API。
 servers:
   - url: /api
 security:
@@ -13,52 +14,541 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  schemas:
+    ApiSuccess:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+    ApiError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        data:
+          nullable: true
+        message:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
 paths:
+  /health:
+    get:
+      security: []
+      summary: 健康检查
+      description: 不需要认证；用于确认 API 进程可响应。
+      responses:
+        '200':
+          description: 服务存活
+  /ready:
+    get:
+      security: []
+      summary: 就绪检查
+      description: 执行数据库 `SELECT 1 AS ok`，返回当前数据库 driver 和连接状态。
+      responses:
+        '200':
+          description: 服务和数据库已就绪
+        '503':
+          description: 数据库未就绪
   /auth/me:
     get:
-      summary: Current authenticated user and permissions
+      summary: 获取当前认证用户与权限
       responses:
         '200':
-          description: Authenticated user context
+          description: 当前用户上下文
   /tenants/current:
     get:
-      summary: Server-resolved current tenant context
+      summary: 获取服务端解析的当前租户
       responses:
         '200':
-          description: Current tenant, isolation mode, and aggregate-only policy
+          description: 当前租户、隔离模式和聚合数据策略
+  /overview:
+    get:
+      summary: 获取总览 KPI
+      description: PX admin 当前读取 `overview_stats`；药企视角按 `projects` 聚合，最终生产口径待确认。
+      responses:
+        '200':
+          description: 总览 KPI 数据
+  /overview/projects:
+    get:
+      summary: 获取总览项目列表
+      responses:
+        '200':
+          description: 项目维度指标列表
+  /content:
+    get:
+      summary: 获取内容列表
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 分页内容列表
+    post:
+      summary: 创建内容
+      description: 后端能力已存在；前端是否开放完整创建流程待产品确认。
+      responses:
+        '201':
+          description: 内容已创建
+        '403':
+          description: 无内容写权限
+  /content/{id}:
+    get:
+      summary: 获取内容详情
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 内容详情
+        '404':
+          description: 内容不存在
+    put:
+      summary: 更新内容
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 内容已更新
+        '403':
+          description: 无内容写权限
+        '404':
+          description: 内容不存在
+    delete:
+      summary: 删除内容
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 内容已删除
+        '403':
+          description: 无内容写权限
+  /behavior:
+    get:
+      summary: 获取行为洞察汇总
+      description: 当前仅使用聚合行为数据，不接收患者 PII 或患者级事件。
+      responses:
+        '200':
+          description: 行为汇总、趋势、Top 内容、疾病维度等
+  /behavior/trends:
+    get:
+      summary: 获取行为趋势
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [reads, interactions]
+        - name: days
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 趋势数据
+  /distribution/projects:
+    get:
+      summary: 获取分发项目列表
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: priority
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 分发项目分页列表
+  /distribution/projects/{id}:
+    get:
+      summary: 获取分发项目详情
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 分发项目详情
+        '404':
+          description: 分发项目不存在
+  /distribution/projects/{id}/doctors:
+    get:
+      summary: 获取分发项目医生候选
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 医生候选列表
+  /distribution:
+    get:
+      summary: 获取分发策略列表
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: projectId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 分发策略分页列表
+    post:
+      summary: 创建分发策略
+      responses:
+        '201':
+          description: 分发策略已创建
+        '403':
+          description: 无分发写权限
+  /distribution/{id}:
+    put:
+      summary: 更新分发策略
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 分发策略已更新
+        '404':
+          description: 分发策略不存在
+  /approval/tasks:
+    get:
+      summary: 获取审批任务列表
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 审批任务分页列表
+  /approval/tasks/{id}:
+    put:
+      summary: 处理单条审批任务
+      description: 支持 `approve` 或 `reject`；批量审批当前前端仍为 demo-only。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum: [approve, reject]
+                comments:
+                  type: string
+                rejectReason:
+                  type: string
+      responses:
+        '200':
+          description: 审批任务已处理
+        '404':
+          description: 审批任务不存在
+  /approval:
+    get:
+      summary: 获取旧版审批项列表
+      description: 兼容 `approval_items`；是否长期保留待确认。
+      responses:
+        '200':
+          description: 审批项分页列表
+  /approval/{id}:
+    put:
+      summary: 处理旧版审批项
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 审批项已处理
+  /approval/{id}/approve:
+    post:
+      summary: 通过旧版审批项
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 审批项已通过
+  /approval/{id}/reject:
+    post:
+      summary: 驳回旧版审批项
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 审批项已驳回
+  /platform/tenants/options:
+    get:
+      summary: 获取租户选项
+      description: PX admin 可用。
+      responses:
+        '200':
+          description: 租户选项列表
+  /platform/tenants:
+    get:
+      summary: 获取租户列表
+      responses:
+        '200':
+          description: 租户列表
+    post:
+      summary: 创建租户
+      responses:
+        '201':
+          description: 租户已创建
+  /platform/tenants/{id}/status:
+    patch:
+      summary: 更新租户状态
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 租户状态已更新
+  /platform/accounts:
+    get:
+      summary: 获取账号列表
+      responses:
+        '200':
+          description: 账号列表
+    post:
+      summary: 创建账号
+      responses:
+        '201':
+          description: 账号已创建
+  /platform/accounts/{id}/status:
+    patch:
+      summary: 更新账号状态
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 账号状态已更新
+  /platform/accounts/{id}/2fa:
+    patch:
+      summary: 更新账号 2FA 状态
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 2FA 状态已更新
+  /platform/approval-flows:
+    get:
+      summary: 获取审批流配置
+      responses:
+        '200':
+          description: 审批流列表
+  /platform/team:
+    get:
+      summary: 获取团队成员
+      description: 后端 API 存在；当前设置页团队成员仍使用前端硬编码，待接入。
+      responses:
+        '200':
+          description: 团队成员列表
+    post:
+      summary: 新增团队成员
+      responses:
+        '201':
+          description: 团队成员已新增
+  /platform/team/{id}/role:
+    patch:
+      summary: 更新团队成员角色
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 团队成员角色已更新
+  /platform/team/{id}:
+    delete:
+      summary: 删除团队成员
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 团队成员已删除
+  /platform/audit-logs:
+    get:
+      summary: 获取审计日志
+      responses:
+        '200':
+          description: 审计日志列表
+  /platform/users:
+    get:
+      summary: 获取用户列表
+      responses:
+        '200':
+          description: 用户分页列表
+  /platform/users/{id}:
+    put:
+      summary: 更新用户
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 用户已更新
+  /platform/settings:
+    get:
+      summary: 获取平台设置
+      responses:
+        '200':
+          description: 平台设置
+    put:
+      summary: 更新平台设置
+      responses:
+        '200':
+          description: 平台设置已更新
   /ingest/aggregate-metrics:
     post:
-      summary: Ingest aggregate-only daily behavior metrics
-      description: Patient-level events and PII are not accepted.
+      summary: 导入聚合行为指标
+      description: 只接受聚合指标；不接受患者 PII 或患者级事件。
       responses:
         '201':
-          description: Aggregate rows accepted
+          description: 聚合指标已写入
   /imports/content-csv:
     post:
-      summary: Import content rows from CSV
+      summary: CSV 导入内容
       responses:
         '201':
-          description: Content import completed
+          description: 内容导入完成
         '207':
-          description: Content import partially completed with row-level errors
+          description: 内容导入部分成功，含行级错误
   /imports/metrics-csv:
     post:
-      summary: Import aggregate metrics from CSV
+      summary: CSV 导入聚合指标
       responses:
         '201':
-          description: Metrics import completed
+          description: 指标导入完成
   /exports:
     post:
-      summary: Create an aggregate-only export job
-      description: Export is blocked when k-anonymity threshold checks fail.
+      summary: 创建聚合数据导出任务
+      description: 当 k-anonymity 阈值检查失败时阻止导出。
       responses:
         '201':
-          description: Export job created
+          description: 导出任务已创建
         '400':
-          description: Export blocked or invalid request
+          description: 导出被阻止或请求无效
   /exports/{id}:
     get:
-      summary: Get export job status
+      summary: 获取导出任务状态
       parameters:
         - name: id
           in: path
@@ -67,11 +557,11 @@ paths:
             type: string
       responses:
         '200':
-          description: Export job status
+          description: 导出任务状态
   /exports/{id}/download:
     get:
-      summary: Download aggregate-only CSV export
-      description: Download links are time-limited, permissioned, k-anonymity checked, watermarked, and audited.
+      summary: 下载聚合 CSV 导出
+      description: 下载链接应受权限、过期时间、水印、k-anonymity 和审计保护。
       parameters:
         - name: id
           in: path
@@ -80,6 +570,12 @@ paths:
             type: string
       responses:
         '200':
-          description: Watermarked CSV file
+          description: 带水印的 CSV 文件
         '410':
-          description: Download link expired
+          description: 下载链接已过期
+  /logs:
+    post:
+      summary: 接收前端日志
+      responses:
+        '201':
+          description: 日志已接收

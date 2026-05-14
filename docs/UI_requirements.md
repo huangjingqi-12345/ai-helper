@@ -1,302 +1,182 @@
-# Px Lite 药企患教内容运营与行为洞察平台 — UI Requirements
+# Px Lite UI 需求与设计规范
 
-> Legacy prototype reference: https://pxlite-5pyii99t.manus.space/
-> Last Updated: 2026-05-12
+最后更新时间：2026-05-14  
+状态：基于当前 PM demo 与代码实现整理，等待 PM/CEO 确认。  
+参考基线：`https://pxlite-5pyii99t.manus.space/` 与当前本地实现。  
+重要说明：本文档定义 UI/交互基线，不自动确认业务规则。
 
----
+## 1. 全局设计系统
 
-## 1. Global Design System
+### 1.1 视觉风格
 
-### 1.1 Color Palette (Dark Theme)
+| 项 | 规范 |
+|---|---|
+| 主题 | 深色 SaaS 后台风格 |
+| 背景 | 深色背景 + 卡片式容器 |
+| 视觉重点 | 蓝色主强调、绿色成功、黄色待处理、红色风险/驳回、紫色标签 |
+| 字体 | 以现代无衬线字体为主；数字/KPI 可使用等宽字体 |
+| 语气 | 专业、运营、合规、数据化 |
 
-| Token | Color | Usage |
-|-------|-------|-------|
-| `--bg-primary` | `#0a0a0f` / `#0d0d12` | Main background |
-| `--bg-secondary` | `#12121a` / `#151520` | Sidebar, cards |
-| `--bg-tertiary` | `#1a1a25` | Hover states, elevated surfaces |
-| `--bg-card` | `#13131d` | Card backgrounds |
-| `--border` | `#1e1e2e` / `#2a2a3a` | Borders, dividers |
-| `--text-primary` | `#ffffff` | Headings, primary text |
-| `--text-secondary` | `#a0a0b0` / `#8888a0` | Secondary text, descriptions |
-| `--text-muted` | `#555566` | Muted text, placeholders |
-| `--accent-blue` | `#3b82f6` | Primary accent, links |
-| `--accent-green` | `#22c55e` | Success, positive metrics |
-| `--accent-yellow` | `#f59e0b` | Warning, pending states |
-| `--accent-red` | `#ef4444` | Error, negative states |
-| `--accent-purple` | `#8b5cf6` | Tags, badges |
+### 1.2 常用颜色 token
 
-### 1.2 Typography
+| Token | 用途 |
+|---|---|
+| `--bg-primary` | 页面主背景 |
+| `--bg-secondary` | 侧边栏、二级背景 |
+| `--bg-card` | 卡片背景 |
+| `--border` | 分割线和边框 |
+| `--text-primary` | 主标题/主要文字 |
+| `--text-secondary` | 次级文字 |
+| `--text-muted` | 辅助说明 |
+| `--accent-blue` | 主操作、链接、选中态 |
+| `--accent-green` | 成功、已发布、正向指标 |
+| `--accent-yellow` | 待审核、警告 |
+| `--accent-red` | 驳回、错误、危险操作 |
+| `--accent-purple` | 标签、特殊状态 |
 
-| Element | Font | Size | Weight |
-|---------|------|------|--------|
-| Logo text | JetBrains Mono | 16px | 700 |
-| Page title | DM Sans | 24px | 700 |
-| Section title | DM Sans | 18px | 600 |
-| Body text | DM Sans | 14px | 400 |
-| Small text | DM Sans | 12px | 400 |
-| KPI numbers | JetBrains Mono | 28px | 700 |
-| Table data | DM Sans | 13px | 400 |
-| Badge text | DM Sans | 11px | 500 |
-| Code / Version | JetBrains Mono | 12px | 400 |
+### 1.3 布局规则
 
-### 1.3 Spacing & Layout
+| 项 | 建议 |
+|---|---|
+| 页面 padding | 24px 左右 |
+| 卡片 padding | 16–24px |
+| 卡片圆角 | 12px 左右 |
+| 按钮圆角 | 8px 左右 |
+| 侧边栏宽度 | 约 260px |
+| Header 高度 | 约 56px |
+| 表格行高 | 约 48px |
+| 响应式 | 当前优先桌面端；移动端 production 需另行确认 |
 
-| Token | Value |
-|-------|-------|
-| Page padding | 24px |
-| Card padding | 20px |
-| Card border-radius | 12px |
-| Button border-radius | 8px |
-| Badge border-radius | 4px |
-| Sidebar width | 260px |
-| Header height | 56px |
-| Gap between cards | 16px |
-| Table row height | 48px |
-
-### 1.4 Fonts Import
-
-```html
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-```
-
----
-
-## 2. Layout Components
+## 2. 全局布局
 
 ### 2.1 AppLayout
 
-```
-┌─────────────────────────────────────────────┐
-│ Header (56px height, full width)            │
-├──────────┬──────────────────────────────────┤
-│ Sidebar  │ Main Content Area               │
-│ (260px)  │ (flex: 1, padding: 24px)        │
-│          │                                  │
-│          │                                  │
-│          │                                  │
-│          │                                  │
-│          │                                  │
-│          │                                  │
-└──────────┴──────────────────────────────────┘
-```
-
-### 2.2 Header
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│ [Logo] Px Lite·行为洞察  │  Breadcrumb  │  [Px Ops ▼] [🔍] [🔔] [V1.0] │
-└──────────────────────────────────────────────────────────────┘
-```
-
-**Elements:**
-- Left: Logo icon + "Px Lite" (JetBrains Mono) + "患教运营 · 行为洞察" subtitle
-- Center: Breadcrumb (e.g., "Px Lite / 总览")
-- Right: "Px Ops" dropdown, search icon, notification bell, version badge
-
-**Version Badge:** Pill-shaped, semi-transparent background, "V1.0 · LOCAL" in small text
-
-### 2.3 Sidebar
-
-```
-┌─────────────────────┐
-│  主菜单              │
-│  ─────────────────  │
-│  📊 总览            │ ← Active: highlighted bg
-│  📝 患教内容工坊    │
-│  👁 患者行为洞察    │
-│  📤 分发策略        │
-│  ✅ 审批中心        │
-│  ⚙️ 平台管理       │
-│                     │
-│  说明               │
-│  ─────────────────  │
-│  [Current page      │
-│   description text] │
-│                     │
-│  ─────────────────  │
-│  👤 系统管理员      │
-│  华东区域 · admin   │
-└─────────────────────┘
-```
-
-**Nav Item States:**
-- Default: text-secondary color, no background
-- Hover: slightly lighter background (`bg-tertiary`)
-- Active: highlighted background (subtle blue/accent tint), text-primary color, left border accent
-
----
-
-## 3. Page-Specific UI Requirements
-
-### 3.1 总览 (Overview Page)
-
-**Route:** `/` or `/overview`
-
-**Layout:**
-```
+```text
 ┌──────────────────────────────────────────────┐
-│ OVERVIEW badge                               │
-│ 患者教育内容运营总览                          │
-│ Description text...                          │
-│ 数据更新至 2025-05-12 • [tags]              │
-│ [进入内容工坊 →]                             │
-├──────────────────────────────────────────────┤
-│ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ ┌──────┐ │
-│ │项目数 │ │已发布│ │推送  │ │阅读  │ │阅读  │ │互动  │ │
-│ │  8   │ │4/14  │ │56322 │ │32998 │ │42314 │ │7660  │ │
-│ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ └──────┘ │
-├──────────────────────────────────────────────┤
-│ 项目概览                    [行为洞察 →]     │
-│ ┌────────────────────────────────────────┐   │
-│ │ Disease │ Content │ Published │ Push │ ... │
-│ │ 乳腺癌  │   5    │    2     │  ... │ ... │
-│ │ 慢性心..│   3    │    1     │  ... │ ... │
-│ │ 2型糖..│   3    │    1     │  ... │ ... │
-│ │ 类风湿..│   2    │    0     │  ... │ ... │
-│ │ 多发性..│   1    │    0     │  ... │ ... │
-│ └────────────────────────────────────────┘   │
-└──────────────────────────────────────────────┘
+│ Header：Logo / 面包屑 / 租户或用户操作       │
+├──────────────┬───────────────────────────────┤
+│ Sidebar      │ Main Content                  │
+│ 主菜单       │ 页面标题、筛选区、卡片、表格    │
+│ 用户摘要     │                               │
+└──────────────┴───────────────────────────────┘
 ```
 
-**KPI Stat Cards:**
-- 6 cards in a row (responsive: wrap on smaller screens)
-- Each card: icon + label (top), large number (center, JetBrains Mono), trend indicator (optional)
-- Numbers formatted with thousands separator (56,322 not 56322)
-- Card background: `bg-card` with subtle border
+### 2.2 导航路由
 
-**Project Table:**
-- Columns: 项目(Disease Project), 内容数, 已发布, 推送, 阅读, 互动, 操作
-- Each row has a "进入项目 →" action button
-- Alternating row hover effect
-- Table header: sticky, semi-transparent background
+当前生产候选路由：
 
-### 3.2 患教内容工坊 (Content Workshop)
+| 模块 | 路由 |
+|---|---|
+| 总览 | `/` |
+| 内容工坊 | `/content`、`/content/:id` |
+| 行为洞察 | `/audience` |
+| 分发策略 | `/distribute`、`/distribute/:id` |
+| 审批中心 | `/approvals` |
+| 设置 | `/settings` |
+| 财务 | `/finance`、`/finance/contracts`、`/finance/billing`、`/finance/invoicing` |
+| 租户管理 | `/admin/tenants` |
+| 账号管理 | `/admin/accounts` |
+| 项目管理 | `/admin/projects` |
+| 审批流配置 | `/admin/approval-flows` |
 
-**Route:** `/content-workshop`
+当前也保留部分旧路由兼容，例如 `/content-workshop`、`/behavior-insights`、`/distribution-strategy`、`/approval-center`、`/platform-management`。
 
-**Layout:**
-- Page title + description
-- Filter bar: search, status filter, project filter, content type filter
-- Content list (card or table view toggle)
-- Each content item shows: title, type, project, status badge, author, dates, metrics
-- Click to view detail → side panel or new route
-- Create/Edit content form (modal or page)
+## 3. 页面 UI 需求
 
-**Content Status Badges:**
-| Status | Color | Label |
-|--------|-------|-------|
-| Draft | Gray | 草稿 |
-| Under Review | Yellow | 审核中 |
-| Approved | Blue | 已通过 |
-| Published | Green | 已发布 |
-| Archived | Dark gray | 已归档 |
+### 3.1 总览
 
-### 3.3 患者行为洞察 (Behavior Insights)
+| 区域 | UI 要求 | 生产待确认 |
+|---|---|---|
+| 页面头部 | 展示运营视图、更新时间、标签、入口按钮 | 更新时间来源 |
+| KPI 卡片 | 项目数、已发布内容、推送/触达、阅读人数、阅读次数、互动数 | 计算口径 |
+| 项目表 | 展示项目/疾病、内容数、已发布、推送、阅读、互动、操作 | `projects` 是否为唯一项目主表 |
+| 操作 | 可进入内容工坊、行为洞察、项目详情 | 项目详情最终路由 |
 
-**Route:** `/behavior-insights`
+### 3.2 内容工坊
 
-**Layout:**
-- Page title + description
-- Filter bar: date range picker, project selector, disease selector
-- Summary cards (total reads, total interactions, avg read duration)
-- Line chart: Read trends over time
-- Bar chart: Interactions by disease/project
-- Top performing content table
-- All charts use dark theme colors (no white backgrounds)
+| 区域 | UI 要求 | 当前状态 |
+|---|---|---|
+| 头部 | 说明当前内容运营和行为数据口径 | 已实现/可调整文案 |
+| pipeline 卡片 | 展示需求、医生制作、审核、发布等阶段 | 已接近 PM demo，但规则待确认 |
+| 筛选区 | 搜索、状态、类型、项目/阶段筛选 | 部分已实现 |
+| 内容表 | 标题、ID、项目、类型、状态、优先级、日期、指标、操作 | 已实现主要展示 |
+| 详情页 | 内容详情、指标、审批/版本信息 | 已实现基础详情 |
+| 新建/编辑 | UI 是否暴露需 PM 确认 | 后端有能力，前端 demo 偏只读 |
 
-**Chart Theme:**
-- Background: transparent (card background shows through)
-- Grid lines: `#1e1e2e` (subtle)
-- Data colors: accent-blue, accent-green, accent-purple, accent-yellow
-- Text: text-secondary
-- Tooltips: dark background with light text
+### 3.3 行为洞察
 
-### 3.4 分发策略 (Distribution Strategy)
+| 区域 | UI 要求 | 生产待确认 |
+|---|---|---|
+| KPI | 阅读、互动、平均阅读时长、完成率/互动率等 | 指标口径 |
+| 趋势图 | 阅读和互动趋势，深色图表主题 | 时间范围、空值补齐 |
+| Top 内容 | 展示 Top 内容排行 | TopN 与命中数含义 |
+| 疾病维度 | 按疾病展示阅读/互动/推送 | 是否从日指标实时聚合 |
+| 导出 | 展示导出入口和合规提示 | 是否需要审批、阈值 |
 
-**Route:** `/distribution-strategy`
+### 3.4 分发策略
 
-**Layout:**
-- Page title + description
-- Strategy list (table or card layout)
-- Each strategy: name, project, target audience, schedule, status, metrics
-- Create/edit strategy form
-- Target audience configurator (region selector, disease selector, patient count preview)
+| 区域 | UI 要求 | 当前状态 |
+|---|---|---|
+| 项目状态卡 | 受理中、制作中、分发中、已完成、已归档 | 当前项目化列表已实现 |
+| 筛选区 | 项目名/疾病/品牌、状态、优先级 | 已实现基础筛选 |
+| 项目卡片 | 优先级、状态、负责人、疾病、品牌、目标日期、内容数、频率、患者上限、审批进度 | 已实现主要字段 |
+| 详情页 | 项目需求、审批节点、医生候选、分发记录等 | 部分数据硬编码，生产待确认 |
 
-**Strategy Status Badges:**
-| Status | Color | Label |
-|--------|-------|-------|
-| Draft | Gray | 草稿 |
-| Active | Green | 执行中 |
-| Paused | Yellow | 已暂停 |
-| Completed | Blue | 已完成 |
+### 3.5 审批中心
 
-### 3.5 审批中心 (Approval Center)
+| 区域 | UI 要求 | 当前状态 |
+|---|---|---|
+| 状态 tab | 待审批、已通过、已驳回、全部 | 已实现 |
+| 任务列表 | 内容标题、项目、提交人、当前节点、SLA、状态 | 已实现主要展示 |
+| 单条操作 | 通过、驳回、备注/原因 | 已接 API |
+| 批量操作 | 批量通过、批量驳回 | 当前仅 demo toast |
+| 审批流入口 | 跳转审批流配置 | 已有配置页面路由 |
 
-**Route:** `/approval-center`
+### 3.6 平台管理 / Admin
 
-**Layout:**
-- Page title + description
-- Tab bar: 待审批 (Pending) | 已通过 (Approved) | 已拒绝 (Rejected)
-- Approval queue list
-- Each item: content title, submitter, submit date, project, status
-- Click to expand: full content preview
-- Action buttons: 通过 (Approve), 拒绝 (Reject)
-- Comment input for rejection reason
-- Approval history log
+| 页面 | UI 要求 | 当前状态 |
+|---|---|---|
+| 租户管理 | 租户列表、状态、合同/联系人、范围配置 | 已有 API/页面基础 |
+| 账号管理 | 用户列表、角色、状态、2FA | 已有 API/页面基础 |
+| 项目管理 | 项目列表和租户归属 | 已有页面基础 |
+| 审批流配置 | 审批流和节点展示 | 已有页面/API 基础 |
+| 审计日志 | 操作记录可查 | 已有 API 基础 |
 
-### 3.6 平台管理 (Platform Management)
+### 3.7 设置
 
-**Route:** `/platform-management`
+当前 UI 可展示团队成员和审计日志，但团队成员为本地硬编码状态。生产 UI 需要确认：
 
-**Layout:**
-- Page title + description
-- Sub-tabs: 用户管理 (Users) | 系统设置 (Settings)
-- User list table: name, email, role badge, region, status, last login
-- Role badges: Admin (blue), Editor (green), Viewer (gray)
-- Add/edit user form
-- Settings panel: site name, version, region, feature toggles
+- 设置页是否允许成员管理。
+- 是否复用账号管理中的用户数据。
+- 设置变更是否全部写审计。
 
----
+### 3.8 财务
 
-## 4. Responsive Behavior
+当前 UI 包括财务首页、合同、账单、开票页面，但全部为前端常量。生产 UI 需要等待财务范围确认。若财务进入 v1，需要补充：
 
-| Breakpoint | Sidebar | KPI Cards | Table |
-|-----------|---------|-----------|-------|
-| ≥1280px (desktop) | Visible, 260px | 6 columns | Full columns |
-| 1024-1279px | Collapsible | 3 columns, 2 rows | Scrollable horizontally |
-| 768-1023px (tablet) | Hidden, hamburger menu | 2 columns, 3 rows | Scrollable |
-| <768px (mobile) | Hidden, hamburger menu | 1 column, 6 rows | Card layout |
+- 合同详情页。
+- 账单生成和调整流程。
+- 发票状态流。
+- 金额权限和导出权限。
+- 与项目/内容/行为指标的价值报告关系。
 
----
+## 4. 组件交互规范
 
-## 5. States
+| 组件 | 规范 |
+|---|---|
+| Button | 主按钮、次按钮、危险按钮状态清晰；危险操作需确认 |
+| Badge | 状态颜色稳定，不同模块同语义同颜色 |
+| Table | 支持 loading、empty、error、pagination |
+| Card | 标题、说明、指标和操作层级清楚 |
+| Toast | 成功、错误、演示提示需区分；demo-only 操作文案必须标注“演示” |
+| Filter | 筛选条件应反映到 API query 或明确为本地筛选 |
 
-### Loading States
-- Skeleton placeholders matching component shapes
-- Subtle pulse animation
-- Duration: show skeleton for min 300ms to avoid flash
+## 5. UI 验收规则
 
-### Error States
-- Error icon + message + "重试" (Retry) button
-- Red accent color for error indicator
-- Log the error to logger service
-
-### Empty States
-- Relevant icon + "暂无数据" (No data) message
-- Description text explaining what to do
-- Action button if applicable (e.g., "创建内容")
-
----
-
-## 6. Animations & Transitions
-
-| Element | Transition |
-|---------|-----------|
-| Page transitions | Fade in (200ms ease) |
-| Sidebar nav hover | Background color (150ms) |
-| Card hover | Subtle elevation shadow (200ms) |
-| Modal open/close | Fade + scale (200ms ease-out) |
-| Toast notification | Slide in from top-right (300ms) |
-| Skeleton pulse | CSS animation (1.5s infinite) |
-| Button hover | Background color (150ms) |
-| Table row hover | Background color (100ms) |
+1. 页面必须使用中文业务文案。
+2. demo-only 操作不得伪装成生产成功。
+3. 所有按钮必须有明确行为：API 调用、导航、打开弹窗、或演示提示。
+4. 加载、空状态、错误状态必须可见。
+5. 权限受限操作应隐藏或禁用，并给出原因。
+6. 图表和表格必须说明数据口径。
+7. 财务和设置成员在生产化前必须标注 demo-only。

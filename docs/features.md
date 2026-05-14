@@ -1,259 +1,162 @@
-# Px Lite 药企患教内容运营与行为洞察平台 — Feature Catalog
+# Px Lite 功能目录
 
-> Last Updated: 2026-05-12
-> Priority: P0 (Critical) | P1 (Important) | P2 (Nice-to-have)
-> Status: 🔲 Not Started | 🟡 In Progress | ✅ Done | ❌ Blocked
+最后更新时间：2026-05-14  
+状态：已按当前代码和中文规格包重新同步。  
+重要说明：`✅ 已实现` 表示当前代码可演示或已有基础能力，不表示生产业务规则全部确认。
 
----
+## 1. 状态图例
 
-## F-001: Application Shell & Navigation
+| 状态 | 含义 |
+|---|---|
+| ✅ 已实现 | 当前代码已有页面/API/测试基础，可作为后续基础 |
+| 🟡 部分完成 | 可演示，但存在 demo-only、缺规则或生产缺口 |
+| 🔴 阻塞 | 需要 PM/CEO/Leader 决策后才能继续 |
+| ⚪ 未开始 | 当前没有生产实现 |
+| 🧪 演示模式 | 仅用于 PM demo，不能作为生产承诺 |
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 |
-| **Page** | Global |
-| **Status** | 🔲 Not Started |
-| **Description** | Dark-themed application shell with sidebar navigation, header with breadcrumbs, and content area. |
-| **Acceptance Criteria** | |
+## 2. 核心功能清单
 
-- [ ] Sidebar displays all 6 navigation items with icons
-- [ ] Active page is visually highlighted in sidebar
-- [ ] Header shows logo, breadcrumb, user controls
-- [ ] Breadcrumb updates on page navigation
-- [ ] Version badge "V1.0 · LOCAL" visible in header
-- [ ] User info displayed at sidebar bottom (系统管理员 / 华东区域 · admin)
-- [ ] Sidebar description panel shows current page context
-- [ ] Responsive: sidebar collapses on smaller screens
+| ID | 功能 | 优先级 | 当前状态 | 说明 |
+|---|---|---|---|---|
+| F-001 | 应用框架与导航 | P0 | ✅ 已实现 | `AppLayout`、Sidebar/Header、当前路由与旧路由兼容已存在 |
+| F-002 | 总览 Dashboard | P0 | 🟡 部分完成 | DB/API 驱动；KPI 口径和 `overview_stats` 用途待确认 |
+| F-003 | 内容工坊 | P0 | 🟡 部分完成 | 列表/详情/API/版本表已存在；生产编辑/发布规则待确认 |
+| F-004 | 行为洞察 | P0 | 🟡 部分完成 | 聚合查询、趋势、导入/导出骨架存在；数据来源和口径待确认 |
+| F-005 | 分发策略/项目 | P0 | 🟡 部分完成 | 项目列表/API/详情基础已存在；详情部分硬编码，流程待确认 |
+| F-006 | 审批中心 | P0 | 🟡 部分完成 | 单条审批 API 已接；批量审批 demo-only，多节点规则待确认 |
+| F-007 | 平台管理/Admin | P0 | 🟡 部分完成 | 租户、账号、项目、审批流、审计 API/页面基础存在；权限矩阵待确认 |
+| F-008 | 设置 | P1 | 🧪 演示模式 | 审计日志可用；团队成员前端硬编码 |
+| F-009 | 财务 | P1/P2 | 🧪 演示模式 | UI 已有；无财务 DB/API/规则 |
+| F-010 | 认证、租户、权限 | P0 | 🟡 部分完成 | demo auth、OIDC/JWKS 骨架、租户隔离、权限表存在；生产 SSO/MFA 待客户配置 |
+| F-011 | 导入/导出与合规 | P0 | 🟡 部分完成 | 聚合导入、CSV 导出、k-anonymity guard、审计基础存在；审批/存储/TTL 待确认 |
+| F-012 | Docker 与部署 | P0 | ✅ 已实现基础 | 本地 demo compose + prod override 已存在；外部基础设施仍需配置 |
+| F-013 | 中文规格文档包 | P0 | ✅ 已实现 | 已新增当前状态审计、产品规格、数据模型、业务规则、工作流、开放问题、评审包 |
 
----
+## 3. 模块验收摘要
 
-## F-002: Overview Dashboard
+### F-001 应用框架与导航
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 |
-| **Page** | 总览 (Overview) |
-| **Status** | 🔲 Not Started |
-| **Description** | Main dashboard showing KPI summary cards and project overview table. |
-| **Acceptance Criteria** | |
+**当前已完成**
 
-- [ ] 6 KPI stat cards display: 项目数(8), 已发布内容(4/14), 推送人数(56,322), 阅读人数(32,998), 阅读次数(42,314), 互动数(7,660)
-- [ ] Numbers formatted with thousands separator
-- [ ] Data update timestamp displayed
-- [ ] Tags section visible
-- [ ] "进入内容工坊 →" button navigates to Content Workshop
-- [ ] Project overview table shows 5 disease projects
-- [ ] Each project row has: disease name, content count, published count, push/read/interaction metrics
-- [ ] "进入项目 →" button per row (navigates to project detail)
-- [ ] "行为洞察 →" link navigates to Behavior Insights
-- [ ] Loading skeleton displayed while fetching data
-- [ ] Error state with retry button if API fails
+- 主布局、侧边栏、Header、页面容器。
+- 当前 PM demo 路由：`/content`、`/audience`、`/distribute`、`/approvals`、`/settings`、`/finance`、`/admin/*`。
+- 旧路由兼容：`/content-workshop`、`/behavior-insights`、`/distribution-strategy`、`/approval-center`、`/platform-management`。
 
----
+**待确认**
 
-## F-003: Patient Education Content Workshop
+- 药企租户是否显示所有导航。
+- 财务是否进入 v1 导航。
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 |
-| **Page** | 患教内容工坊 (Content Workshop) |
-| **Status** | 🔲 Not Started |
-| **Description** | Content management interface for creating, editing, and managing patient education materials. |
-| **Acceptance Criteria** | |
+### F-002 总览 Dashboard
 
-- [ ] Content list displays all content items
-- [ ] Filter by status (Draft/Under Review/Approved/Published/Archived)
-- [ ] Filter by project/disease
-- [ ] Search by content title
-- [ ] Content type filter (article, video, infographic, quiz)
-- [ ] Status badges with appropriate colors
-- [ ] View content detail
-- [ ] Create new content form
-- [ ] Edit existing content
-- [ ] Content status workflow: Draft → Under Review → Approved → Published → Archived
-- [ ] Metrics per content (reads, likes, bookmarks)
-- [ ] Pagination for content list
-- [ ] Loading/error/empty states
+**当前已完成**
 
----
+- `GET /api/overview`。
+- `GET /api/overview/projects`。
+- PX admin 读取 `overview_stats`；药企视角按 `projects` 聚合。
 
-## F-004: Patient Behavior Insights
+**生产待确认**
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 |
-| **Page** | 患者行为洞察 (Behavior Insights) |
-| **Status** | 🔲 Not Started |
-| **Description** | Analytics dashboard showing patient engagement data including read counts, interactions, and trends. |
-| **Acceptance Criteria** | |
+- KPI 实时计算还是快照。
+- 已发布内容 `x/y` 语义。
+- 阅读人数/阅读次数/互动数口径。
 
-- [ ] Summary cards: total reads, total interactions, avg read duration
-- [ ] Line chart: read trends over time
-- [ ] Bar chart: interactions by disease/project
-- [ ] Top performing content table
-- [ ] Date range filter
-- [ ] Project/disease filter
-- [ ] Charts use dark theme (no white backgrounds)
-- [ ] Data consistent with overview KPI numbers
-- [ ] Loading/error states for charts
-- [ ] Tooltips on chart hover
+### F-003 内容工坊
 
----
+**当前已完成**
 
-## F-005: Distribution Strategy Management
+- 内容列表、详情、筛选、主要状态展示。
+- `content`、`content_versions`、`content_assets`、`tags` 等表。
+- 后端 CRUD 能力。
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P1 |
-| **Page** | 分发策略 (Distribution Strategy) |
-| **Status** | 🔲 Not Started |
-| **Description** | Manage content distribution strategies including target audience configuration and scheduling. |
-| **Acceptance Criteria** | |
+**生产待确认**
 
-- [ ] Strategy list with name, project, audience, status, metrics
-- [ ] Create new strategy form
-- [ ] Edit existing strategy
-- [ ] Target audience configurator (region, disease, patient count)
-- [ ] Schedule configuration (immediate, scheduled, recurring)
-- [ ] Strategy status management (draft/active/paused/completed)
-- [ ] Distribution metrics per strategy (pushed, delivered, opened, read)
-- [ ] Status toggle (activate/pause)
-- [ ] Loading/error/empty states
+- 前端是否开放完整创建/编辑器。
+- 版本生成规则。
+- 发布后修改和下线流程。
+- 是否新增“诉求/需求”实体。
 
----
+### F-004 行为洞察
 
-## F-006: Approval Center
+**当前已完成**
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 |
-| **Page** | 审批中心 (Approval Center) |
-| **Status** | 🔲 Not Started |
-| **Description** | Content approval workflow with review queue, approve/reject actions, and audit history. |
-| **Acceptance Criteria** | |
+- `GET /api/behavior`、`GET /api/behavior/trends`。
+- `behavior_daily_metrics` 聚合表。
+- 导入时计算 `interaction_count`。
+- 导出前 k-anonymity guard。
 
-- [ ] Pending approvals queue with count
-- [ ] Tab navigation: Pending | Approved | Rejected
-- [ ] Each item shows: content title, submitter, date, project
-- [ ] Content preview before approval
-- [ ] Approve action (one-click)
-- [ ] Reject action with required comment
-- [ ] Approval history log (who, when, action)
-- [ ] Status updates reflect immediately in UI
-- [ ] Loading/error/empty states
+**生产待确认**
 
----
+- 数据来源和导入频率。
+- Top 内容和疾病聚合是否从日指标实时计算。
+- 药企可见粒度。
 
-## F-007: Platform Management
+### F-005 分发策略/项目
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P1 |
-| **Page** | 平台管理 (Platform Management) |
-| **Status** | 🔲 Not Started |
-| **Description** | System administration including user management, role assignment, and platform settings. |
-| **Acceptance Criteria** | |
+**当前已完成**
 
-- [ ] User list table with name, email, role, region, status, last login
-- [ ] Role badges: Admin (blue), Editor (green), Viewer (gray)
-- [ ] Add new user form
-- [ ] Edit user (change role, status)
-- [ ] System settings panel
-- [ ] Feature toggle switches
-- [ ] Platform info display (version, region)
-- [ ] Loading/error states
+- `GET /api/distribution/projects`、`GET /api/distribution/projects/:id`。
+- `distribution_projects`、`distribution_strategies`、`doctors`、`distribution_records` 等表。
+- 项目化分发列表与详情基础。
 
----
+**demo-only / 待确认**
 
-## F-008: Logging System
+- 分发详情 `liveRequests` 硬编码。
+- 详情 6 节点 flow 与审批中心 3 节点不一致。
+- 进度和当前节点是否应由流程派生。
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 |
-| **Page** | Global (all pages) |
-| **Status** | 🔲 Not Started |
-| **Description** | Comprehensive logging for all features, buttons, interactions, API calls, and system events. Frontend + backend logging with structured output. |
-| **Acceptance Criteria** | |
+### F-006 审批中心
 
-- [ ] Frontend logger captures: NAV, UI, API, ACTION, AUTH, FEATURE, PERF, ERROR events
-- [ ] All button clicks logged with button name and page context
-- [ ] All page navigations logged
-- [ ] All API requests/responses logged with duration
-- [ ] All API errors logged with details
-- [ ] State changes logged
-- [ ] Backend pino logger: app.log, error.log, access.log
-- [ ] Request logging middleware on all backend routes
-- [ ] DevPanel (dev mode only) shows recent logs, filterable
-- [ ] Toggle DevPanel with Ctrl+Shift+D
-- [ ] Log level configurable (DEBUG in dev, WARN+ in prod)
-- [ ] Optional: frontend logs forwarded to backend via POST /api/logs
+**当前已完成**
 
----
+- `GET /api/approval/tasks`。
+- `PUT /api/approval/tasks/:id` 单条通过/驳回。
+- `approval_flows`、`approval_flow_nodes`、`approval_tasks`、`approval_task_actions`。
 
-## F-009: Data Provider / API Abstraction
+**demo-only / 待确认**
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 |
-| **Page** | Infrastructure |
-| **Status** | 🔲 Not Started |
-| **Description** | API client with environment-based URL switching. Local backend for development, real backend for production. |
-| **Acceptance Criteria** | |
+- 批量通过/驳回只 toast。
+- `requirementByContent` 前端硬编码。
+- 多节点推进和驳回策略待确认。
 
-- [ ] Axios client with configurable baseURL from `VITE_API_BASE_URL`
-- [ ] `.env.development` → `http://localhost:3001/api`
-- [ ] `.env.production` → `https://api.px.senzco.com`
-- [ ] Request/response interceptors for logging
-- [ ] Error handling with user-friendly messages
-- [ ] Local Express.js backend serves all API endpoints
-- [ ] Backend seeded with realistic mock data
-- [ ] Health check endpoint (`GET /api/health`)
-- [ ] Switching backends requires only env variable change
+### F-007 平台管理/Admin
 
----
+**当前已完成**
 
-## F-010: Docker Containerization
+- 租户、账号、审批流、团队、审计日志、用户、设置 API。
+- 角色、权限、字段级访问级别数据模型。
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P1 |
-| **Page** | Infrastructure |
-| **Status** | 🔲 Not Started |
-| **Description** | Full Docker containerization for both development and production deployment. |
-| **Acceptance Criteria** | |
+**生产待确认**
 
-- [ ] Frontend Dockerfile: multi-stage build (Node → Nginx)
-- [ ] Backend Dockerfile: Node.js production image
-- [ ] Nginx config: SPA routing, gzip, browser caching
-- [ ] docker-compose.yml for development
-- [ ] docker-compose.prod.yml for production
-- [ ] .dockerignore excludes node_modules, logs, .git
-- [ ] `docker-compose up --build` works for development
-- [ ] `docker-compose -f docker-compose.prod.yml up --build` works for production
-- [ ] Health checks configured
-- [ ] Log rotation configured
-- [ ] Container images are lean (<50MB frontend, <200MB backend)
+- 权限矩阵。
+- 客户 SSO/MFA。
+- 药企可见页面和字段脱敏。
 
----
+### F-008 设置
 
-## F-011: Testing Suite
+**当前已完成**
 
-| Field | Value |
-|-------|-------|
-| **Priority** | P0 |
-| **Page** | Infrastructure |
-| **Status** | 🔲 Not Started |
-| **Description** | Comprehensive automated testing: unit tests, component tests, API tests, and E2E tests. Iterative: test → fix → retest until all pass. |
-| **Acceptance Criteria** | |
+- 设置页基础 UI。
+- 审计日志后端读取。
 
-- [ ] Vitest configured for unit/component tests
-- [ ] React Testing Library for component testing
-- [ ] Supertest for backend API testing
-- [ ] Playwright for E2E tests
-- [ ] All UI components have unit tests
-- [ ] All pages have integration tests
-- [ ] All backend routes have API tests
-- [ ] E2E tests cover all 6 pages + navigation
-- [ ] Coverage targets met (80%+ components, 90%+ stores/routes)
-- [ ] `npm run test:all` passes with 0 failures
-- [ ] Tests iterate until all pass (no skipped failures)
+**demo-only**
+
+- 团队成员本地硬编码。
+
+### F-009 财务
+
+**当前已完成**
+
+- 财务首页、合同、账单、开票 UI。
+
+**demo-only**
+
+- 全部数据为前端常量。
+- 无 DB/API。
+
+## 4. 下一阶段功能推进规则
+
+1. 先关闭 `docs/open_questions.md` 中 P0/P1 问题。
+2. 把已确认规则回写到 `docs/product_spec.md`、`docs/data_model.md`、`docs/business_rules.md`、`docs/workflows.md`。
+3. 再把本文件中 🟡/🧪 的功能拆成生产化任务。
+4. 未确认模块保持 demo-only，不继续“边做边猜”。
