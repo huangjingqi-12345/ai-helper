@@ -33,6 +33,13 @@ const priorityOptions = [
   { value: 'P2', label: 'P2' },
 ];
 
+const requirementCountByProject: Record<string, number> = {
+  'PRJ-1001': 2,
+  'PRJ-1002': 2,
+  'PRJ-1003': 2,
+  'PRJ-1006': 1,
+};
+
 function priorityColor(priority: DistributionProjectPriority): 'red' | 'yellow' | 'gray' {
   if (priority === 'P0') return 'red';
   if (priority === 'P1') return 'yellow';
@@ -152,7 +159,7 @@ export function DistributionStrategy(): JSX.Element {
               <div className="mt-4 grid grid-cols-3 gap-3">
                 <div className="rounded-lg bg-bg-card p-3"><div className="text-[10px] text-text-muted">总量</div><div className="font-mono text-sm text-text-primary">{project.totalPieces} 篇</div></div>
                 <div className="rounded-lg bg-bg-card p-3"><div className="text-[10px] text-text-muted">主题 × 形式</div><div className="font-mono text-sm text-text-primary">{project.cadence}</div></div>
-                <div className="rounded-lg bg-bg-card p-3"><div className="text-[10px] text-text-muted">诉求</div><div className="font-mono text-sm text-text-primary">{project.topics.length} 条</div></div>
+                <div className="rounded-lg bg-bg-card p-3"><div className="text-[10px] text-text-muted">诉求</div><div className="font-mono text-sm text-text-primary">{requirementCountByProject[project.id] ?? project.topics.length} 条</div></div>
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">

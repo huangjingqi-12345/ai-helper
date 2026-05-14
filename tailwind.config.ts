@@ -6,31 +6,31 @@ const config: Config = {
     extend: {
       colors: {
         px: {
-          purple: '#720DD7',
-          blue: '#7773FD',
-          ink: '#0B0825',
+          purple: '#00C2D6',
+          blue: '#10D6E8',
+          ink: '#070B12',
         },
         bg: {
-          primary: '#0B0825',
-          secondary: '#130F2F',
-          tertiary: '#1B1450',
-          card: '#151039',
+          primary: '#070B12',
+          secondary: '#0B1018',
+          tertiary: '#111A24',
+          card: '#101720',
         },
         border: {
-          DEFAULT: '#2A215E',
-          light: '#43338F',
+          DEFAULT: '#23303D',
+          light: '#304150',
         },
         text: {
-          primary: '#F8F7FF',
-          secondary: '#C8C3EA',
-          muted: '#817AAA',
+          primary: '#F6FAFF',
+          secondary: '#AAB6C3',
+          muted: '#667482',
         },
         accent: {
-          blue: '#7773FD',
-          green: '#34D399',
-          yellow: '#FBBF24',
-          red: '#FB7185',
-          purple: '#720DD7',
+          blue: '#08D4E8',
+          green: '#23E6A8',
+          yellow: '#F5A623',
+          red: '#FF7F6E',
+          purple: '#6EE7F5',
         },
       },
       fontFamily: {

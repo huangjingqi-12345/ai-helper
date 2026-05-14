@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Plus, Search, Filter } from 'lucide-react';
+import { Search, Filter } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -9,7 +9,6 @@ import { Select } from '@/components/ui/Select';
 import { Spinner } from '@/components/ui/Spinner';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { showToast } from '@/components/ui/Toast';
 import { PipelineCards } from './PipelineCards';
 import { useContentStore } from '@/stores/useContentStore';
 import { useLogger } from '@/hooks/useLogger';
@@ -36,14 +35,13 @@ const PROJECT_OPTIONS = [
   { value: 'proj-hypertension', label: '高血压' },
 ];
 
-const PIPELINE_OPTIONS = [
-  { value: '', label: '全部流程' },
-  { value: 'requirement_submitted', label: '需求已提交' },
-  { value: 'doctor_distributing', label: '医生分发中' },
-  { value: 'doctor_creating', label: '医生制作中' },
-  { value: 'external_review', label: '三方审核中' },
-  { value: 'internal_review', label: '内部审核中' },
-  { value: 'published', label: '已发布' },
+const PIPELINE_STAGE_OPTIONS: PipelineStage[] = [
+  'requirement_submitted',
+  'doctor_distributing',
+  'doctor_creating',
+  'external_review',
+  'internal_review',
+  'published',
 ];
 
 const CONTENT_PROJECT_BRIEFS: Record<string, string> = {
@@ -55,7 +53,7 @@ const CONTENT_PROJECT_BRIEFS: Record<string, string> = {
 };
 
 export function ContentWorkshop(): JSX.Element {
-  const { items, total, loading, error, filter, setFilter, fetchList, create } = useContentStore();
+  const { items, total, loading, error, filter, setFilter, fetchList } = useContentStore();
   const { log } = useLogger('ContentWorkshop');
   const navigate = useNavigate();
   const location = useLocation();
@@ -106,6 +104,14 @@ export function ContentWorkshop(): JSX.Element {
   if (activePipelineStage) {
     filteredItems = filteredItems.filter((item) => item.pipelineStage === activePipelineStage);
   }
+
+  const pipelineOptions = useMemo(() => [
+    { value: '', label: '全部流程' },
+    ...PIPELINE_STAGE_OPTIONS.map((stage) => ({
+      value: stage,
+      label: `${PIPELINE_STAGE_MAP[stage].label}（${items.filter((item) => item.pipelineStage === stage).length}）`,
+    })),
+  ], [items]);
 
   if (error && !loading) {
     return <ErrorState message={error} onRetry={fetchList} />;
@@ -284,9 +290,9 @@ export function ContentWorkshop(): JSX.Element {
       <Card>
         <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-3 flex-1 flex-wrap">
-            <Select options={STATUS_OPTIONS} value={filter.status || ''} onChange={handleStatusFilter} />
-            <Select options={PROJECT_OPTIONS} value={filter.projectId || ''} onChange={handleProjectFilter} />
-            <Select options={PIPELINE_OPTIONS} value={activePipelineStage || ''} onChange={handlePipelineFilter} />
+            <Select label="状态" options={STATUS_OPTIONS} value={filter.status || ''} onChange={handleStatusFilter} />
+            <Select label="项目" options={PROJECT_OPTIONS} value={filter.projectId || ''} onChange={handleProjectFilter} />
+            <Select label="项目流程" options={pipelineOptions} value={activePipelineStage || ''} onChange={handlePipelineFilter} />
             {domainFilter && (
               <Badge color="blue" className="h-8">
                 {domainFilter}
@@ -304,24 +310,6 @@ export function ContentWorkshop(): JSX.Element {
               />
             </div>
           </div>
-          <Button size="sm" onClick={async () => {
-            log.action('Create content clicked');
-            try {
-              await create({
-                projectId: filter.projectId || 'proj-hf',
-                title: `新建患教内容 ${new Date().toLocaleDateString('zh-CN')}`,
-                type: 'article',
-                content: '请在详情页补充正文、来源与合规清单后提交审批。',
-                tags: ['待完善'],
-              });
-              showToast('已创建草稿内容', 'success');
-            } catch {
-              showToast('创建内容失败', 'error');
-            }
-          }}>
-            <Plus className="w-4 h-4" />
-            新建内容
-          </Button>
         </div>
 
         {loading ? (

@@ -5,43 +5,32 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { useLogger } from '@/hooks/useLogger';
-import { getApprovalFlows, getTenantOptions } from '@/api/endpoints/platform';
+import { getApprovalFlows } from '@/api/endpoints/platform';
 import type { ApprovalFlow, FlowNode } from '@/types/platform';
-import type { TenantOption } from '@/stores/useTenantStore';
 
 const REVIEWER_OPTIONS = [
-  { value: 'doctor_creator', label: '医生制作' },
   { value: 'dx_editor', label: '编辑审核' },
-  { value: 'dx_revision', label: '编辑修改' },
   { value: 'px_ops', label: 'Px 审核' },
-  { value: 'system_precheck', label: 'AI 预审' },
   { value: 'pharma_med', label: '药企审核' },
-  { value: 'pharma_mkt', label: '药企市场部审核' },
 ];
 
 const TIMEOUT_OPTIONS = [
   { value: 'remind_only', label: '仅提醒催办' },
   { value: 'auto_pass', label: '超时自动通过' },
-  { value: 'escalate', label: '升级 / 驳回重分发' },
+  { value: 'escalate', label: '升级 / 驳回重审' },
 ];
 
 const RETURN_OPTIONS = [
   { value: 'submitter', label: '回到提交人重做' },
-  { value: 'previous', label: '回到上一节点' },
-  { value: 'first', label: '回到第一节点' },
+  { value: 'previous', label: '回到上一节点重审' },
 ];
 
 export function ApprovalFlowConfig(): JSX.Element {
   const { log } = useLogger('ApprovalFlowConfig');
   const [flows, setFlows] = useState<ApprovalFlow[]>([]);
-  const [tenantOptions, setTenantOptions] = useState<TenantOption[]>([]);
   const [selectedFlowId, setSelectedFlowId] = useState<string>('');
   const [selectedTenant, setSelectedTenant] = useState('T-PX');
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getTenantOptions().then((res) => setTenantOptions(res.data)).catch(() => setTenantOptions([]));
-  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -56,7 +45,7 @@ export function ApprovalFlowConfig(): JSX.Element {
     return () => { mounted = false; };
   }, [selectedTenant]);
 
-  const selectOptions = useMemo(() => tenantOptions.map((tenant) => ({ value: tenant.id, label: tenant.shortName })), [tenantOptions]);
+  const selectOptions = useMemo(() => [{ value: 'T-PX', label: `Px Ops（${flows.length}）` }], [flows.length]);
   const selectedFlow = flows.find((f) => f.id === selectedFlowId) ?? flows[0];
 
   const addNode = () => {
@@ -120,12 +109,12 @@ export function ApprovalFlowConfig(): JSX.Element {
       <div className="space-y-3">
         <Badge color="blue" className="text-[10px] uppercase tracking-wider">平台管理 · 审批流配置</Badge>
         <h1 className="text-2xl font-bold text-text-primary">自定义审批流</h1>
-        <p className="text-sm text-text-secondary">编排「医生制作 → DX 小编 → AI 预审 → PX 运营 → 药企医学 → 药企市场部 → 发布」全链路，可按业务自由增删节点、设置超时与打回策略。不同租户可独立配置。</p>
+        <p className="text-sm text-text-secondary">编排「编辑审核 → Px 审核 → 药企审核」纯审核链路，可按业务自由增删节点、设置 SLA 与打回策略。不同租户独立配置。</p>
       </div>
 
       <div className="flex items-center gap-4">
         <span className="text-xs text-text-muted px-3 py-1.5 bg-bg-tertiary rounded-lg">Px Ops 共 {flows.length} 个审批流</span>
-        <span className="text-xs text-text-muted px-3 py-1.5 bg-bg-tertiary rounded-lg">配置变更将写入审计记录</span>
+        <span className="text-xs text-text-muted px-3 py-1.5 bg-bg-tertiary rounded-lg">修改本会话内生效（演示模式）</span>
         <div className="ml-auto flex items-center gap-2">
           <span className="text-xs text-text-muted">选择租户</span>
           <Select options={selectOptions} value={selectedTenant} onChange={setSelectedTenant} />
@@ -168,27 +157,32 @@ export function ApprovalFlowConfig(): JSX.Element {
         {/* Right panel: Flow editor */}
         <Card className="space-y-5">
           <div className="space-y-3">
-            <div>
-              <label className="text-xs text-text-muted block mb-1">流名称</label>
-              <input
-                type="text"
-                value={selectedFlow.name}
-                onChange={(e) => setFlows(flows.map((f) => f.id === selectedFlowId ? { ...f, name: e.target.value } : f))}
-                className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-blue"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-text-muted block mb-1">流链路</label>
-              <textarea
-                value={chainDesc}
-                readOnly
-                className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-xs text-text-muted h-12 resize-none"
-              />
+            <div className="grid grid-cols-[1fr_auto] items-end gap-3">
+              <div>
+                <label className="text-xs text-text-muted block mb-1">流名称</label>
+                <input
+                  type="text"
+                  value={selectedFlow.name}
+                  onChange={(e) => setFlows(flows.map((f) => f.id === selectedFlowId ? { ...f, name: e.target.value } : f))}
+                  className="w-full px-3 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary focus:outline-none focus:ring-1 focus:ring-accent-blue"
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  log.action('Toggle flow status', { id: selectedFlowId });
+                  setFlows(flows.map((f) => f.id === selectedFlowId ? { ...f, status: f.status === 'active' ? 'inactive' : 'active' } : f));
+                }}
+              >
+                <Pause className="w-4 h-4" />
+                {selectedFlow.status === 'active' ? '停用' : '启用'}
+              </Button>
             </div>
           </div>
 
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-6">
               <div>
                 <label className="text-xs text-text-muted block mb-1">打回策略</label>
                 <Select
@@ -202,17 +196,6 @@ export function ApprovalFlowConfig(): JSX.Element {
                 <span className="text-sm text-text-secondary">{selectedFlow.lastUpdated}</span>
               </div>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                log.action('Toggle flow status', { id: selectedFlowId });
-                setFlows(flows.map((f) => f.id === selectedFlowId ? { ...f, status: f.status === 'active' ? 'inactive' : 'active' } : f));
-              }}
-            >
-              <Pause className="w-4 h-4" />
-              {selectedFlow.status === 'active' ? '停用' : '启用'}
-            </Button>
           </div>
 
           {/* Nodes table */}
@@ -229,9 +212,9 @@ export function ApprovalFlowConfig(): JSX.Element {
                 <tr className="border-b border-border bg-bg-secondary/50">
                   <th className="px-3 py-2 text-left text-xs font-medium text-text-muted w-8">#</th>
                   <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">节点名称</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">审核类型</th>
-                  <th className="px-3 py-2 text-center text-xs font-medium text-text-muted">SLA</th>
-                  <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">超时策略</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">角色</th>
+                  <th className="px-3 py-2 text-center text-xs font-medium text-text-muted">SLA（小时）</th>
+                  <th className="px-3 py-2 text-left text-xs font-medium text-text-muted">超时动作</th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-text-muted w-24">操作</th>
                 </tr>
               </thead>
@@ -243,6 +226,7 @@ export function ApprovalFlowConfig(): JSX.Element {
                       <input
                         type="text"
                         value={node.name}
+                        placeholder="节点显示名"
                         onChange={(e) => {
                           const newNodes = [...selectedFlow.nodes];
                           const currentNode = newNodes[idx];
@@ -317,6 +301,10 @@ export function ApprovalFlowConfig(): JSX.Element {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="rounded-lg border border-border bg-bg-secondary/50 p-3">
+            <div className="text-xs text-text-muted">链路预览</div>
+            <div className="mt-2 text-sm text-text-primary">{chainDesc} → 发布</div>
           </div>
         </Card>
       </div>

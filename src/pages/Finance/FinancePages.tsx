@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { FilePlus2, Send, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -35,22 +35,35 @@ const reports = [
   ['诺欣华制药（中国）有限公司', '2026-04', 'BILL-202604-0004', '2026-05-02', '待转开票', 21, 9, 1611, 20973],
   ['辉瑞投资有限公司', '2026-03', 'BILL-202603-0027', '2026-04-05', '待转开票', 20, 8, 1677, 38811],
   ['礼来贸易有限公司', '2026-03', 'BILL-202603-0023', '2026-04-05', '待转开票', 22, 14, 1266, 35838],
+  ['罗氏制药（上海）有限公司', '2026-03', 'BILL-202603-0018', '2026-04-05', '待转开票', 21, 8, 1518, 31874],
+  ['默沙东（中国）投资有限公司', '2026-03', 'BILL-202603-0013', '2026-04-05', '待转开票', 20, 9, 1770, 27910],
+  ['阿斯利康（无锡）贸易有限公司', '2026-03', 'BILL-202603-0008', '2026-04-05', '待转开票', 19, 10, 1222, 23946],
+  ['诺欣华制药（中国）有限公司', '2026-03', 'BILL-202603-0003', '2026-04-05', '待转开票', 18, 11, 1474, 19982],
+  ['辉瑞投资有限公司', '2026-02', 'BILL-202602-0026', '2026-03-05', '已转开票', 17, 10, 1540, 37820],
+  ['礼来贸易有限公司', '2026-02', 'BILL-202602-0022', '2026-03-05', '已转开票', 19, 9, 1929, 34847],
+  ['罗氏制药（上海）有限公司', '2026-02', 'BILL-202602-0017', '2026-03-05', '待转开票', 18, 10, 1381, 30883],
+  ['默沙东（中国）投资有限公司', '2026-02', 'BILL-202602-0012', '2026-03-05', '已转开票', 17, 11, 1633, 26919],
+  ['阿斯利康（无锡）贸易有限公司', '2026-02', 'BILL-202602-0007', '2026-03-05', '已转开票', 16, 12, 1885, 22955],
+  ['诺欣华制药（中国）有限公司', '2026-02', 'BILL-202602-0002', '2026-03-05', '已转开票', 15, 13, 1337, 18991],
+  ['礼来贸易有限公司', '2026-01', 'BILL-202601-0021', '2026-02-05', '已转开票', 16, 11, 1792, 33856],
+  ['罗氏制药（上海）有限公司', '2026-01', 'BILL-202601-0016', '2026-02-05', '已转开票', 15, 12, 1244, 29892],
+  ['默沙东（中国）投资有限公司', '2026-01', 'BILL-202601-0011', '2026-02-05', '已转开票', 14, 13, 1496, 25928],
+  ['阿斯利康（无锡）贸易有限公司', '2026-01', 'BILL-202601-0006', '2026-02-05', '已转开票', 13, 14, 1748, 21964],
+  ['诺欣华制药（中国）有限公司', '2026-01', 'BILL-202601-0001', '2026-02-05', '已转开票', 12, 8, 1200, 18000],
 ];
 
 const invoices = [
   ['诺欣华制药（中国）有限公司', '32011260000', 'BILL-202601-0001', '增值税普票', '2026-02-07', '100 万'],
   ['诺欣华制药（中国）有限公司', '32021260001', 'BILL-202602-0002', '增值税专票', '2026-03-07', '100 万'],
   ['阿斯利康（无锡）贸易有限公司', '32031260002', 'BILL-202601-0006', '增值税专票', '2026-02-07', '100 万'],
+  ['阿斯利康（无锡）贸易有限公司', '32011260003', 'BILL-202602-0007', '增值税普票', '2026-03-07', '100 万'],
   ['默沙东（中国）投资有限公司', '32021260004', 'BILL-202601-0011', '增值税专票', '2026-02-07', '200 万'],
+  ['默沙东（中国）投资有限公司', '32031260005', 'BILL-202602-0012', '增值税专票', '2026-03-07', '200 万'],
+  ['罗氏制药（上海）有限公司', '32011260006', 'BILL-202601-0016', '增值税普票', '2026-02-07', '200 万'],
+  ['礼来贸易有限公司', '32021260007', 'BILL-202601-0021', '增值税专票', '2026-02-07', '50 万'],
+  ['礼来贸易有限公司', '32031260008', 'BILL-202602-0022', '增值税专票', '2026-03-07', '50 万'],
   ['辉瑞投资有限公司', '32011260009', 'BILL-202602-0026', '增值税普票', '2026-03-07', '200 万'],
 ];
-
-const nav = [
-  ['/finance', '业财总览'],
-  ['/finance/contracts', '合同与订阅'],
-  ['/finance/billing', '账单引擎'],
-  ['/finance/invoicing', '价值交付与开票'],
-] as const;
 
 export function FinanceOverview(): JSX.Element {
   return (
@@ -77,10 +90,10 @@ export function FinanceOverview(): JSX.Element {
         </Card>
       </div>
       <div className="grid grid-cols-4 gap-4">
-        <FinanceLink href="/finance/contracts" title="合同与订阅" desc="租户主数据 · P2 智能体合同 · 订阅版本" metrics="活跃合同 6 份 · 待签订单 1 份" />
-        <FinanceLink href="/finance/billing" title="账单引擎" desc="月度自动排期 · 对账 · 催款联动" metrics="本月生成 6 张 · 对账异议 2 单" />
-        <FinanceLink href="/finance/invoicing" title="价值交付与开票" desc="月度价值报告 · 一键转开票指令" metrics="已生成报告 23 份 · 待开票 5 张" />
-        <FinanceLink href="/finance" title="业财数据基座" desc="客户主数据 · 收入 / 回款 / 预算 · KPI" metrics="活跃客户 6 家 · 回款率 20.3%" />
+        <FinanceLink href="/finance/contracts" title="合同与订阅" desc="租户主数据 · P2 智能体合同 · 订阅版本" metrics="活跃合同 6 份 待签订单 1 份" />
+        <FinanceLink href="/finance/billing" title="账单引擎" desc="月度自动排期 · 对账 · 催款联动" metrics="本月生成 6 张 对账异议 2 单" />
+        <FinanceLink href="/finance/invoicing" title="价值交付与开票" desc="月度价值报告 · 一键转开票指令" metrics="已生成报告 23 份 待开票 5 张 已开发票 10 张" />
+        <FinanceLink href="/finance" title="业财数据基座" desc="客户主数据 · 收入 / 回款 / 预算 · KPI" metrics="活跃客户 6 家 回款率 20.3%" />
       </div>
       <Card>
         <h2 className="text-base font-semibold text-text-primary">业财待办速览</h2>
@@ -140,8 +153,7 @@ export function FinanceInvoicing(): JSX.Element {
 }
 
 function FinanceShell({ badge, title, desc, children }: { badge: string; title: string; desc: string; children: React.ReactNode }): JSX.Element {
-  const location = useLocation();
-  return <div className="space-y-6"><div className="space-y-3"><Badge color="blue" className="text-[10px] uppercase tracking-wider">{badge}</Badge><h1 className="text-2xl font-bold text-text-primary">{title}</h1><p className="max-w-3xl text-sm text-text-secondary">{desc}</p></div><div className="flex flex-wrap gap-2">{nav.map(([href, label]) => <Link key={href} to={href} className={`rounded-lg border px-3 py-2 text-xs transition-colors ${location.pathname === href ? 'border-accent-blue bg-accent-blue/15 text-accent-blue' : 'border-border bg-bg-card text-text-secondary hover:border-accent-blue/50'}`}>{label}</Link>)}</div>{children}</div>;
+  return <div className="space-y-6"><div className="space-y-3"><Badge color="blue" className="text-[10px] uppercase tracking-wider">{badge}</Badge><h1 className="text-2xl font-bold text-text-primary">{title}</h1><p className="max-w-3xl text-sm text-text-secondary">{desc}</p></div>{children}</div>;
 }
 
 function Kpi({ title, desc, value, tone = 'blue' }: { title: string; desc: string; value: string; tone?: 'blue' | 'red' | 'yellow' }): JSX.Element {

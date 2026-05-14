@@ -1,4 +1,4 @@
-import { StatCard } from '@/components/ui/StatCard';
+import { Card } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { FolderOpen, FileCheck, Send, Users, BookOpen, Heart } from 'lucide-react';
 import type { OverviewStats } from '@/types';
@@ -29,16 +29,22 @@ export function KpiCards({ stats, loading }: KpiCardsProps): JSX.Element {
   ];
 
   return (
-    <div className="grid grid-cols-6 gap-4">
+    <Card className="grid grid-cols-6 gap-4">
       {cards.map((card) => (
-        <StatCard
-          key={card.label}
-          label={card.label}
-          value={card.value}
-          icon={card.icon}
-          formatValue={card.formatValue !== false}
-        />
+        <div key={card.label} className="flex items-center gap-3">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-blue/12 text-accent-blue">
+            {card.icon}
+          </span>
+          <div>
+            <div className="text-xs text-text-muted">{card.label}</div>
+            <div className="mt-1 font-mono text-lg font-bold text-text-primary">
+              {card.formatValue === false || typeof card.value !== 'number'
+                ? card.value
+                : new Intl.NumberFormat('zh-CN').format(card.value)}
+            </div>
+          </div>
+        </div>
       ))}
-    </div>
+    </Card>
   );
 }

@@ -133,7 +133,7 @@ export async function getContentList(filters: { status?: string; type?: string; 
     FROM content c
     LEFT JOIN projects p ON p.id = c.project_id
     ${where}
-    ORDER BY c.updated_at DESC
+    ORDER BY c.id ASC
     LIMIT ? OFFSET ?
   `, [...params, filters.pageSize, offset]);
 
@@ -315,6 +315,7 @@ export async function getBehaviorSummary(scope?: QueryScope) {
     ORDER BY btc.reads DESC
   `);
   const byDiseaseRows = await dbAll<Record<string, unknown>>('SELECT * FROM behavior_by_disease ORDER BY reads DESC');
+  const contentCountRow = await dbGet<{ cnt: number | string }>('SELECT COUNT(*) as cnt FROM content');
   const avgSetting = await dbGet<{ value: string }>("SELECT value FROM platform_settings WHERE key = 'behaviorAvgReadDuration'");
 
   return {
@@ -322,6 +323,7 @@ export async function getBehaviorSummary(scope?: QueryScope) {
     readUsers: asNumber(stats.readUsers),
     totalReads: asNumber(stats.readCount),
     totalInteractions: asNumber(stats.interactionCount),
+    contentCount: asNumber(contentCountRow?.cnt),
     avgReadDuration: asNumber(avgSetting?.value, 148),
     readTrend,
     interactionTrend,
@@ -506,7 +508,7 @@ export async function getDistributionProjects(filters: { status?: string; priori
   const totalRow = await dbGet<{ cnt: number | string }>(`SELECT COUNT(*) as cnt FROM distribution_projects ${where}`, params);
   const total = Number(totalRow?.cnt ?? 0);
   const offset = (filters.page - 1) * filters.pageSize;
-  const rows = await dbAll<Record<string, unknown>>(`SELECT * FROM distribution_projects ${where} ORDER BY expected_date DESC, id ASC LIMIT ? OFFSET ?`, [...params, filters.pageSize, offset]);
+  const rows = await dbAll<Record<string, unknown>>(`SELECT * FROM distribution_projects ${where} ORDER BY id ASC LIMIT ? OFFSET ?`, [...params, filters.pageSize, offset]);
   return {
     data: rows.map(mapDistributionProjectRow),
     total,
@@ -543,6 +545,8 @@ function mapDistributionProjectRow(row: Record<string, unknown>) {
     currentNode: project.currentNode,
     contentCount: asNumber(project.contentCount),
     publishedCount: asNumber(project.publishedCount),
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
   };
 }
 
@@ -666,7 +670,7 @@ function mapApprovalTaskRow(row: Record<string, unknown>) {
     disease: task.disease,
     author: task.author || task.submittedBy,
     node: status === 'approved' ? '发布' : task.nodeName || '未提交',
-    progress: task.progressText || '0/5',
+    progress: task.progressText || '0/3',
     sla: task.slaDueAt || '—',
     status,
   };
@@ -686,8 +690,8 @@ export async function handleApprovalTask(id: string, action: 'approve' | 'reject
     SET status = ?, current_node_id = ?, progress_text = ?, sla_due_at = ?, completed_at = ?, updated_at = ?
     WHERE (id = ? OR content_id = ?) ${tenantSql}
   `, !isPxAdmin(user)
-    ? [nextStatus, action === 'approve' ? null : existing.current_node_id, action === 'approve' ? '5/5' : existing.progress_text, action === 'approve' ? '已完成' : '修改中', action === 'approve' ? now : null, now, id, id, user!.tenantId]
-    : [nextStatus, action === 'approve' ? null : existing.current_node_id, action === 'approve' ? '5/5' : existing.progress_text, action === 'approve' ? '已完成' : '修改中', action === 'approve' ? now : null, now, id, id]);
+    ? [nextStatus, action === 'approve' ? null : existing.current_node_id, action === 'approve' ? '3/3' : existing.progress_text, action === 'approve' ? '已完成' : '修改中', action === 'approve' ? now : null, now, id, id, user!.tenantId]
+    : [nextStatus, action === 'approve' ? null : existing.current_node_id, action === 'approve' ? '3/3' : existing.progress_text, action === 'approve' ? '已完成' : '修改中', action === 'approve' ? now : null, now, id, id]);
 
   await dbRun(`
     INSERT INTO approval_task_actions (task_id, node_id, action, actor_user_id, actor_name, reject_reason, comment, created_at)

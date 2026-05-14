@@ -23,6 +23,7 @@ export interface DiseaseMetric {
 export interface BehaviorSummary {
   pushCount?: number;
   readUsers?: number;
+  contentCount?: number;
   totalReads: number;
   totalInteractions: number;
   avgReadDuration: number;

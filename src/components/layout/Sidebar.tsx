@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, FileText, Eye, Send, CheckCircle, Settings, ChevronDown, Building2, UserCog, GitBranch, FolderKanban, WalletCards, FileSignature, ReceiptText, FileCheck2 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { PAGE_DESCRIPTIONS } from '@/utils/constants';
 import { useLogger } from '@/hooks/useLogger';
 import { useTenantStore } from '@/stores/useTenantStore';
 import { showToast } from '@/components/ui/Toast';
@@ -94,7 +93,20 @@ export function Sidebar(): JSX.Element {
   };
 
   return (
-    <aside className="w-sidebar h-[calc(100vh-theme(spacing.header))] bg-bg-secondary/95 border-r border-border flex flex-col overflow-y-auto backdrop-blur">
+    <aside className="w-sidebar h-screen bg-bg-secondary/95 border-r border-border flex shrink-0 flex-col overflow-y-auto backdrop-blur">
+      <button
+        onClick={() => handleNavClick('/', '总览')}
+        className="flex items-center gap-3 border-b border-border px-5 py-4 text-left transition-colors hover:bg-bg-tertiary/60"
+      >
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-blue text-sm font-bold text-bg-primary shadow-[0_0_24px_rgba(8,212,232,0.26)]">
+          Px
+        </div>
+        <div>
+          <div className="font-mono text-sm font-bold text-text-primary">Px Lite</div>
+          <div className="text-xs text-text-muted">极简版 · 行为洞察</div>
+        </div>
+      </button>
+
       <div className="px-4 py-4">
         <h3 className="text-[10px] uppercase tracking-widest text-text-muted font-medium mb-3">主菜单</h3>
         <nav className="flex flex-col gap-1">
@@ -206,7 +218,7 @@ export function Sidebar(): JSX.Element {
         <h3 className="text-[10px] uppercase tracking-widest text-text-muted font-medium mb-2">说明</h3>
         <p className="text-xs text-text-muted leading-relaxed">
           {isOps
-            ? PAGE_DESCRIPTIONS[activeKey] || '运营视图 Ops View。合规枢纽：管理内容生产、触达配置与聚合行为指标'
+            ? '当前视图\n运营视图 Ops View。 合规枢纽 · 唯一可见患者明文 · 全部生产 / 触达能力'
             : '药企视图 Pharma View。仅可见脱敏聚合数据 · k-匿名 · 不可下钻到个体'}
         </p>
       </div>

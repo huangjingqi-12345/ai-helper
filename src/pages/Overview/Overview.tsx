@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { KpiCards } from './KpiCards';
 import { ProjectTable } from './ProjectTable';
@@ -30,23 +31,25 @@ export function Overview(): JSX.Element {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="space-y-3">
+      <Card className="flex items-center justify-between gap-6 bg-gradient-to-r from-bg-card to-[#0B1C29] p-6">
+        <div className="space-y-3">
           <Badge color="blue" className="text-[10px] uppercase tracking-wider">Overview</Badge>
           <h1 className="text-2xl font-bold text-text-primary">患者教育内容运营总览</h1>
           <p className="text-sm text-text-secondary max-w-2xl">
           {isOps
-            ? '按项目维度展示各项目下的内容触达、阅读与互动效果；不含 AE 管理、归因模块或临床决策支持。'
+            ? '按项目维度展示各项目下的内容触达、阅读与互动效果。当前为极简版，不含 AE 管理与归因模块。'
             : '药企视图：按项目维度展示该租户名下各项目的脱敏聚合数据（k-匿名），不可下钻。'}
           </p>
         <div className="flex items-center gap-3 text-xs text-text-muted">
           <span>数据更新：{stats?.lastUpdated ? formatDate(stats.lastUpdated) : '—'}</span>
-          <span>•</span>
+          <span>·</span>
           <Badge color="blue" className="text-[10px]">运营视图</Badge>
         </div>
+        </div>
         <Button
-          variant="ghost"
+          variant="primary"
           size="sm"
-          className="text-accent-blue"
+          className="shrink-0"
           onClick={() => {
             log.ui('Enter Content Workshop button clicked');
             navigate('/content');
@@ -54,7 +57,7 @@ export function Overview(): JSX.Element {
         >
           {isOps ? '进入内容工坊' : '提交选题需求'} <ArrowRight size={14} />
         </Button>
-      </div>
+      </Card>
 
       {/* KPI Cards */}
       <KpiCards stats={stats} loading={loading} />

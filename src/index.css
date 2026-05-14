@@ -12,14 +12,11 @@
   body {
     min-height: 100vh;
     overflow-x: hidden;
-    background:
-      radial-gradient(circle at 15% -10%, rgba(114, 13, 215, 0.26), transparent 36rem),
-      radial-gradient(circle at 85% 0%, rgba(119, 115, 253, 0.18), transparent 32rem),
-      #0b0825;
+    background: #070b12;
   }
 
   ::selection {
-    background: rgba(119, 115, 253, 0.35);
+    background: rgba(8, 212, 232, 0.28);
     color: #f8f7ff;
   }
 
@@ -29,16 +26,16 @@
   }
 
   ::-webkit-scrollbar-track {
-    background: #0b0825;
+    background: #070b12;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #43338f;
+    background: #304150;
     border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #7773fd;
+    background: #08d4e8;
   }
 }
 

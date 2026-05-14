@@ -263,8 +263,9 @@ async function seedDistributionProjects(now: string): Promise<void> {
         current_node = excluded.current_node,
         content_count = excluded.content_count,
         published_count = excluded.published_count,
+        created_at = excluded.created_at,
         updated_at = excluded.updated_at
-    `, [project.id, project.tenantId, project.title, project.priority, project.status, project.brand, project.disease, project.owner, project.expectedDate, project.totalPieces, project.cadence, project.patientCap, json(project.topics), project.formats, project.approvalFlow, project.progress, project.currentNode, project.contentCount, project.publishedCount, now, now]);
+    `, [project.id, project.tenantId, project.title, project.priority, project.status, project.brand, project.disease, project.owner, project.expectedDate, project.totalPieces, project.cadence, project.patientCap, json(project.topics), project.formats, project.approvalFlow, project.progress, project.currentNode, project.contentCount, project.publishedCount, project.createdAt ?? now, project.updatedAt ?? now]);
   }
 
   const activeProjectIds = distributionProjects.map((project) => project.id);
@@ -342,10 +343,10 @@ async function seedApproval(now: string): Promise<void> {
   await replaceRowsForSqlite(['approval_task_actions', 'approval_tasks', 'approval_flow_nodes', 'approval_flows', 'approval_items']);
 
   const flows = [
-    ['flow-1', 'T-PX', 'PX 默认审批流', '医生制作 → 编辑审核 → AI 预审 → Px 审核 → 药企审核 → 发布', 'active', 'submitter', '2026-04-20T00:00:00Z', now],
-    ['flow-2', 'T-PX', 'PX 快速流（品牌通识类）', '品牌通识内容快速审核链路', 'inactive', 'previous', '2026-03-15T00:00:00Z', now],
-    ['flow-nv-standard', 'T-NV', '诺华 · 标准审批流', '诺华医学与市场审核链路', 'active', 'submitter', '2026-04-18T00:00:00Z', now],
-    ['flow-az-standard', 'T-AZ', '阿斯利康 · 标准审批流', '阿斯利康医学审核链路', 'active', 'submitter', '2026-04-18T00:00:00Z', now],
+    ['flow-1', 'T-PX', 'PX 默认审批流', '编辑审核 → Px 审核 → 药企审核', 'active', 'submitter', '2026-04-20T00:00:00Z', '2026-04-20T00:00:00Z'],
+    ['flow-2', 'T-PX', 'PX 快速流（品牌通识类）', '编辑审核 → Px 审核 → 药企审核', 'inactive', 'previous', '2026-03-15T00:00:00Z', '2026-03-15T00:00:00Z'],
+    ['flow-nv-standard', 'T-NV', '诺华 · 标准审批流', '编辑审核 → Px 审核 → 药企审核', 'active', 'submitter', '2026-04-18T00:00:00Z', '2026-04-18T00:00:00Z'],
+    ['flow-az-standard', 'T-AZ', '阿斯利康 · 标准审批流', '编辑审核 → 药企审核', 'active', 'submitter', '2026-04-18T00:00:00Z', '2026-04-18T00:00:00Z'],
   ];
 
   for (const flow of flows) {
@@ -358,16 +359,15 @@ async function seedApproval(now: string): Promise<void> {
         description = excluded.description,
         status = excluded.status,
         return_policy = excluded.return_policy,
+        created_at = excluded.created_at,
         updated_at = excluded.updated_at
     `, flow);
   }
 
   const flowNodes: Array<[string, string, number, string, string, number, string]> = [
-    ['flow-1-node-1', 'flow-1', 1, '编辑审核', 'dx_editor', 24, 'remind_only'],
-    ['flow-1-node-2', 'flow-1', 2, 'AI 预审', 'system_precheck', 2, 'auto_pass'],
-    ['flow-1-node-3', 'flow-1', 3, 'Px 审核', 'px_ops', 24, 'remind_only'],
-    ['flow-1-node-4', 'flow-1', 4, '药企审核', 'pharma_med', 48, 'escalate'],
-    ['flow-1-node-5', 'flow-1', 5, '药企市场部审核', 'pharma_mkt', 48, 'remind_only'],
+    ['flow-1-node-1', 'flow-1', 1, '编辑审核', 'dx_editor', 8, 'remind_only'],
+    ['flow-1-node-2', 'flow-1', 2, 'Px 审核', 'px_ops', 8, 'remind_only'],
+    ['flow-1-node-3', 'flow-1', 3, '药企审核', 'pharma_med', 8, 'escalate'],
     ['flow-2-node-1', 'flow-2', 1, '编辑审核', 'dx_editor', 12, 'remind_only'],
     ['flow-2-node-2', 'flow-2', 2, 'Px 审核', 'px_ops', 24, 'auto_pass'],
     ['flow-2-node-3', 'flow-2', 3, '药企审核', 'pharma_med', 24, 'remind_only'],
@@ -377,6 +377,14 @@ async function seedApproval(now: string): Promise<void> {
     ['flow-az-node-1', 'flow-az-standard', 1, '编辑审核', 'dx_editor', 24, 'remind_only'],
     ['flow-az-node-2', 'flow-az-standard', 2, '药企审核', 'pharma_med', 48, 'escalate'],
   ];
+
+  const activeNodeIds = flowNodes.map((node) => node[0]);
+  if (activeNodeIds.length > 0) {
+    await run(
+      `DELETE FROM approval_flow_nodes WHERE id LIKE 'flow-%-node-%' AND id NOT IN (${activeNodeIds.map(() => '?').join(', ')})`,
+      activeNodeIds,
+    );
+  }
 
   for (const node of flowNodes) {
     await run(`
@@ -394,20 +402,20 @@ async function seedApproval(now: string): Promise<void> {
   }
 
   const taskSeeds = [
-    ['task-CNT-101', 'CNT-101', 'proj-hf', 'flow-1', 'flow-1-node-3', 'pending', '2/5', '460h / 24h'],
-    ['task-CNT-102', 'CNT-102', 'proj-hf', 'flow-1', 'flow-1-node-1', 'pending', '0/5', '484h / 24h'],
-    ['task-CNT-104', 'CNT-104', 'proj-diabetes', 'flow-1', 'flow-1-node-3', 'pending', '2/5', '436h / 24h'],
-    ['task-CNT-105', 'CNT-105', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/5', '460h / 24h'],
-    ['task-CNT-106', 'CNT-106', 'proj-lung', 'flow-1', 'flow-1-node-1', 'pending', '0/5', '484h / 24h'],
-    ['task-CNT-107', 'CNT-107', 'proj-ra', 'flow-1', 'flow-1-node-1', 'pending', '0/5', '412h / 24h'],
-    ['task-CNT-103', 'CNT-103', 'proj-diabetes', 'flow-1', null, 'approved', '5/5', '已完成'],
-    ['task-CNT-108', 'CNT-108', 'proj-ra', 'flow-1', null, 'approved', '5/5', '已完成'],
-    ['task-CNT-110', 'CNT-110', 'proj-hypertension', 'flow-1', null, 'approved', '5/5', '已完成'],
-    ['task-CNT-111', 'CNT-111', 'proj-copd', 'flow-1', null, 'approved', '5/5', '已完成'],
-    ['task-CNT-109', 'CNT-109', 'proj-mm', 'flow-1', 'flow-1-node-4', 'rejected', '3/5', '修改中'],
-    ['task-CNT-112', 'CNT-112', 'proj-breast', 'flow-1', 'flow-1-node-5', 'rejected', '4/5', '修改中'],
-    ['task-CNT-113', 'CNT-113', 'proj-hf', 'flow-1', null, 'approved', '5/5', '已完成'],
-    ['task-CNT-114', 'CNT-114', 'proj-diabetes', 'flow-1', null, 'approved', '5/5', '已完成'],
+    ['task-CNT-101', 'CNT-101', 'proj-hf', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-102', 'CNT-102', 'proj-hf', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '484h / 8h'],
+    ['task-CNT-104', 'CNT-104', 'proj-diabetes', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-105', 'CNT-105', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '460h / 8h'],
+    ['task-CNT-106', 'CNT-106', 'proj-lung', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '484h / 8h'],
+    ['task-CNT-107', 'CNT-107', 'proj-ra', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '412h / 8h'],
+    ['task-CNT-103', 'CNT-103', 'proj-diabetes', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-108', 'CNT-108', 'proj-ra', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-110', 'CNT-110', 'proj-hypertension', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-111', 'CNT-111', 'proj-copd', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-109', 'CNT-109', 'proj-mm', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-112', 'CNT-112', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-113', 'CNT-113', 'proj-hf', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-114', 'CNT-114', 'proj-diabetes', 'flow-1', null, 'cancelled', '—', '—'],
   ];
 
   for (const task of taskSeeds) {
@@ -433,6 +441,7 @@ async function seedApproval(now: string): Promise<void> {
   for (const task of taskSeeds) {
     const content = contentList.find((item) => item.id === task[1]);
     if (!content) continue;
+    const itemStatus = task[5] === 'cancelled' ? 'approved' : task[5];
     await run(`
       INSERT INTO approval_items (id, content_id, content_title, submitted_by, submitted_at, status, reviewed_by, reviewed_at, comments, project_name)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -446,7 +455,7 @@ async function seedApproval(now: string): Promise<void> {
         reviewed_at = excluded.reviewed_at,
         comments = excluded.comments,
         project_name = excluded.project_name
-    `, [`apr-${content.id}`, content.id, content.title, content.author, content.createdAt, task[5], task[5] === 'pending' ? null : '管理员', task[5] === 'pending' ? null : now, task[5] === 'rejected' ? content.rejectionNote ?? '请修改后重新提交' : task[5] === 'approved' ? '内容准确，可以发布' : null, content.projectName ?? content.tags[0] ?? '患教项目']);
+    `, [`apr-${content.id}`, content.id, content.title, content.author, content.createdAt, itemStatus, itemStatus === 'pending' ? null : '管理员', itemStatus === 'pending' ? null : now, itemStatus === 'rejected' ? content.rejectionNote ?? '请修改后重新提交' : itemStatus === 'approved' ? '内容准确，可以发布' : null, content.projectName ?? content.tags[0] ?? '患教项目']);
   }
 }
 

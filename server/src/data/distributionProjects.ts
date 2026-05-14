@@ -21,6 +21,8 @@ export interface DistributionProjectSeed {
   currentNode: string;
   contentCount: number;
   publishedCount: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 const topicSets = {
@@ -50,10 +52,11 @@ export const distributionProjects: DistributionProjectSeed[] = [
     topics: topicSets.hfStandard,
     formats: '长图文 8 · 海报 3 · 手册 1',
     approvalFlow: '诺华 · 标准审批流',
-    progress: 25,
-    currentNode: '编辑审核',
+    progress: 50,
+    currentNode: 'Px 审核',
     contentCount: 2,
     publishedCount: 0,
+    createdAt: '2026-05-07T09:42:00Z',
   },
   {
     id: 'PRJ-1001',
@@ -75,6 +78,7 @@ export const distributionProjects: DistributionProjectSeed[] = [
     currentNode: '未提交',
     contentCount: 0,
     publishedCount: 0,
+    createdAt: '2026-05-07T14:10:00Z',
   },
   {
     id: 'PRJ-1002',
@@ -93,9 +97,10 @@ export const distributionProjects: DistributionProjectSeed[] = [
     formats: '海报 6',
     approvalFlow: 'PX 默认审批流',
     progress: 0,
-    currentNode: '医生制作',
+    currentNode: '编辑审核',
     contentCount: 1,
     publishedCount: 0,
+    createdAt: '2026-05-06T17:05:00Z',
   },
   {
     id: 'PRJ-1003',
@@ -117,6 +122,7 @@ export const distributionProjects: DistributionProjectSeed[] = [
     currentNode: '未提交',
     contentCount: 0,
     publishedCount: 0,
+    createdAt: '2026-05-04T10:11:00Z',
   },
   {
     id: 'PRJ-1004',
@@ -134,10 +140,11 @@ export const distributionProjects: DistributionProjectSeed[] = [
     topics: topicSets.raMtx,
     formats: '海报 3 · 手册 2',
     approvalFlow: 'PX 默认审批流',
-    progress: 50,
-    currentNode: '编辑修改',
+    progress: 100,
+    currentNode: '药企审核',
     contentCount: 1,
     publishedCount: 0,
+    createdAt: '2026-05-03T16:21:00Z',
   },
   {
     id: 'PRJ-1005',
@@ -155,10 +162,11 @@ export const distributionProjects: DistributionProjectSeed[] = [
     topics: topicSets.insulin,
     formats: '海报 3',
     approvalFlow: 'PX 默认审批流',
-    progress: 75,
-    currentNode: 'Px 审核',
+    progress: 100,
+    currentNode: '药企审核',
     contentCount: 1,
     publishedCount: 0,
+    createdAt: '2026-05-02T09:58:00Z',
   },
   {
     id: 'PRJ-1006',
@@ -180,6 +188,7 @@ export const distributionProjects: DistributionProjectSeed[] = [
     currentNode: '未提交',
     contentCount: 0,
     publishedCount: 0,
+    createdAt: '2026-05-01T13:20:00Z',
   },
 ];
 

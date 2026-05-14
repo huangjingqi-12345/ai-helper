@@ -1,23 +1,30 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, MousePointerClick, Send, Users, BookOpen } from 'lucide-react';
+import { MousePointerClick, Send, Users, BookOpen } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Spinner } from '@/components/ui/Spinner';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { showToast } from '@/components/ui/Toast';
 import { useBehaviorStore } from '@/stores/useBehaviorStore';
 import { useLogger } from '@/hooks/useLogger';
 import { formatNumber } from '@/utils/formatters';
-import { createExportJob } from '@/api/endpoints/exports';
+
+const diseaseChooserOrder = [
+  '慢性心力衰竭',
+  '2型糖尿病',
+  '乳腺癌',
+  '肺癌(NSCLC)',
+  '类风湿关节炎',
+  '多发性骨髓瘤',
+  '高血压',
+  '慢阻肺(COPD)',
+];
 
 export function BehaviorInsights(): JSX.Element {
   const { summary, loading, error, fetchSummary } = useBehaviorStore();
   const { log } = useLogger('BehaviorInsights');
   const [sortBy, setSortBy] = useState<'reads' | 'interactions'>('reads');
-  const [exportScope, setExportScope] = useState('all');
-  const [exportRange, setExportRange] = useState('14');
   const [projectChooserOpen, setProjectChooserOpen] = useState(false);
   const [selectedDisease, setSelectedDisease] = useState<string | null>(null);
 
@@ -31,6 +38,12 @@ export function BehaviorInsights(): JSX.Element {
     rows.sort((a, b) => sortBy === 'reads' ? b.reads - a.reads : b.interactions - a.interactions);
     return rows;
   }, [selectedDisease, sortBy, summary?.topContent]);
+
+  const diseaseOptions = useMemo(() => [...(summary?.byDisease ?? [])].sort((a, b) => {
+    const aIndex = diseaseChooserOrder.indexOf(a.disease);
+    const bIndex = diseaseChooserOrder.indexOf(b.disease);
+    return (aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex) - (bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex);
+  }), [summary?.byDisease]);
 
   if (error && !loading) return <ErrorState message={error} onRetry={fetchSummary} />;
   if (loading || !summary) return <div className="flex justify-center py-24"><Spinner size="lg" /></div>;
@@ -70,7 +83,7 @@ export function BehaviorInsights(): JSX.Element {
       </div>
       {projectChooserOpen && (
         <div className="flex flex-wrap gap-2 rounded-card border border-border bg-bg-card p-4">
-          {summary.byDisease.map((project) => (
+          {diseaseOptions.map((project) => (
             <Button
               key={project.disease}
               size="sm"
@@ -95,7 +108,7 @@ export function BehaviorInsights(): JSX.Element {
 
       <Card>
         <div className="mb-4 flex items-center justify-between">
-          <div><h2 className="text-base font-semibold text-text-primary">内容 TopN</h2><p className="mt-1 text-xs text-text-muted">按所选维度排序 · 当前命中 {sortedContent.length} 条内容</p></div>
+          <div><h2 className="text-base font-semibold text-text-primary">内容 TopN</h2><p className="mt-1 text-xs text-text-muted">按所选维度排序 · 当前命中 {selectedDisease ? sortedContent.length : (summary.contentCount ?? sortedContent.length)} 条内容</p></div>
           <div className="flex gap-2">
             <Button size="sm" variant={sortBy === 'reads' ? 'primary' : 'secondary'} onClick={() => setSortBy('reads')}>按阅读次数</Button>
             <Button size="sm" variant={sortBy === 'interactions' ? 'primary' : 'secondary'} onClick={() => setSortBy('interactions')}>按互动数</Button>
@@ -112,54 +125,6 @@ export function BehaviorInsights(): JSX.Element {
               <Metric label="互动数" value={item.interactions} />
             </Link>
           ))}
-        </div>
-      </Card>
-
-      <Card>
-        <div className="grid grid-cols-[1fr_220px_220px_auto] gap-4">
-          <div>
-            <h2 className="text-base font-semibold text-text-primary">行为数据导出</h2>
-            <p className="mt-1 text-xs text-text-muted">仅导出项目 / 内容 / 日期维度的聚合行为数据（推送 / 阅读 / 互动：赞·踩·藏）。不包含任何临床与身份字段。</p>
-            <p className="mt-3 text-xs text-text-muted">患者姓名、手机、身份证、就诊识别等均不采集、不存储、不导出；小样本单元会按 k-匿名阈值阻断。合规记录会追加一条“导出”日志。</p>
-            <p className="mt-2 text-xs text-accent-blue">预估记录量：~ 235 条。</p>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-text-muted">导出范围</label>
-            <div className="grid grid-cols-2 gap-2">
-              {([
-                ['all', '全部行为'],
-                ['push', '仅推送'],
-                ['read', '仅阅读'],
-                ['interaction', '仅互动'],
-              ] as const).map(([value, label]) => (
-                <Button key={value} size="sm" variant={exportScope === value ? 'primary' : 'secondary'} onClick={() => setExportScope(value)}>{label}</Button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-text-muted">时间范围</label>
-            <div className="flex flex-wrap gap-2">
-              {([
-                ['7', '近 7 天'],
-                ['14', '近 14 天'],
-                ['30', '近 30 天'],
-                ['90', '近 90 天'],
-              ] as const).map(([value, label]) => (
-                <Button key={value} size="sm" variant={exportRange === value ? 'primary' : 'secondary'} onClick={() => setExportRange(value)}>{label}</Button>
-              ))}
-            </div>
-            <div className="mt-1 text-[10px] text-text-muted">可选近 7 / 14 / 30 / 90 天；默认近 14 天。</div>
-          </div>
-          <div className="flex items-end"><Button onClick={async () => {
-            log.action('Export behavior CSV', { exportScope, exportRange });
-            try {
-              const res = await createExportJob({ scope: exportScope, rangeDays: Number(exportRange), diseaseId: selectedDisease || undefined });
-              showToast(`导出任务已创建：${res.data.id}`, 'success');
-            } catch (error) {
-              log.error('Export behavior CSV failed', error);
-              showToast('导出被合规规则阻止或服务不可用', 'error');
-            }
-          }}><Download className="w-4 h-4" />导出 CSV</Button></div>
         </div>
       </Card>
     </div>

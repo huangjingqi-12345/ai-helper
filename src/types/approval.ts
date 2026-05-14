@@ -1,4 +1,4 @@
-export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
 export interface ApprovalItem {
   id: string;

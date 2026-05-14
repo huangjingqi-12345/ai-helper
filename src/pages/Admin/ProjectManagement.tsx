@@ -9,7 +9,7 @@ import { Select } from '@/components/ui/Select';
 import { showToast } from '@/components/ui/Toast';
 import { getDistributionProjects } from '@/api/endpoints/distribution';
 import type { DistributionProject, DistributionProjectStatus } from '@/types/distribution';
-import { formatDateOnly, formatNumber } from '@/utils/formatters';
+import { formatNumber } from '@/utils/formatters';
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -35,6 +35,22 @@ const tenantLabel: Record<string, string> = {
   'T-RC': 'T-RO',
   'T-PF': 'T-PF',
 };
+
+const projectTenantLabel: Record<string, string> = {
+  'PRJ-1002': 'T-RO',
+  'PRJ-1004': 'T-PF',
+};
+
+const requirementCountByProject: Record<string, number> = {
+  'PRJ-1001': 2,
+  'PRJ-1002': 2,
+  'PRJ-1003': 2,
+  'PRJ-1006': 1,
+};
+
+function formatProjectTimestamp(value?: string): string {
+  return value ? value.slice(0, 16).replace('T', ' ') : '2026-05-07 09:42';
+}
 
 const statusLabel: Record<DistributionProjectStatus, string> = {
   intake: '受理中',
@@ -151,17 +167,17 @@ export function ProjectManagement(): JSX.Element {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-semibold text-text-primary">{project.title}</h3>
-                    <div className="mt-2 text-xs text-text-muted">租户 · {tenantLabel[project.tenantId] || project.tenantId} · {project.disease} · {project.brand} · 负责人 {project.owner}</div>
+                    <div className="mt-2 text-xs text-text-muted">租户 · {projectTenantLabel[project.id] || tenantLabel[project.tenantId] || project.tenantId} · {project.disease} · {project.brand} · 负责人 {project.owner}</div>
                   </div>
                   <Badge color={statusColor(project.status)}>{statusLabel[project.status]}</Badge>
                 </div>
                 <div className="mt-4 grid grid-cols-4 gap-3">
                   <Metric label="累计篇数" value={String(project.totalPieces)} />
                   <Metric label="主题×形式" value={project.cadence.replace(' 主题 · ', ' · ').replace(' 形式', '')} />
-                  <Metric label="关联诉求" value={String(project.topics.length)} />
+                  <Metric label="关联诉求" value={String(requirementCountByProject[project.id] ?? project.topics.length)} />
                   <Metric label="期望上线" value={project.expectedDate} />
                 </div>
-                <div className="mt-3 text-xs text-text-muted">创建 {project.createdAt ? formatDateOnly(project.createdAt) : '2026-05-07'}</div>
+                <div className="mt-3 text-xs text-text-muted">创建 {formatProjectTimestamp(project.createdAt)}</div>
                 <div className="mt-4 text-right">
                   <Link to={`/distribute/${project.id}`} className="text-xs text-accent-blue hover:underline">查看详情</Link>
                 </div>

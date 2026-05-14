@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Search, Bell, ChevronDown, Settings, LogOut, User, Shield } from 'lucide-react';
+import { Search, Bell, ChevronDown, Settings, LogOut, User, Building2 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { showToast } from '@/components/ui/Toast';
 import { useTenantStore } from '@/stores/useTenantStore';
@@ -49,17 +49,9 @@ export function Header(): JSX.Element {
   return (
     <header className="h-header bg-bg-secondary/95 border-b border-border flex items-center justify-between px-6 shrink-0 backdrop-blur">
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-md bg-gradient-to-br from-px-purple to-px-blue flex items-center justify-center shadow-[0_0_18px_rgba(114,13,215,0.38)]">
-            <span className="text-white font-mono text-xs font-bold">Px</span>
-          </div>
-          <span className="font-mono font-bold text-text-primary text-sm">Px Lite</span>
-          <span className="text-xs text-text-muted">极简版 · 行为洞察</span>
-        </div>
-        <div className="text-text-muted text-xs">|</div>
         <div className="text-xs text-text-secondary">
-          <span className="text-text-muted">Px 信欣健康</span>
-          <span className="text-text-muted mx-1">/</span>
+          <span className="text-text-primary">Px Lite</span>
+          <span className="text-text-muted"> / </span>
           <span className="text-text-primary">{pageLabel}</span>
         </div>
       </div>
@@ -72,7 +64,7 @@ export function Header(): JSX.Element {
             onClick={() => setPxOpsOpen(!pxOpsOpen)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg-tertiary text-text-secondary text-xs hover:text-text-primary transition-colors"
           >
-            <Shield size={14} className="text-accent-blue" />
+            <Building2 size={14} className="text-accent-blue" />
             {currentTenant.shortName} <ChevronDown size={12} className={`transition-transform ${pxOpsOpen ? 'rotate-180' : ''}`} />
           </button>
           {pxOpsOpen && (
