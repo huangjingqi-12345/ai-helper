@@ -94,3 +94,81 @@ export interface DoctorCandidate {
   specialtyList?: string[];
   tags: string[];
 }
+
+export type DistributionRequestStatus = 'pending' | 'accepted' | 'rejected' | 'converted';
+export type RequestDistributionAssignmentMode = 'mixed' | 'whitelist' | 'strategy';
+export type RequestDistributionMatrix = Record<string, Partial<Record<'article' | 'poster' | 'checklist' | 'longtext' | 'manual', number>>>;
+
+export interface DistributionRequestProject {
+  id: string;
+  tenantId?: string;
+  name?: string;
+  title?: string;
+  disease?: string;
+  brand?: string;
+  owner?: string;
+  patientCap?: number;
+  contentCount?: number;
+  publishedCount?: number;
+}
+
+export interface DistributionRequestRecord {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  contentId?: string;
+  requestName: string;
+  title: string;
+  priority: DistributionProjectPriority;
+  expectedDate?: string;
+  themeFormatMatrix: RequestDistributionMatrix;
+  totalCount: number;
+  note?: string;
+  status: DistributionRequestStatus;
+  submittedBy?: string;
+  submittedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  project?: DistributionRequestProject;
+}
+
+export interface RequestDistributionConfig {
+  requestId: string;
+  assignmentMode: RequestDistributionAssignmentMode;
+  whitelistEnabled: boolean;
+  strategyEnabled: boolean;
+  departmentFilters: string[];
+  titleFilters: string[];
+  regionFilters: string[];
+  tagFilters: string[];
+  whitelistDoctorIds: string[];
+  whitelistDoctorQuota: Record<string, number>;
+  patientChannels: string[];
+  patientRegions: string[];
+  patientTags: string[];
+  patientGrayPercent: number;
+  patientCap: number;
+  note?: string;
+  updatedBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface RequestDistributionBatch {
+  id: string;
+  requestId: string;
+  batchMatrix: RequestDistributionMatrix;
+  totalCount: number;
+  whitelistTotal: number;
+  strategyTotal: number;
+  operator?: string;
+  submittedAt: string;
+  createdAt: string;
+}
+
+export interface DistributionRequestWorkbench {
+  request: DistributionRequestRecord;
+  config: RequestDistributionConfig;
+  doctors: DoctorCandidate[];
+  batches: RequestDistributionBatch[];
+}

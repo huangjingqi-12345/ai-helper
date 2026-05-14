@@ -1,6 +1,6 @@
 export const APP_TITLE = import.meta.env.VITE_APP_TITLE || 'Px Lite · 药企患教内容运营与行为洞察平台';
 export const APP_VERSION = import.meta.env.VITE_APP_VERSION || 'V0.1 · DEMO';
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 export const ENABLE_DEV_PANEL = import.meta.env.VITE_ENABLE_DEV_PANEL === 'true';
 
 export const NAV_ITEMS = [

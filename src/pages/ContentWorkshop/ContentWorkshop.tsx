@@ -1,33 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Search, Filter, Sparkles } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
-import { Table } from '@/components/ui/Table';
-import { Select } from '@/components/ui/Select';
+import type { ReactNode } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { ChevronRight, Search, Send } from 'lucide-react';
+import { clsx } from 'clsx';
+import { PageHeader } from '@/components/PageHeader';
 import { Spinner } from '@/components/ui/Spinner';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { PipelineCards } from './PipelineCards';
 import { SubmitRequestModal } from './SubmitRequestModal';
 import { useContentStore } from '@/stores/useContentStore';
 import { useTenantStore } from '@/stores/useTenantStore';
 import { useLogger } from '@/hooks/useLogger';
-import { CONTENT_STATUS_MAP, PIPELINE_STAGE_MAP, CONTENT_TYPE_LABELS } from '@/utils/constants';
+import { CONTENT_TYPE_LABELS, PIPELINE_STAGE_MAP } from '@/utils/constants';
 import { formatDateOnly, formatNumber } from '@/utils/formatters';
 import type { Content, ContentStatus, PipelineStage } from '@/types';
 
-const STATUS_OPTIONS = [
-  { value: '', label: '全部状态' },
+const STATUS_OPTIONS: Array<{ value: 'all' | ContentStatus; label: string }> = [
+  { value: 'all', label: '全部状态' },
   { value: 'draft', label: '草稿' },
   { value: 'published', label: '已发布' },
+  { value: 'offline', label: '已下架' },
   { value: 'archived', label: '已下架' },
-];
-
-const PROJECT_OPTIONS = [
-  { value: '', label: '全部项目' },
-  { value: 'proj-breast', label: '乳腺癌' },
 ];
 
 const PIPELINE_STAGE_OPTIONS: PipelineStage[] = [
@@ -47,15 +39,65 @@ const CONTENT_PROJECT_BRIEFS: Record<string, string> = {
   'CNT-105': '项目 · 他莫昔芬 · 内分泌依从性 · 诉求 · 5 年辅助服药遗忘补救 5 问',
 };
 
+const statusMeta: Record<string, { label: string; cls: string; dot: string }> = {
+  draft: {
+    label: '草稿',
+    cls: 'border-[oklch(40%_.04_70_/.5)] bg-[oklch(28%_.06_70_/.35)] text-[oklch(82%_.13_75)]',
+    dot: 'bg-[oklch(78%_.15_70)]',
+  },
+  published: {
+    label: '已发布',
+    cls: 'border-[oklch(40%_.06_165_/.5)] bg-[oklch(26%_.06_165_/.35)] text-[oklch(82%_.15_165)]',
+    dot: 'bg-[oklch(72%_.17_165)]',
+  },
+  offline: {
+    label: '已下架',
+    cls: 'border-border bg-secondary text-muted-foreground',
+    dot: 'bg-muted-foreground',
+  },
+  archived: {
+    label: '已下架',
+    cls: 'border-border bg-secondary text-muted-foreground',
+    dot: 'bg-muted-foreground',
+  },
+  under_review: {
+    label: '审核中',
+    cls: 'border-[oklch(70%_.15_200_/.3)] bg-[oklch(70%_.15_200_/.1)] text-primary',
+    dot: 'bg-primary',
+  },
+  approved: {
+    label: '已通过',
+    cls: 'border-sky-500/30 bg-sky-500/10 text-sky-200',
+    dot: 'bg-sky-300',
+  },
+};
+
+const flowStatusCls: Record<PipelineStage, string> = {
+  requirement_submitted: 'text-[oklch(78%_.15_70)]',
+  doctor_distributing: 'text-[oklch(82%_.16_300)]',
+  doctor_creating: 'text-[oklch(72%_.17_195)]',
+  external_review: 'text-[oklch(80%_.15_260)]',
+  internal_review: 'text-[oklch(82%_.16_195)]',
+  published: 'text-[oklch(82%_.15_165)]',
+};
+
+const priorityCls: Record<string, string> = {
+  P0: 'border-[oklch(45%_.18_30_/.5)] bg-[oklch(28%_.12_30_/.4)] text-[oklch(82%_.18_30)]',
+  P1: 'border-[oklch(45%_.14_70_/.5)] bg-[oklch(28%_.1_70_/.35)] text-[oklch(82%_.15_70)]',
+  P2: 'border-[oklch(40%_.06_200_/.5)] bg-[oklch(26%_.06_200_/.35)] text-[oklch(80%_.13_200)]',
+};
+
 export function ContentWorkshop(): JSX.Element {
-  const { items, total, loading, error, filter, setFilter, fetchList } = useContentStore();
+  const { items, total, loading, error, fetchList } = useContentStore();
   const { currentTenant, isOps } = useTenantStore();
   const { log } = useLogger('ContentWorkshop');
-  const navigate = useNavigate();
   const location = useLocation();
+  const [statusFilter, setStatusFilter] = useState<'all' | ContentStatus>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [activePipelineStage, setActivePipelineStage] = useState<PipelineStage | undefined>();
-  const [pageSize, setPageSize] = useState('20');
+  const [projectFilter, setProjectFilter] = useState('all');
+  const [flowFilter, setFlowFilter] = useState<'all' | PipelineStage>('all');
+  const [pageSize, setPageSize] = useState<20 | 50 | 100>(20);
+  const [page, setPage] = useState(1);
   const [submitRequestOpen, setSubmitRequestOpen] = useState(false);
   const isPharma = !isOps;
 
@@ -64,310 +106,343 @@ export function ContentWorkshop(): JSX.Element {
     fetchList();
   }, [fetchList, log]);
 
-  const handleStatusFilter = (value: string) => {
-    log.action('Content filter changed', { status: value });
-    setFilter({ status: (value || undefined) as ContentStatus | undefined });
-  };
-
-  const handleProjectFilter = (value: string) => {
-    log.action('Project filter changed', { projectId: value });
-    setFilter({ projectId: value || undefined });
-  };
-
-  const handlePipelineFilter = (value: string) => {
-    log.action('Pipeline filter changed', { pipelineStage: value });
-    setActivePipelineStage((value || undefined) as PipelineStage | undefined);
-    setFilter({ pipelineStage: (value || undefined) as PipelineStage | undefined });
-  };
-
-  const handlePipelineCardClick = (stage: PipelineStage | undefined) => {
-    log.action('Pipeline card clicked', { stage });
-    setActivePipelineStage(stage);
-    setFilter({ pipelineStage: stage });
-  };
-
   const domainFilter = new URLSearchParams(location.search).get('domain');
-  let filteredItems = searchTerm
-    ? items.filter((item) =>
-        item.title.includes(searchTerm) ||
-        item.author.includes(searchTerm) ||
-        item.id.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    : items;
 
-  if (domainFilter && !filter.projectId) {
-    filteredItems = filteredItems.filter((item) => item.projectName?.includes(domainFilter) || item.tags.some((tag) => tag.includes(domainFilter)));
-  }
+  const projectOptions = useMemo(() => {
+    const values = items.map((item) => item.projectName || item.tags[0]).filter(Boolean) as string[];
+    return Array.from(new Set(values)).sort();
+  }, [items]);
 
-  if (activePipelineStage) {
-    filteredItems = filteredItems.filter((item) => item.pipelineStage === activePipelineStage);
-  }
+  const flowCounts = useMemo(() => {
+    const counts = Object.fromEntries(PIPELINE_STAGE_OPTIONS.map((stage) => [stage, 0])) as Record<PipelineStage, number>;
+    items.forEach((item) => {
+      if (item.pipelineStage && counts[item.pipelineStage] !== undefined) counts[item.pipelineStage] += 1;
+    });
+    return counts;
+  }, [items]);
 
-  const pipelineOptions = useMemo(() => [
-    { value: '', label: '全部流程' },
-    ...PIPELINE_STAGE_OPTIONS.map((stage) => ({
-      value: stage,
-      label: `${PIPELINE_STAGE_MAP[stage].label}（${items.filter((item) => item.pipelineStage === stage).length}）`,
-    })),
-  ], [items]);
+  const filteredItems = useMemo(() => {
+    return items.filter((item) => {
+      if (statusFilter !== 'all' && item.status !== statusFilter) return false;
+      if (projectFilter !== 'all' && (item.projectName || item.tags[0]) !== projectFilter) return false;
+      if (domainFilter && projectFilter === 'all' && !(item.projectName?.includes(domainFilter) || item.tags.some((tag) => tag.includes(domainFilter)))) return false;
+      if (flowFilter !== 'all' && item.pipelineStage !== flowFilter) return false;
+      if (searchTerm.trim()) {
+        const query = searchTerm.trim().toLowerCase();
+        if (!item.title.toLowerCase().includes(query) && !item.id.toLowerCase().includes(query)) return false;
+      }
+      return true;
+    });
+  }, [domainFilter, flowFilter, items, projectFilter, searchTerm, statusFilter]);
 
-  if (error && !loading) {
-    return <ErrorState message={error} onRetry={fetchList} />;
-  }
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  const columns = [
-    {
-      key: 'title' as const,
-      header: '内容',
-      render: (item: Content) => (
-        <div>
-          <div className="font-medium text-text-primary">{item.title}</div>
-          {(item.projectBrief || CONTENT_PROJECT_BRIEFS[item.id]) && (
-            <div className="mt-0.5 max-w-[440px] truncate text-xs text-text-muted">
-              {item.projectBrief || CONTENT_PROJECT_BRIEFS[item.id]}
-            </div>
-          )}
-          <div className="text-xs text-text-muted mt-0.5 flex items-center gap-2">
-            <span>{item.id.toUpperCase()}</span>
-            <span>·</span>
-            <span>{formatDateOnly(item.createdAt)}</span>
-            <span>·</span>
-            <span>{item.author}</span>
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'type' as const,
-      header: '类型 / 形式',
-      render: (item: Content) => (
-        <Badge color="purple">{CONTENT_TYPE_LABELS[item.type] || item.type}</Badge>
-      ),
-    },
-    {
-      key: 'projectName' as const,
-      header: '项目',
-      render: (item: Content) => (
-        <span className="text-sm text-text-secondary">{item.projectName || '—'}</span>
-      ),
-    },
-    {
-      key: 'pipelineStage' as const,
-      header: '项目流程',
-      render: (item: Content) => {
-        const stageInfo = PIPELINE_STAGE_MAP[item.pipelineStage as keyof typeof PIPELINE_STAGE_MAP];
-        if (!stageInfo) return <span className="text-text-muted">—</span>;
-        const colorClass =
-          stageInfo.color === 'green'
-            ? 'text-accent-green'
-            : stageInfo.color === 'blue'
-              ? 'text-accent-blue'
-              : stageInfo.color === 'yellow' || stageInfo.color === 'orange'
-                ? 'text-accent-yellow'
-                : stageInfo.color === 'purple'
-                  ? 'text-accent-purple'
-                  : 'text-text-secondary';
-        return (
-          <div>
-            <div className={`text-sm font-medium ${colorClass}`}>{stageInfo.label}</div>
-            {item.priority && (
-              <span
-                className={`inline-block mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                  item.priority === 'P0'
-                    ? 'bg-accent-red/20 text-accent-red'
-                    : item.priority === 'P1'
-                      ? 'bg-accent-yellow/20 text-accent-yellow'
-                      : 'bg-bg-tertiary text-text-muted'
-                }`}
-              >
-                {item.priority}
-              </span>
-            )}
-            {item.expectedDate && (
-              <div className="text-[10px] text-text-muted mt-0.5">期望 {item.expectedDate}</div>
-            )}
-            {item.rejectionNote && (
-              <div className="text-[10px] text-accent-red mt-0.5 truncate max-w-[180px]">
-                {item.rejectionNote}
-              </div>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      key: 'status' as const,
-      header: '状态',
-      render: (item: Content) => {
-        const statusInfo = CONTENT_STATUS_MAP[item.status as keyof typeof CONTENT_STATUS_MAP] ?? {
-          label: item.status,
-          color: 'gray',
-        };
-        return (
-          <div className="flex items-center gap-1.5">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                statusInfo.color === 'green'
-                  ? 'bg-accent-green'
-                  : statusInfo.color === 'yellow'
-                    ? 'bg-accent-yellow'
-                    : statusInfo.color === 'blue'
-                      ? 'bg-accent-blue'
-                      : 'bg-text-muted'
-              }`}
-            />
-            <span className="text-sm text-text-secondary">{statusInfo.label}</span>
-          </div>
-        );
-      },
-    },
-    {
-      key: 'readCount' as const,
-      header: '阅读',
-      render: (item: Content) => (
-        <span className="text-text-secondary font-mono text-sm">
-          {item.readCount > 0 ? formatNumber(item.readCount) : '—'}
-        </span>
-      ),
-    },
-    {
-      key: 'likeCount' as const,
-      header: '互动',
-      render: (item: Content) => (
-        <span className="text-text-secondary font-mono text-sm">
-          {item.likeCount > 0 ? formatNumber(item.likeCount + (item.bookmarkCount ?? 0) + (item.dislikeCount ?? 0)) : '—'}
-        </span>
-      ),
-    },
-    {
-      key: 'id' as const,
-      header: '',
-      render: (item: Content) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            log.ui('Open content detail', { id: item.id });
-            navigate(`/content/${item.id}`);
-          }}
-        >
-          详情
-        </Button>
-      ),
-    },
-  ];
+  if (error && !loading) return <ErrorState message={error} onRetry={fetchList} />;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="space-y-3">
-        <Badge color="blue" className="text-[10px] uppercase tracking-wider">
-          Content
-        </Badge>
-        <h1 className="text-2xl font-bold text-text-primary">患教内容工坊</h1>
-        <p className="text-sm text-text-secondary max-w-3xl">
-          {isPharma
+      <PageHeader
+        eyebrow="CONTENT"
+        title="患教内容工坊"
+        subtitle={
+          isPharma
             ? '药企视图作为诉求方：可发起选题需求、设定优先级与期望上线日；不参与生产、审核与上下架，只可查看已上架内容与抽查样片。'
-            : '运营视图作为合规枢纽：承接药企需求、调度 DX 生产、完成医学审核与上下架；指标仅来自患者侧触达 / 阅读 / 互动。'}
-        </p>
-      </div>
+            : '运营视图作为合规枢纽：承接药企需求、调度 DX 生产、完成医学审核与上下架；指标仅来自患者侧触达 / 阅读 / 互动。'
+        }
+      />
 
       {isPharma && (
         <button
           type="button"
           onClick={() => setSubmitRequestOpen(true)}
-          className="group relative w-full overflow-hidden rounded-2xl border border-accent-yellow/40 bg-gradient-to-br from-accent-yellow/15 via-bg-secondary to-bg-tertiary p-5 text-left transition-colors hover:border-accent-yellow/70"
+          className="group relative w-full overflow-hidden rounded-xl border border-amber-500/40 bg-gradient-to-br from-[oklch(28%_.1_70)] via-[oklch(24%_.08_55)] to-[oklch(22%_.05_45)] p-5 text-left transition-all hover:border-amber-400/60"
         >
+          <div className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full opacity-60 blur-3xl [background:radial-gradient(circle,oklch(70%_.18_70_/.5),transparent_70%)]" />
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="grid h-11 w-11 place-items-center rounded-xl bg-accent-purple/20 text-accent-purple">
-                <Sparkles className="h-5 w-5" />
+              <div className="grid h-10 w-10 place-items-center rounded-md bg-gradient-to-br from-[oklch(60%_.18_300)] to-[oklch(58%_.16_280)] shadow-[0_0_18px_oklch(60%_.18_300_/.5)]">
+                <Send className="h-5 w-5 text-white" />
               </div>
               <div>
-                <div className="text-base font-semibold text-text-primary">发起选题需求</div>
-                <div className="mt-1 text-xs text-text-secondary">
-                  {currentTenant.shortName} 作为诉求方提交主题、优先级与期望上线日，运营接单后排期生产。
+                <div className="text-[15px] font-semibold tracking-wide">发起选题需求</div>
+                <div className="text-[12.5px] text-muted-foreground">
+                  {currentTenant.shortName} 作为诉求方提交主题、优先级与期望上线日，运营接单后排期生产
                 </div>
               </div>
             </div>
-            <ArrowRight className="h-4 w-4 text-text-muted transition-transform group-hover:translate-x-1" />
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
           </div>
         </button>
       )}
 
-      {/* Section header with count + metrics label */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h2 className="text-base font-semibold text-text-primary">内容管理</h2>
-          <Badge color="blue" className="text-[10px]">
-            {total}
-          </Badge>
+      <div className="rounded-xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+          <div className="inline-flex items-center gap-2 text-[12.5px] font-medium">
+            <span>内容管理</span>
+            <span className="rounded bg-[oklch(28%_.08_260)] px-1.5 py-0.5 text-[10.5px] text-muted-foreground">{total}</span>
+          </div>
+          <div className="hidden text-[11px] text-muted-foreground md:block">行为数据口径：推送 / 阅读 / 互动</div>
         </div>
-        <span className="text-xs text-text-muted">行为数据口径：推送 / 阅读 / 互动</span>
-      </div>
 
-      {/* Pipeline Cards */}
-      <PipelineCards items={items} activeStage={activePipelineStage} onStageClick={handlePipelineCardClick} />
+        <div className="space-y-4 p-4">
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 lg:grid-cols-6">
+            {PIPELINE_STAGE_OPTIONS.map((stage) => (
+              <StatBucket
+                key={stage}
+                label={PIPELINE_STAGE_MAP[stage].label}
+                value={flowCounts[stage]}
+                accent={stageAccent(stage)}
+                active={flowFilter === stage}
+                onClick={() => {
+                  setFlowFilter((current) => (current === stage ? 'all' : stage));
+                  setPage(1);
+                }}
+              />
+            ))}
+          </div>
 
-      {/* Filters & Table */}
-      <Card>
-        <div className="flex items-center justify-between gap-4 mb-4">
-          <div className="flex items-center gap-3 flex-1 flex-wrap">
-            <Select label="状态" options={STATUS_OPTIONS} value={filter.status || ''} onChange={handleStatusFilter} />
-            <Select label="项目" options={PROJECT_OPTIONS} value={filter.projectId || ''} onChange={handleProjectFilter} />
-            <Select label="项目流程" options={pipelineOptions} value={activePipelineStage || ''} onChange={handlePipelineFilter} />
-            {domainFilter && (
-              <Badge color="blue" className="h-8">
-                {domainFilter}
-                <button className="ml-2 text-text-primary" onClick={() => navigate('/content')}>×</button>
-              </Badge>
+          <div className="rounded-lg border border-border bg-[oklch(14%_.02_260)]">
+            <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:flex-wrap md:items-center">
+              <FilterField label="状态">
+                <select
+                  value={statusFilter}
+                  onChange={(event) => {
+                    setStatusFilter(event.target.value as 'all' | ContentStatus);
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-md border border-border bg-[oklch(18%_.02_260)] px-2 text-[12px] outline-none focus:border-[oklch(70%_.15_200_/.5)]"
+                >
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={`${option.value}-${option.label}`} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </FilterField>
+              <FilterField label="项目">
+                <select
+                  value={projectFilter}
+                  onChange={(event) => {
+                    setProjectFilter(event.target.value);
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-md border border-border bg-[oklch(18%_.02_260)] px-2 text-[12px] outline-none focus:border-[oklch(70%_.15_200_/.5)]"
+                >
+                  <option value="all">全部项目</option>
+                  {projectOptions.map((project) => (
+                    <option key={project} value={project}>{project}</option>
+                  ))}
+                </select>
+              </FilterField>
+              <FilterField label="项目流程">
+                <select
+                  value={flowFilter}
+                  onChange={(event) => {
+                    setFlowFilter(event.target.value as 'all' | PipelineStage);
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-md border border-border bg-[oklch(18%_.02_260)] px-2 text-[12px] outline-none focus:border-[oklch(70%_.15_200_/.5)]"
+                >
+                  <option value="all">全部流程</option>
+                  {PIPELINE_STAGE_OPTIONS.map((stage) => (
+                    <option key={stage} value={stage}>{PIPELINE_STAGE_MAP[stage].label}（{flowCounts[stage]}）</option>
+                  ))}
+                </select>
+              </FilterField>
+              <div className="relative w-full md:ml-auto md:w-60">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={searchTerm}
+                  onChange={(event) => {
+                    setSearchTerm(event.target.value);
+                    setPage(1);
+                  }}
+                  placeholder="搜索标题或内容编号"
+                  className="h-8 w-full rounded-md border border-border bg-[oklch(18%_.02_260)] pl-8 pr-2 text-[12.5px] outline-none placeholder:text-muted-foreground/70 focus:border-[oklch(70%_.15_200_/.5)]"
+                />
+              </div>
+              {(statusFilter !== 'all' || projectFilter !== 'all' || flowFilter !== 'all' || searchTerm || domainFilter) && (
+                <button
+                  onClick={() => {
+                    setStatusFilter('all');
+                    setProjectFilter('all');
+                    setFlowFilter('all');
+                    setSearchTerm('');
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-md border border-border bg-[oklch(24%_.02_260_/.4)] px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
+                >
+                  清除筛选
+                </button>
+              )}
+            </div>
+
+            {loading ? (
+              <div className="flex justify-center py-12"><Spinner size="lg" /></div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="border-b border-border bg-[oklch(18%_.02_260)] text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+                      <Th className="pl-4">内容</Th>
+                      <Th>类型 / 形式</Th>
+                      <Th>项目</Th>
+                      <Th>项目流程</Th>
+                      <Th>状态</Th>
+                      <Th align="right">阅读</Th>
+                      <Th align="right">互动</Th>
+                      <Th align="right" className="pr-4" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageItems.map((item) => <ContentRow key={item.id} item={item} />)}
+                    {pageItems.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">暂无匹配的内容</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             )}
-            <div className="relative flex-1 max-w-xs">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-              <input
-                type="text"
-                placeholder="搜索标题或内容编号"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-blue"
-              />
-            </div>
+
+            {filteredItems.length > 0 && (
+              <div className="flex flex-col gap-2 border-t border-border px-4 py-3 text-[12px] text-muted-foreground md:flex-row md:items-center md:justify-between">
+                <div>
+                  共 <span className="tabular text-foreground">{filteredItems.length}</span> 条 · 第{' '}
+                  <span className="tabular text-foreground">{currentPage}</span> / <span className="tabular">{totalPages}</span> 页
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="inline-flex items-center gap-1.5">
+                    <span>每页</span>
+                    <select
+                      value={pageSize}
+                      onChange={(event) => {
+                        setPageSize(Number(event.target.value) as 20 | 50 | 100);
+                        setPage(1);
+                      }}
+                      className="h-7 rounded-md border border-border bg-[oklch(18%_.02_260)] px-2 text-[12px] outline-none focus:border-[oklch(70%_.15_200_/.5)]"
+                    >
+                      <option value={20}>20 条</option>
+                      <option value={50}>50 条</option>
+                      <option value={100}>100 条</option>
+                    </select>
+                  </label>
+                  <button onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={currentPage <= 1} className="h-7 rounded-md border border-border bg-[oklch(24%_.02_260_/.4)] px-2.5 disabled:cursor-not-allowed disabled:opacity-40 hover:text-foreground">上一页</button>
+                  <button onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={currentPage >= totalPages} className="h-7 rounded-md border border-border bg-[oklch(24%_.02_260_/.4)] px-2.5 disabled:cursor-not-allowed disabled:opacity-40 hover:text-foreground">下一页</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <Spinner size="lg" />
-          </div>
-        ) : filteredItems.length === 0 ? (
-          <EmptyState
-            icon={<Filter className="w-12 h-12" />}
-            title="暂无内容"
-            description="当前筛选条件下没有找到内容，请尝试更换筛选条件或创建新内容。"
-          />
-        ) : (
-          <>
-            <Table columns={columns} data={filteredItems.slice(0, Number(pageSize))} rowKey="id" />
-            <div className="mt-4 flex items-center justify-end gap-3 border-t border-border pt-4 text-xs text-text-muted">
-              <span>共 {filteredItems.length} 条 · 第 1 / 1 页</span>
-              <span>每页</span>
-              <Select
-                value={pageSize}
-                onChange={setPageSize}
-                options={[
-                  { value: '20', label: '20 条' },
-                  { value: '50', label: '50 条' },
-                  { value: '100', label: '100 条' },
-                ]}
-              />
-              <Button variant="secondary" size="sm" disabled>上一页</Button>
-              <Button variant="secondary" size="sm" disabled>下一页</Button>
-            </div>
-          </>
-        )}
-      </Card>
+      </div>
 
       <SubmitRequestModal open={submitRequestOpen} onClose={() => setSubmitRequestOpen(false)} />
     </div>
+  );
+}
+
+function stageAccent(stage: PipelineStage): string {
+  return {
+    requirement_submitted: 'oklch(78% .15 70)',
+    doctor_distributing: 'oklch(82% .16 300)',
+    doctor_creating: 'oklch(72% .17 195)',
+    external_review: 'oklch(80% .15 260)',
+    internal_review: 'oklch(82% .16 195)',
+    published: 'oklch(82% .15 165)',
+  }[stage];
+}
+
+function StatBucket({ label, value, accent, active, onClick }: { label: string; value: number; accent: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={clsx(
+        'relative overflow-hidden rounded-lg border bg-[oklch(14%_.02_260)] px-4 py-3 text-left transition-colors hover:border-[oklch(70%_.15_200_/.4)]',
+        active ? 'border-[oklch(70%_.15_200_/.5)]' : 'border-border',
+      )}
+    >
+      <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
+      <div className="mt-1.5 flex items-end gap-2">
+        <span className="tabular text-[22px] font-semibold leading-none" style={{ color: accent }}>{value}</span>
+        <span className="pb-0.5 text-[11px] text-muted-foreground">条</span>
+      </div>
+      <span className="absolute inset-x-0 bottom-0 h-[2px]" style={{ background: accent, boxShadow: `0 0 12px ${accent}80` }} />
+    </button>
+  );
+}
+
+function Th({ children, align = 'left', className }: { children?: ReactNode; align?: 'left' | 'right'; className?: string }) {
+  return <th className={clsx('px-3 py-2.5 font-medium', align === 'right' ? 'text-right' : 'text-left', className)}>{children}</th>;
+}
+
+function ContentRow({ item }: { item: Content }): JSX.Element {
+  const meta = statusMeta[item.status] ?? statusMeta.draft!;
+  const interactions = (item.likeCount ?? 0) + (item.bookmarkCount ?? 0) + (item.shareCount ?? 0);
+  const flowLabel = PIPELINE_STAGE_MAP[item.pipelineStage]?.label ?? '—';
+  const isDraft = item.status === 'draft' || item.status === 'under_review' || item.status === 'approved';
+
+  return (
+    <tr className="row-hover group border-b border-[oklch(30%_.02_260_/.45)] transition-colors hover:bg-[oklch(24%_.02_260_/.2)]">
+      <td className="py-3.5 pl-4 pr-3">
+        <Link to={`/content/${item.id}`} className="block">
+          <div className="text-[13.5px] font-medium text-foreground group-hover:text-primary">{item.title}</div>
+          {(item.projectBrief || CONTENT_PROJECT_BRIEFS[item.id]) && (
+            <div className="mt-0.5 max-w-[440px] truncate text-[11px] text-muted-foreground/80">
+              {item.projectBrief || CONTENT_PROJECT_BRIEFS[item.id]}
+            </div>
+          )}
+          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="tabular">{item.id}</span>
+            <span>·</span>
+            <span>{formatDateOnly(item.createdAt)}</span>
+            <span>·</span>
+            <span>{item.author}</span>
+          </div>
+        </Link>
+      </td>
+      <td className="px-3">
+        <span className="rounded border border-[oklch(30%_.02_260_/.7)] bg-[oklch(24%_.02_260_/.5)] px-2 py-0.5 text-[11px] text-muted-foreground">
+          {CONTENT_TYPE_LABELS[item.type] || item.type}
+        </span>
+      </td>
+      <td className="px-3 text-[12.5px] text-muted-foreground">{item.projectName || '—'}</td>
+      <td className="px-3">
+        <div className="flex flex-col gap-1">
+          <span className={clsx('text-[12px] font-medium', flowStatusCls[item.pipelineStage] ?? 'text-muted-foreground')}>{flowLabel}</span>
+          <div className="flex items-center gap-1">
+            {item.priority && <span className={clsx('inline-flex items-center rounded border px-1 py-0 text-[10px] font-medium', priorityCls[item.priority])}>{item.priority}</span>}
+            {item.expectedDate && <span className="text-[10.5px] text-muted-foreground">期望 {formatDateOnly(item.expectedDate)}</span>}
+          </div>
+          {item.rejectionNote && (
+            <div title={item.rejectionNote} className="max-w-[180px] truncate text-[10.5px] text-[oklch(72%_.18_30)]">
+              驳回：{item.rejectionNote}
+            </div>
+          )}
+        </div>
+      </td>
+      <td className="px-3">
+        <span className={clsx('inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-[11px] font-medium', meta.cls)}>
+          <span className={clsx('h-1.5 w-1.5 rounded-full', meta.dot)} /> {meta.label}
+        </span>
+      </td>
+      <td className="px-3 text-right tabular text-muted-foreground">{isDraft ? '—' : formatNumber(item.readCount)}</td>
+      <td className="px-3 text-right tabular text-muted-foreground">{isDraft ? '—' : formatNumber(interactions)}</td>
+      <td className="py-3.5 pl-3 pr-4 text-right">
+        <Link to={`/content/${item.id}`} className="inline-flex items-center gap-0.5 text-[12px] text-primary opacity-0 transition-opacity group-hover:opacity-100">
+          详情 <ChevronRight className="h-3.5 w-3.5" />
+        </Link>
+      </td>
+    </tr>
+  );
+}
+
+function FilterField({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+  return (
+    <label className="inline-flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
+      <span className="shrink-0">{label}</span>
+      {children}
+    </label>
   );
 }

@@ -78,10 +78,14 @@
 | `doctor_tags` | 医生标签 | 医生标签能力 | 可复用 |
 | `distribution_candidates` | 分发候选 | 策略与医生候选、匹配分、匹配原因 | 可复用，算法/人工规则待确认 |
 | `distribution_records` | 分发记录 | 内容、策略、目标、渠道、计划/实际数量、灰度比例、操作人 | 核心候选表，回流关系待确认 |
+| `request_distribution_configs` | 诉求级分发策略 | 存储每条 `content_requests` 的医生筛选、指定医生额度、患者渠道、灰度比例、患者上限 | 已实现，用于 `/distribute/request/:ticketId` |
+| `request_distribution_batches` | 诉求分发批次 | 记录每次提交的主题 × 形式篇数、指定医生篇数、策略自动篇数、操作人和提交时间 | 已实现，用于诉求级分发历史 |
 
 **待确认关系**：
 
 - `distribution_projects.project_id` 是否应该引用 `projects.id`，还是两者各自独立。
+- `request_distribution_configs.request_id → content_requests.id`，诉求可以拥有覆盖项目默认值的医生/患者分发策略。
+- `request_distribution_batches.request_id → content_requests.id`，每次诉求分发提交都保留批次历史。
 - 分发结果是否直接驱动行为指标，还是由外部行为平台回流。
 - 分发候选 `match_score` 是算法计算、规则计算还是人工录入。
 

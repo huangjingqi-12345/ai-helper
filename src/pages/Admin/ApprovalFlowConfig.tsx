@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, ArrowUp, ArrowDown, Pause } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
+import { Plus, Trash2, ArrowUp, ArrowDown, Pause, Workflow } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
@@ -106,24 +106,31 @@ export function ApprovalFlowConfig(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
-        <Badge color="blue" className="text-[10px] uppercase tracking-wider">平台管理 · 审批流配置</Badge>
-        <h1 className="text-2xl font-bold text-text-primary">自定义审批流</h1>
-        <p className="text-sm text-text-secondary">编排「编辑审核 → Px 审核 → 药企审核」纯审核链路，可按业务自由增删节点、设置 SLA 与打回策略。不同租户独立配置。</p>
-      </div>
+      <PageHeader
+        eyebrow="平台管理 · 审批流配置"
+        title="自定义审批流"
+        subtitle="编排「编辑审核 → Px 审核 → 药企审核」纯审核链路，可按业务自由增删节点、设置 SLA 与打回策略。不同租户独立配置。"
+        meta={
+          <>
+            <span className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary px-2 py-0.5 text-[11.5px] text-muted-foreground">
+              <Workflow className="h-3.5 w-3.5" /> Px Ops 共 {flows.length} 个审批流
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary px-2 py-0.5 text-[11.5px] text-muted-foreground">
+              修改本会话内生效（演示模式）
+            </span>
+          </>
+        }
+        actions={
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-text-muted">选择租户</span>
+            <Select options={selectOptions} value={selectedTenant} onChange={setSelectedTenant} />
+          </div>
+        }
+      />
 
-      <div className="flex items-center gap-4">
-        <span className="text-xs text-text-muted px-3 py-1.5 bg-bg-tertiary rounded-lg">Px Ops 共 {flows.length} 个审批流</span>
-        <span className="text-xs text-text-muted px-3 py-1.5 bg-bg-tertiary rounded-lg">修改本会话内生效（演示模式）</span>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-text-muted">选择租户</span>
-          <Select options={selectOptions} value={selectedTenant} onChange={setSelectedTenant} />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-[280px_1fr] gap-6">
+      <div className="grid grid-cols-[260px_1fr] gap-4">
         {/* Left panel: Flow list */}
-        <Card className="p-0">
+        <Card className="rounded-xl border-border bg-card p-0">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <span className="text-sm font-medium text-text-primary">当前租户审批流</span>
             <Button size="sm" variant="ghost" onClick={addFlow}>
@@ -155,7 +162,7 @@ export function ApprovalFlowConfig(): JSX.Element {
         </Card>
 
         {/* Right panel: Flow editor */}
-        <Card className="space-y-5">
+        <Card className="space-y-5 rounded-xl border-border bg-card p-4">
           <div className="space-y-3">
             <div className="grid grid-cols-[1fr_auto] items-end gap-3">
               <div>

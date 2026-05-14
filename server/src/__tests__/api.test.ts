@@ -155,6 +155,46 @@ describe('Backend API Integration Tests', () => {
       expect(data[0]).toHaveProperty('name');
       expect(data[0]).toHaveProperty('status');
     });
+
+    it('supports request-level distribution workbench, config, and batches', async () => {
+      const detailRes = await fetch(`${BASE_URL}/distribution/requests/REQ-2031`);
+      expect(detailRes.status).toBe(200);
+      const detailBody = await detailRes.json();
+      expect(detailBody.success).toBe(true);
+      expect(detailBody.data.request.id).toBe('REQ-2031');
+      expect(detailBody.data.config.requestId).toBe('REQ-2031');
+      expect(Array.isArray(detailBody.data.doctors)).toBe(true);
+
+      const configRes = await fetch(`${BASE_URL}/distribution/requests/REQ-2031/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...detailBody.data.config,
+          patientGrayPercent: 40,
+          whitelistDoctorIds: ['doc_1001'],
+          whitelistDoctorQuota: { doc_1001: 1 },
+        }),
+      });
+      expect(configRes.status).toBe(200);
+      const configBody = await configRes.json();
+      expect(configBody.success).toBe(true);
+      expect(configBody.data.patientGrayPercent).toBe(40);
+
+      const batchRes = await fetch(`${BASE_URL}/distribution/requests/REQ-2031/batches`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          batchMatrix: { treatment: { article: 1 } },
+          whitelistTotal: 1,
+          strategyTotal: 0,
+        }),
+      });
+      expect(batchRes.status).toBe(201);
+      const batchBody = await batchRes.json();
+      expect(batchBody.success).toBe(true);
+      expect(batchBody.data.id).toMatch(/^BATCH-REQ-2031-/);
+      expect(batchBody.data.totalCount).toBe(1);
+    });
   });
 
   describe('GET /api/approval', () => {

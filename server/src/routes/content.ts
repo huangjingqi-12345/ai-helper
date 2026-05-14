@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getContentList, getContentById, createContent, updateContent, deleteContent, getContentRequestProjects, submitContentRequest } from '../db/repositories.js';
+import { getContentList, getContentById, createContent, updateContent, deleteContent, getContentRequestProjects, getContentRequests, getContentRequestById, submitContentRequest } from '../db/repositories.js';
 import { logger } from '../utils/logger.js';
 import { asyncRoute } from './asyncRoute.js';
 import { requirePermission } from '../middleware/auth.js';
@@ -118,6 +118,38 @@ router.get('/request-projects', requirePermission('content:read'), asyncRoute(as
   logger.info('GET /api/content/request-projects');
   const projects = await getContentRequestProjects(req.user!);
   res.json({ success: true, data: projects, timestamp: new Date().toISOString() });
+}));
+
+router.get('/requests', requirePermission('content:read'), asyncRoute(async (req, res) => {
+  logger.info({ query: req.query }, 'GET /api/content/requests');
+  const { status, projectId, page = '1', pageSize = '20' } = req.query;
+  const result = await getContentRequests({
+    status: status as string | undefined,
+    projectId: projectId as string | undefined,
+    page: parseInt(page as string, 10),
+    pageSize: parseInt(pageSize as string, 10),
+    scope: req.user!,
+  });
+  res.json({
+    success: true,
+    data: result.data,
+    pagination: {
+      page: parseInt(page as string, 10),
+      pageSize: parseInt(pageSize as string, 10),
+      total: result.total,
+      totalPages: result.totalPages,
+    },
+    timestamp: new Date().toISOString(),
+  });
+}));
+
+router.get('/requests/:id', requirePermission('content:read'), asyncRoute(async (req, res) => {
+  logger.info({ id: req.params.id }, 'GET /api/content/requests/:id');
+  const request = await getContentRequestById(String(req.params.id), req.user!);
+  if (!request) {
+    return res.status(404).json({ success: false, data: null, message: 'Content request not found', timestamp: new Date().toISOString() });
+  }
+  res.json({ success: true, data: request, timestamp: new Date().toISOString() });
 }));
 
 router.post('/requests', requirePermission('content:submit_request'), asyncRoute(async (req, res) => {

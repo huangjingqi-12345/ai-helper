@@ -1,10 +1,8 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { PageHeader } from '@/components/PageHeader';
 import { KpiCards } from './KpiCards';
 import { ProjectTable } from './ProjectTable';
 import { useOverviewStore } from '@/stores/useOverviewStore';
@@ -30,34 +28,37 @@ export function Overview(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <Card className="flex items-center justify-between gap-6 bg-gradient-to-r from-bg-card to-[#0B1C29] p-6">
-        <div className="space-y-3">
-          <Badge color="blue" className="text-[10px] uppercase tracking-wider">Overview</Badge>
-          <h1 className="text-2xl font-bold text-text-primary">患者教育内容运营总览</h1>
-          <p className="text-sm text-text-secondary max-w-2xl">
-          {isOps
+      <PageHeader
+        eyebrow="OVERVIEW"
+        title="患者教育内容运营总览"
+        subtitle={
+          isOps
             ? '按项目维度展示各项目下的内容触达、阅读与互动效果。当前为极简版，不含 AE 管理与归因模块。'
-            : '药企视图：按项目维度展示该租户名下各项目的脱敏聚合数据（k-匿名），不可下钻。'}
-          </p>
-        <div className="flex items-center gap-3 text-xs text-text-muted">
-          <span>数据更新：{stats?.lastUpdated ? formatDate(stats.lastUpdated) : '—'}</span>
-          <span>·</span>
-          <Badge color="blue" className="text-[10px]">运营视图</Badge>
-        </div>
-        </div>
-        <Button
-          variant="primary"
-          size="sm"
-          className="shrink-0"
-          onClick={() => {
-            log.ui('Enter Content Workshop button clicked');
-            navigate('/content');
-          }}
-        >
-          {isOps ? '进入内容工坊' : '提交选题需求'} <ArrowRight size={14} />
-        </Button>
-      </Card>
+            : '药企视图：按项目维度展示该租户名下各项目的脱敏聚合数据（k-匿名），不可下钻。'
+        }
+        meta={
+          <>
+            <span className="inline-flex items-center gap-1.5 rounded border border-border bg-[oklch(24%_.02_260_/.4)] px-2 py-0.5 text-[11px] text-muted-foreground">
+              数据更新：{stats?.lastUpdated ? formatDate(stats.lastUpdated) : '—'}
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-200">
+              · 运营视图
+            </span>
+          </>
+        }
+        actions={
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border border-[oklch(70%_.15_200_/.4)] bg-[oklch(70%_.15_200_/.1)] px-3 py-1.5 text-[12.5px] font-medium text-primary transition-colors hover:bg-[oklch(70%_.15_200_/.2)]"
+            onClick={() => {
+              log.ui('Enter Content Workshop button clicked');
+              navigate('/content');
+            }}
+          >
+            {isOps ? '进入内容工坊' : '提交选题需求'} <ArrowRight size={14} />
+          </button>
+        }
+      />
 
       {/* KPI Cards */}
       <KpiCards stats={stats} loading={loading} />

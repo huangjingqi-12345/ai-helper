@@ -379,6 +379,42 @@ const sqliteSchema = `
     created_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS request_distribution_configs (
+    request_id TEXT PRIMARY KEY,
+    assignment_mode TEXT DEFAULT 'mixed' CHECK(assignment_mode IN ('mixed','whitelist','strategy')),
+    whitelist_enabled INTEGER DEFAULT 1,
+    strategy_enabled INTEGER DEFAULT 1,
+    department_filters TEXT DEFAULT '[]',
+    title_filters TEXT DEFAULT '[]',
+    region_filters TEXT DEFAULT '[]',
+    tag_filters TEXT DEFAULT '[]',
+    whitelist_doctor_ids TEXT DEFAULT '[]',
+    whitelist_doctor_quota TEXT DEFAULT '{}',
+    patient_channels TEXT DEFAULT '[]',
+    patient_regions TEXT DEFAULT '[]',
+    patient_tags TEXT DEFAULT '[]',
+    patient_gray_percent INTEGER DEFAULT 30,
+    patient_cap INTEGER DEFAULT 5000,
+    note TEXT DEFAULT '',
+    updated_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (request_id) REFERENCES content_requests(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS request_distribution_batches (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    batch_matrix TEXT DEFAULT '{}',
+    total_count INTEGER DEFAULT 0,
+    whitelist_total INTEGER DEFAULT 0,
+    strategy_total INTEGER DEFAULT 0,
+    operator TEXT,
+    submitted_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (request_id) REFERENCES content_requests(id)
+  );
+
   CREATE TABLE IF NOT EXISTS approval_items (
     id TEXT PRIMARY KEY,
     content_id TEXT NOT NULL,
@@ -560,6 +596,7 @@ const sqliteSchema = `
   CREATE INDEX IF NOT EXISTS idx_behavior_daily_tenant_date ON behavior_daily_metrics(tenant_id, metric_date);
   CREATE INDEX IF NOT EXISTS idx_distribution_project ON distribution_strategies(project_id);
   CREATE INDEX IF NOT EXISTS idx_distribution_projects_status ON distribution_projects(status);
+  CREATE INDEX IF NOT EXISTS idx_request_distribution_batches_request ON request_distribution_batches(request_id);
   CREATE INDEX IF NOT EXISTS idx_approval_tasks_tenant_status ON approval_tasks(tenant_id, status);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_time ON audit_logs(tenant_id, created_at);
 `;
@@ -766,6 +803,28 @@ const postgresSchema = `
   CREATE TABLE IF NOT EXISTS doctor_tags (id BIGSERIAL PRIMARY KEY, doctor_id TEXT NOT NULL REFERENCES doctors(id), tag TEXT NOT NULL, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS distribution_candidates (id BIGSERIAL PRIMARY KEY, strategy_id TEXT NOT NULL REFERENCES distribution_strategies(id), doctor_id TEXT NOT NULL REFERENCES doctors(id), match_score REAL DEFAULT 0, match_reason TEXT, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS distribution_records (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), project_id TEXT NOT NULL, content_id TEXT NOT NULL, strategy_id TEXT, target_type TEXT NOT NULL CHECK(target_type IN ('doctor','patient_segment')), target_label TEXT NOT NULL, channel TEXT, planned_count INTEGER DEFAULT 0, actual_count INTEGER DEFAULT 0, gray_percent INTEGER DEFAULT 0, operator_user_id TEXT, distributed_at TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS request_distribution_configs (
+    request_id TEXT PRIMARY KEY REFERENCES content_requests(id),
+    assignment_mode TEXT DEFAULT 'mixed' CHECK(assignment_mode IN ('mixed','whitelist','strategy')),
+    whitelist_enabled BOOLEAN DEFAULT TRUE,
+    strategy_enabled BOOLEAN DEFAULT TRUE,
+    department_filters JSONB DEFAULT '[]'::jsonb,
+    title_filters JSONB DEFAULT '[]'::jsonb,
+    region_filters JSONB DEFAULT '[]'::jsonb,
+    tag_filters JSONB DEFAULT '[]'::jsonb,
+    whitelist_doctor_ids JSONB DEFAULT '[]'::jsonb,
+    whitelist_doctor_quota JSONB DEFAULT '{}'::jsonb,
+    patient_channels JSONB DEFAULT '[]'::jsonb,
+    patient_regions JSONB DEFAULT '[]'::jsonb,
+    patient_tags JSONB DEFAULT '[]'::jsonb,
+    patient_gray_percent INTEGER DEFAULT 30,
+    patient_cap INTEGER DEFAULT 5000,
+    note TEXT DEFAULT '',
+    updated_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS request_distribution_batches (id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES content_requests(id), batch_matrix JSONB DEFAULT '{}'::jsonb, total_count INTEGER DEFAULT 0, whitelist_total INTEGER DEFAULT 0, strategy_total INTEGER DEFAULT 0, operator TEXT, submitted_at TEXT NOT NULL, created_at TEXT NOT NULL);
 
   CREATE TABLE IF NOT EXISTS approval_items (id TEXT PRIMARY KEY, content_id TEXT NOT NULL, content_title TEXT NOT NULL, submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL, status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')), reviewed_by TEXT, reviewed_at TEXT, comments TEXT, project_name TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS approval_flows (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), name TEXT NOT NULL, description TEXT, status TEXT DEFAULT 'active' CHECK(status IN ('active','inactive')), return_policy TEXT DEFAULT 'submitter' CHECK(return_policy IN ('submitter','previous','first')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -791,6 +850,7 @@ const postgresSchema = `
   CREATE INDEX IF NOT EXISTS idx_behavior_daily_tenant_date ON behavior_daily_metrics(tenant_id, metric_date);
   CREATE INDEX IF NOT EXISTS idx_distribution_project ON distribution_strategies(project_id);
   CREATE INDEX IF NOT EXISTS idx_distribution_projects_status ON distribution_projects(status);
+  CREATE INDEX IF NOT EXISTS idx_request_distribution_batches_request ON request_distribution_batches(request_id);
   CREATE INDEX IF NOT EXISTS idx_approval_tasks_tenant_status ON approval_tasks(tenant_id, status);
   CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_time ON audit_logs(tenant_id, created_at);
@@ -829,6 +889,8 @@ async function resetLegacySqliteSchemaIfNeeded(): Promise<void> {
     'doctor_tags',
     'doctor_specialties',
     'doctors',
+    'request_distribution_batches',
+    'request_distribution_configs',
     'distribution_strategy_filters',
     'distribution_strategies',
     'distribution_projects',
@@ -842,6 +904,7 @@ async function resetLegacySqliteSchemaIfNeeded(): Promise<void> {
     'content_tags',
     'tags',
     'content_versions',
+    'content_requests',
     'content',
     'project_formats',
     'project_topics',

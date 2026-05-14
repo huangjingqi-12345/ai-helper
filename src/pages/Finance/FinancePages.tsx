@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FilePlus2, Send, Upload } from 'lucide-react';
+import { Database, FilePlus2, Send, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -93,7 +93,7 @@ export function FinanceOverview(): JSX.Element {
         <FinanceLink href="/finance/contracts" title="合同与订阅" desc="租户主数据 · P2 智能体合同 · 订阅版本" metrics="活跃合同 6 份 待签订单 1 份" />
         <FinanceLink href="/finance/billing" title="账单引擎" desc="月度自动排期 · 对账 · 催款联动" metrics="本月生成 6 张 对账异议 2 单" />
         <FinanceLink href="/finance/invoicing" title="价值交付与开票" desc="月度价值报告 · 一键转开票指令" metrics="已生成报告 23 份 待开票 5 张 已开发票 10 张" />
-        <FinanceLink href="/finance" title="业财数据基座" desc="客户主数据 · 收入 / 回款 / 预算 · KPI" metrics="活跃客户 6 家 回款率 20.3%" />
+        <FinanceLink href="/finance/data" title="业财数据基座" desc="客户主数据 · 收入 / 回款 / 预算 · KPI" metrics="活跃客户 6 家 回款率 20.3%" />
       </div>
       <Card>
         <h2 className="text-base font-semibold text-text-primary">业财待办速览</h2>
@@ -152,6 +152,81 @@ export function FinanceInvoicing(): JSX.Element {
   );
 }
 
+export function FinanceDataPlatform(): JSX.Element {
+  const groupRows = ['Px1 组 · 大禹计划', 'Px2 组 · 盘古计划', 'Px3 组 · 星火计划'].map((group) => {
+    const groupContracts = contracts.filter((contract) => contract.group === group);
+    const signed = groupContracts.reduce((sum, contract) => sum + parseMoneyWan(contract.amount), 0);
+    const monthly = groupContracts.reduce((sum, contract) => sum + parseMoneyWan(contract.monthly), 0);
+    return { group, signed, monthly, count: groupContracts.length };
+  });
+  const customerRows = contracts.slice(0, 8).map((contract, index) => {
+    const receivable = parseMoneyWan(contract.monthly) * 4;
+    const collected = index < 3 ? parseMoneyWan(contract.monthly) * 2 : parseMoneyWan(contract.monthly);
+    const overdue = index % 4 === 0 ? parseMoneyWan(contract.monthly) : 0;
+    return { customer: contract.customer, group: contract.group, receivable, collected, outstanding: receivable - collected, overdue };
+  });
+  const trend = [
+    { month: '01月', signed: 180, recognized: 120, collected: 90 },
+    { month: '02月', signed: 360, recognized: 240, collected: 190 },
+    { month: '03月', signed: 520, recognized: 420, collected: 310 },
+    { month: '04月', signed: 850, recognized: 650, collected: 430 },
+    { month: '05月', signed: 850, recognized: 720, collected: 650 },
+  ];
+  const max = Math.max(...trend.map((item) => item.signed));
+  return (
+    <FinanceShell badge="P2 · Module 4" title="业财数据基座" desc="把订阅与账单数据沉淀为统一的业财指标，支持运营、财务、CSM、销售四类视图复用。">
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
+        <Kpi title="累计签约" desc="7 份合同" value="10,400 万" />
+        <Kpi title="MRR" desc="月度经常性收入" value="850 万" />
+        <Kpi title="年度预测" desc="MRR × 12" value="10,200 万" />
+        <Kpi title="已回款" desc="实际到账" value="650 万" />
+        <Kpi title="未回款" desc="含逾期 400 万" value="2,550 万" tone="yellow" />
+        <Kpi title="回款率" desc="已收 / 应收" value="20%" />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
+        <Card>
+          <div className="flex items-center justify-between">
+            <div><h2 className="text-base font-semibold text-text-primary">月度收入趋势</h2><p className="mt-1 text-xs text-text-muted">蓝：签约 · 紫：确认收入 · 绿：实际回款</p></div>
+            <Badge color="gray">单位：万</Badge>
+          </div>
+          <div className="mt-5 grid h-64 grid-cols-5 items-end gap-4 border-b border-l border-border px-5 pb-4">
+            {trend.map((item) => (
+              <div key={item.month} className="flex h-full flex-col justify-end gap-2">
+                <div className="flex flex-1 items-end justify-center gap-1">
+                  <Bar value={item.signed} max={max} color="bg-accent-blue" title="签约" />
+                  <Bar value={item.recognized} max={max} color="bg-accent-purple" title="确认" />
+                  <Bar value={item.collected} max={max} color="bg-accent-green" title="实收" />
+                </div>
+                <div className="text-center text-[10px] text-text-muted">{item.month}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+        <Card>
+          <h2 className="text-base font-semibold text-text-primary">小组维度收入</h2>
+          <p className="mt-1 text-xs text-text-muted">销售小组 → 签约 / 月费 / 客户数</p>
+          <div className="mt-4 space-y-4">
+            {groupRows.map((row) => (
+              <div key={row.group}>
+                <div className="flex justify-between text-xs"><span className="text-text-primary">{row.group}</span><span className="text-text-muted">{row.count} 客户 · 月费 {row.monthly} 万</span></div>
+                <div className="mt-2 h-2 rounded bg-bg-tertiary"><div className="h-2 rounded bg-accent-purple" style={{ width: `${Math.min(100, row.signed / 90)}%` }} /></div>
+                <div className="mt-1 text-[10px] text-text-muted">签约 {row.signed} 万</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+      <Card>
+        <div className="flex items-center gap-2"><Database className="h-4 w-4 text-accent-blue" /><h2 className="text-base font-semibold text-text-primary">客户榜单</h2></div>
+        <p className="mt-1 text-xs text-text-muted">按近 5 个月应收金额排名，输出应收、已收、未收、逾期与回款率。</p>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-sm"><thead><tr className="border-b border-border bg-bg-secondary/50"><Th>#</Th><Th>客户</Th><Th>承接小组</Th><Th>应收</Th><Th>已收</Th><Th>未收</Th><Th>逾期</Th><Th>回款率</Th></tr></thead><tbody>{customerRows.map((row, index) => { const rate = Math.round((row.collected / Math.max(1, row.receivable)) * 100); return <tr key={row.customer} className="border-b border-border/50"><Td>#{index + 1}</Td><td className="px-3 py-3 text-sm font-medium text-text-primary">{row.customer}</td><Td>{row.group}</Td><Td>{row.receivable} 万</Td><Td>{row.collected} 万</Td><Td>{row.outstanding} 万</Td><Td>{row.overdue ? `${row.overdue} 万` : '—'}</Td><td className="px-3 py-3"><div className="h-1.5 rounded bg-bg-tertiary"><div className="h-1.5 rounded bg-accent-green" style={{ width: `${rate}%` }} /></div><div className="mt-1 text-[10px] text-text-muted">{rate}%</div></td></tr>; })}</tbody></table>
+        </div>
+      </Card>
+    </FinanceShell>
+  );
+}
+
 function FinanceShell({ badge, title, desc, children }: { badge: string; title: string; desc: string; children: React.ReactNode }): JSX.Element {
   return <div className="space-y-6"><div className="space-y-3"><Badge color="blue" className="text-[10px] uppercase tracking-wider">{badge}</Badge><h1 className="text-2xl font-bold text-text-primary">{title}</h1><p className="max-w-3xl text-sm text-text-secondary">{desc}</p></div>{children}</div>;
 }
@@ -177,3 +252,5 @@ function Th({ children }: { children: React.ReactNode }): JSX.Element { return <
 function Td({ children }: { children: React.ReactNode }): JSX.Element { return <td className="px-3 py-3 text-xs text-text-secondary">{children}</td>; }
 function Input({ label, placeholder }: { label: string; placeholder: string }): JSX.Element { return <label className="text-xs text-text-muted">{label}<input placeholder={placeholder} className="mt-1 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted" /></label>; }
 function Mini({ label, value }: { label: React.ReactNode; value: React.ReactNode }): JSX.Element { return <div className="rounded bg-bg-card p-2"><div className="font-mono text-sm text-text-primary">{value}</div><div className="mt-1 text-[10px] text-text-muted">{label}</div></div>; }
+function Bar({ value, max, color, title }: { value: number; max: number; color: string; title: string }): JSX.Element { return <div title={`${title} ${value} 万`} className={`w-4 rounded-t ${color}`} style={{ height: `${Math.max(4, (value / max) * 210)}px` }} />; }
+function parseMoneyWan(value: string): number { return Number(value.match(/[\\d,]+/)?.[0]?.replace(/,/g, '') ?? 0); }

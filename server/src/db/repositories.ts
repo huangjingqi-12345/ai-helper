@@ -47,6 +47,13 @@ function parseJsonFields(obj: Record<string, unknown>, fields: string[]): Record
   return obj;
 }
 
+function parseJsonObjectFields(obj: Record<string, unknown>, fields: string[]): Record<string, unknown> {
+  for (const field of fields) {
+    obj[field] = parseJson(obj[field], {});
+  }
+  return obj;
+}
+
 function asNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -364,6 +371,285 @@ export async function submitContentRequest(data: Record<string, unknown>, scope?
   return { request: request ? parseJsonFields(toCamel(request), ['themeFormatMatrix']) : null, content };
 }
 
+function mapContentRequestRow(row: Record<string, unknown>) {
+  const request = parseJsonFields(toCamel(row), ['themeFormatMatrix']);
+  const project = request.projectName || request.projectTitle
+    ? {
+        id: request.projectId,
+        tenantId: request.projectTenantId,
+        name: request.projectName,
+        title: request.projectTitle,
+        disease: request.projectDisease,
+        brand: request.projectBrand,
+        owner: request.projectOwner,
+        patientCap: asNumber(request.projectPatientCap, 0),
+        contentCount: asNumber(request.projectContentCount, 0),
+        publishedCount: asNumber(request.projectPublishedCount, 0),
+      }
+    : undefined;
+
+  delete request.projectTenantId;
+  delete request.projectName;
+  delete request.projectTitle;
+  delete request.projectDisease;
+  delete request.projectBrand;
+  delete request.projectOwner;
+  delete request.projectPatientCap;
+  delete request.projectContentCount;
+  delete request.projectPublishedCount;
+
+  return { ...request, project };
+}
+
+const contentRequestSelect = `
+  SELECT
+    cr.*,
+    p.tenant_id AS project_tenant_id,
+    p.name AS project_name,
+    p.title AS project_title,
+    p.disease AS project_disease,
+    p.patient_cap AS project_patient_cap,
+    p.content_count AS project_content_count,
+    p.published_count AS project_published_count,
+    COALESCE(b.name, '') AS project_brand,
+    COALESCE(u.name, 'PX 运营组') AS project_owner
+  FROM content_requests cr
+  LEFT JOIN projects p ON p.id = cr.project_id
+  LEFT JOIN brands b ON b.id = p.brand_id
+  LEFT JOIN users u ON u.id = p.owner_user_id
+`;
+
+export async function getContentRequests(filters: { status?: string; projectId?: string; page: number; pageSize: number; scope?: QueryScope }) {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  const tenant = tenantCondition('cr', filters.scope);
+  if (tenant.sql) { conditions.push(tenant.sql); params.push(...tenant.params); }
+  if (filters.status) { conditions.push('cr.status = ?'); params.push(filters.status); }
+  if (filters.projectId) { conditions.push('cr.project_id = ?'); params.push(filters.projectId); }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const totalRow = await dbGet<{ cnt: number | string }>(`SELECT COUNT(*) as cnt FROM content_requests cr ${where}`, params);
+  const total = Number(totalRow?.cnt ?? 0);
+  const offset = (filters.page - 1) * filters.pageSize;
+  const rows = await dbAll<Record<string, unknown>>(`
+    ${contentRequestSelect}
+    ${where}
+    ORDER BY cr.submitted_at DESC, cr.id DESC
+    LIMIT ? OFFSET ?
+  `, [...params, filters.pageSize, offset]);
+  return {
+    data: rows.map(mapContentRequestRow),
+    total,
+    totalPages: Math.ceil(total / filters.pageSize),
+  };
+}
+
+export async function getContentRequestById(id: string, scope?: QueryScope) {
+  const tenant = tenantCondition('cr', scope);
+  const row = await dbGet<Record<string, unknown>>(`
+    ${contentRequestSelect}
+    WHERE LOWER(cr.id) = LOWER(?)
+    ${tenant.sql ? `AND ${tenant.sql}` : ''}
+  `, [id, ...tenant.params]);
+  return row ? mapContentRequestRow(row) : null;
+}
+
+export async function updateContentRequestStatus(id: string, status: string, note?: string, scope?: QueryScope) {
+  const tenant = tenantCondition('content_requests', scope);
+  const existing = await dbGet<Record<string, unknown>>(
+    `SELECT * FROM content_requests WHERE LOWER(id) = LOWER(?) ${tenant.sql ? `AND ${tenant.sql}` : ''}`,
+    [id, ...tenant.params]
+  );
+  if (!existing) return null;
+  const now = new Date().toISOString();
+  await dbRun(
+    `UPDATE content_requests SET status = ?, note = ?, updated_at = ? WHERE LOWER(id) = LOWER(?) ${tenant.sql ? `AND ${tenant.sql}` : ''}`,
+    [status, note ?? existing.note ?? '', now, id, ...tenant.params]
+  );
+  if (status === 'accepted' && existing.content_id) {
+    const contentTenant = tenantCondition('content', scope);
+    await dbRun(
+      `UPDATE content SET pipeline_stage = 'doctor_distributing', workflow_state = 'draft', updated_at = ? WHERE id = ? ${contentTenant.sql ? `AND ${contentTenant.sql}` : ''}`,
+      [now, existing.content_id, ...contentTenant.params]
+    );
+  }
+  return getContentRequestById(id, scope);
+}
+
+export function defaultRequestDistributionConfig(requestId: string, patientCap = 5000) {
+  return {
+    requestId,
+    assignmentMode: 'mixed',
+    whitelistEnabled: true,
+    strategyEnabled: true,
+    departmentFilters: ['乳腺外科', '肿瘤内科'],
+    titleFilters: ['主任医师', '副主任医师'],
+    regionFilters: ['华东', '华南'],
+    tagFilters: ['KOL', '患教经验丰富'],
+    whitelistDoctorIds: ['doc_1001', 'doc_1002'],
+    whitelistDoctorQuota: { doc_1001: 1, doc_1002: 1 },
+    patientChannels: ['微信公众号', '短信'],
+    patientRegions: ['华东', '华南'],
+    patientTags: ['术后随访', 'HER2 靶向'],
+    patientGrayPercent: 30,
+    patientCap,
+    note: '默认继承项目策略，可保存为诉求专属策略。',
+  };
+}
+
+function mapRequestDistributionConfig(row: Record<string, unknown>) {
+  const config = parseJsonObjectFields(
+    parseJsonFields(toCamel(row), [
+      'departmentFilters',
+      'titleFilters',
+      'regionFilters',
+      'tagFilters',
+      'whitelistDoctorIds',
+      'patientChannels',
+      'patientRegions',
+      'patientTags',
+    ]),
+    ['whitelistDoctorQuota']
+  );
+  return {
+    ...config,
+    whitelistEnabled: asBool(config.whitelistEnabled),
+    strategyEnabled: asBool(config.strategyEnabled),
+    patientGrayPercent: asNumber(config.patientGrayPercent, 30),
+    patientCap: asNumber(config.patientCap, 5000),
+  };
+}
+
+export async function getRequestDistributionConfig(requestId: string) {
+  const row = await dbGet<Record<string, unknown>>('SELECT * FROM request_distribution_configs WHERE LOWER(request_id) = LOWER(?)', [requestId]);
+  return row ? mapRequestDistributionConfig(row) : null;
+}
+
+function stringList(value: unknown, fallback: string[] = []): string[] {
+  if (!Array.isArray(value)) return fallback;
+  return value.map(String).filter(Boolean);
+}
+
+function numberMap(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, raw]) => [key, Math.max(0, Number(raw) || 0)]));
+}
+
+export async function upsertRequestDistributionConfig(requestId: string, data: Record<string, unknown>, scope?: QueryScope) {
+  const request = await getContentRequestById(requestId, scope);
+  if (!request) return null;
+  const now = new Date().toISOString();
+  const defaultConfig = defaultRequestDistributionConfig(requestId, asNumber((request.project as Record<string, unknown> | undefined)?.patientCap, 5000));
+  const assignmentMode = ['mixed', 'whitelist', 'strategy'].includes(String(data.assignmentMode)) ? String(data.assignmentMode) : defaultConfig.assignmentMode;
+  const whitelistEnabled = data.whitelistEnabled !== undefined ? asBool(data.whitelistEnabled) : defaultConfig.whitelistEnabled;
+  const strategyEnabled = data.strategyEnabled !== undefined ? asBool(data.strategyEnabled) : defaultConfig.strategyEnabled;
+  const patientGrayPercent = Math.max(0, Math.min(100, asNumber(data.patientGrayPercent, defaultConfig.patientGrayPercent)));
+  const patientCap = Math.max(0, asNumber(data.patientCap, defaultConfig.patientCap));
+  const note = typeof data.note === 'string' ? data.note.slice(0, 1000) : defaultConfig.note;
+
+  await dbRun(`
+    INSERT INTO request_distribution_configs (
+      request_id, assignment_mode, whitelist_enabled, strategy_enabled,
+      department_filters, title_filters, region_filters, tag_filters,
+      whitelist_doctor_ids, whitelist_doctor_quota,
+      patient_channels, patient_regions, patient_tags, patient_gray_percent, patient_cap,
+      note, updated_by, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(request_id) DO UPDATE SET
+      assignment_mode = excluded.assignment_mode,
+      whitelist_enabled = excluded.whitelist_enabled,
+      strategy_enabled = excluded.strategy_enabled,
+      department_filters = excluded.department_filters,
+      title_filters = excluded.title_filters,
+      region_filters = excluded.region_filters,
+      tag_filters = excluded.tag_filters,
+      whitelist_doctor_ids = excluded.whitelist_doctor_ids,
+      whitelist_doctor_quota = excluded.whitelist_doctor_quota,
+      patient_channels = excluded.patient_channels,
+      patient_regions = excluded.patient_regions,
+      patient_tags = excluded.patient_tags,
+      patient_gray_percent = excluded.patient_gray_percent,
+      patient_cap = excluded.patient_cap,
+      note = excluded.note,
+      updated_by = excluded.updated_by,
+      updated_at = excluded.updated_at
+  `, [
+    requestId,
+    assignmentMode,
+    boolValue(whitelistEnabled),
+    boolValue(strategyEnabled),
+    JSON.stringify(stringList(data.departmentFilters, defaultConfig.departmentFilters)),
+    JSON.stringify(stringList(data.titleFilters, defaultConfig.titleFilters)),
+    JSON.stringify(stringList(data.regionFilters, defaultConfig.regionFilters)),
+    JSON.stringify(stringList(data.tagFilters, defaultConfig.tagFilters)),
+    JSON.stringify(stringList(data.whitelistDoctorIds, defaultConfig.whitelistDoctorIds)),
+    JSON.stringify(numberMap(data.whitelistDoctorQuota ?? defaultConfig.whitelistDoctorQuota)),
+    JSON.stringify(stringList(data.patientChannels, defaultConfig.patientChannels)),
+    JSON.stringify(stringList(data.patientRegions, defaultConfig.patientRegions)),
+    JSON.stringify(stringList(data.patientTags, defaultConfig.patientTags)),
+    patientGrayPercent,
+    patientCap,
+    note,
+    scope?.name || scope?.id || 'system',
+    now,
+    now,
+  ]);
+  return getRequestDistributionConfig(requestId);
+}
+
+function mapRequestDistributionBatch(row: Record<string, unknown>) {
+  const batch = parseJsonFields(toCamel(row), ['batchMatrix']);
+  return {
+    ...batch,
+    totalCount: asNumber(batch.totalCount),
+    whitelistTotal: asNumber(batch.whitelistTotal),
+    strategyTotal: asNumber(batch.strategyTotal),
+  };
+}
+
+export async function getRequestDistributionBatches(requestId: string) {
+  const rows = await dbAll<Record<string, unknown>>(
+    'SELECT * FROM request_distribution_batches WHERE LOWER(request_id) = LOWER(?) ORDER BY submitted_at DESC, created_at DESC',
+    [requestId]
+  );
+  return rows.map(mapRequestDistributionBatch);
+}
+
+export async function createRequestDistributionBatch(requestId: string, data: Record<string, unknown>, scope?: QueryScope) {
+  const request = await getContentRequestById(requestId, scope);
+  if (!request) return null;
+  const requestRecord = request as Record<string, unknown>;
+  const matrix = data.batchMatrix && typeof data.batchMatrix === 'object' && !Array.isArray(data.batchMatrix)
+    ? data.batchMatrix as Record<string, Record<string, number>>
+    : {};
+  const totalCount = matrixTotal(matrix);
+  if (totalCount <= 0) return null;
+  const now = new Date().toISOString();
+  const id = `BATCH-${requestId}-${Date.now().toString(36).toUpperCase()}`;
+  const whitelistTotal = Math.max(0, asNumber(data.whitelistTotal, 0));
+  const strategyTotal = Math.max(0, asNumber(data.strategyTotal, Math.max(0, totalCount - whitelistTotal)));
+
+  await dbRun(`
+    INSERT INTO request_distribution_batches (id, request_id, batch_matrix, total_count, whitelist_total, strategy_total, operator, submitted_at, created_at)
+    VALUES (?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?)
+  `, [
+    id,
+    requestId,
+    JSON.stringify(matrix),
+    totalCount,
+    whitelistTotal,
+    strategyTotal,
+    scope?.name || String(data.operator || 'PX 运营组'),
+    now,
+    now,
+  ]);
+  if (String(requestRecord.status) === 'pending') {
+    await updateContentRequestStatus(requestId, 'accepted', typeof requestRecord.note === 'string' ? requestRecord.note : '', scope);
+  }
+  const row = await dbGet<Record<string, unknown>>('SELECT * FROM request_distribution_batches WHERE id = ?', [id]);
+  return row ? mapRequestDistributionBatch(row) : null;
+}
+
 export async function updateContent(id: string, data: Record<string, unknown>, scope?: QueryScope) {
   const tenant = tenantCondition('content', scope);
   const existing = await dbGet<Record<string, unknown>>(`SELECT * FROM content WHERE LOWER(id) = LOWER(?) ${tenant.sql ? `AND ${tenant.sql}` : ''}`, [id, ...tenant.params]);
@@ -454,7 +740,7 @@ export async function getBehaviorSummary(scope?: QueryScope) {
   const readTrend = await getBehaviorTrends('reads', scope);
   const interactionTrend = await getBehaviorTrends('interactions', scope);
   const topRows = await dbAll<Record<string, unknown>>(`
-    SELECT btc.content_id, btc.title, btc.reads, btc.interactions, c.push_count, c.read_users, p.disease
+    SELECT btc.content_id, btc.title, btc.reads, COALESCE(c.like_count, 0) + COALESCE(c.bookmark_count, 0) as interactions, c.push_count, c.read_users, p.disease
     FROM behavior_top_content btc
     LEFT JOIN content c ON c.id = btc.content_id
     LEFT JOIN projects p ON p.id = c.project_id
@@ -462,13 +748,14 @@ export async function getBehaviorSummary(scope?: QueryScope) {
   `);
   const byDiseaseRows = await dbAll<Record<string, unknown>>('SELECT * FROM behavior_by_disease ORDER BY reads DESC');
   const contentCountRow = await dbGet<{ cnt: number | string }>('SELECT COUNT(*) as cnt FROM content');
+  const audienceInteractionRow = await dbGet<{ total: number | string }>('SELECT COALESCE(SUM(COALESCE(like_count, 0) + COALESCE(bookmark_count, 0)), 0) as total FROM content');
   const avgSetting = await dbGet<{ value: string }>("SELECT value FROM platform_settings WHERE key = 'behaviorAvgReadDuration'");
 
   return {
     pushCount: asNumber(stats.pushCount),
     readUsers: asNumber(stats.readUsers),
     totalReads: asNumber(stats.readCount),
-    totalInteractions: asNumber(stats.interactionCount),
+    totalInteractions: asNumber(audienceInteractionRow?.total),
     contentCount: asNumber(contentCountRow?.cnt),
     avgReadDuration: asNumber(avgSetting?.value, 148),
     readTrend,

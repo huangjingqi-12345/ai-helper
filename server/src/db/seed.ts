@@ -90,6 +90,8 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     'content_tags',
     'content_versions',
     'content_assets',
+    'request_distribution_batches',
+    'request_distribution_configs',
     'content_requests',
     'content',
     'project_topics',
@@ -219,28 +221,71 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     }
   }
 
-  const requestSeeds = contentList.slice(0, 5).map((item, index) => ({
-    id: `REQ-${2031 - index}`,
-    tenantId: ['T-NV', 'T-AZ', 'T-RC', 'T-LL', 'T-NV'][index] ?? 'T-NV',
-    projectId: item.projectId,
-    contentId: item.id,
-    requestName: item.title.split(' · ').slice(-1)[0] || item.title,
-    title: `乳腺癌 · ${item.title}`,
-    priority: item.priority,
-    expectedDate: item.expectedDate ?? '2026-05-30',
-    matrix: { treatment: { article: item.type === 'article' ? 1 : 0, poster: item.type === 'poster' ? 1 : 0, checklist: item.type === 'checklist' ? 1 : 0 } },
-    totalCount: 1,
-    note: 'Demo seeded pharma content request.',
-    submittedBy: item.author,
-    submittedAt: item.createdAt,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-  }));
+  const requestOverrides: Record<string, Partial<{
+    tenantId: string;
+    requestName: string;
+    title: string;
+    priority: 'P0' | 'P1' | 'P2';
+    expectedDate: string;
+    matrix: Record<string, Record<string, number>>;
+    totalCount: number;
+    note: string;
+    status: 'pending' | 'accepted' | 'rejected' | 'converted';
+    submittedAt: string;
+  }>> = {
+    'REQ-2030': {
+      tenantId: 'T-AZ',
+      requestName: '首输 6 周内安全信号识别',
+      title: '乳腺癌 · 优赫得 · 首输 6 周内安全信号识别',
+      priority: 'P1',
+      expectedDate: '2026-05-22',
+      matrix: { treatment: { article: 2, poster: 1 }, adverse: { checklist: 1 } },
+      totalCount: 4,
+      note: '等待派单',
+      status: 'pending',
+      submittedAt: '2026-05-07 14:10',
+    },
+    'REQ-2031': {
+      tenantId: 'T-AZ',
+      requestName: '机制对比 · 驳回',
+      title: '乳腺癌 · 优赫得 · 机制对比 · 驳回',
+      priority: 'P2',
+      expectedDate: '2026-05-22',
+      matrix: { awareness: { article: 2 } },
+      totalCount: 2,
+      note: '已驳回',
+      status: 'rejected',
+      submittedAt: '2026-04-02 11:25',
+    },
+  };
+
+  const requestSeeds = contentList.slice(0, 5).map((item, index) => {
+    const id = `REQ-${2031 - index}`;
+    const override = requestOverrides[id] ?? {};
+    return {
+      id,
+      tenantId: override.tenantId ?? ['T-NV', 'T-AZ', 'T-RC', 'T-LL', 'T-NV'][index] ?? 'T-NV',
+      projectId: item.projectId,
+      contentId: item.id,
+      requestName: override.requestName ?? (item.title.split(' · ').slice(-1)[0] || item.title),
+      title: override.title ?? `乳腺癌 · ${item.title}`,
+      priority: override.priority ?? item.priority,
+      expectedDate: override.expectedDate ?? item.expectedDate ?? '2026-05-30',
+      matrix: override.matrix ?? { treatment: { article: item.type === 'article' ? 1 : 0, poster: item.type === 'poster' ? 1 : 0, checklist: item.type === 'checklist' ? 1 : 0 } },
+      totalCount: override.totalCount ?? 1,
+      note: override.note ?? 'Demo seeded pharma content request.',
+      status: override.status ?? 'pending',
+      submittedBy: item.author,
+      submittedAt: override.submittedAt ?? item.createdAt,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+    };
+  });
 
   for (const request of requestSeeds) {
     await run(`
       INSERT INTO content_requests (id, tenant_id, project_id, content_id, request_name, title, priority, expected_date, theme_format_matrix, total_count, note, status, submitted_by, submitted_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, 'pending', ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         tenant_id = excluded.tenant_id,
         project_id = excluded.project_id,
@@ -267,11 +312,128 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
       json(request.matrix),
       request.totalCount,
       request.note,
+      request.status,
       request.submittedBy,
       request.submittedAt,
       request.createdAt,
       request.updatedAt,
     ]);
+  }
+
+  for (const request of requestSeeds.slice(0, 3)) {
+    const strategyOnly = request.id === 'REQ-2030';
+    await run(`
+      INSERT INTO request_distribution_configs (
+        request_id, assignment_mode, whitelist_enabled, strategy_enabled,
+        department_filters, title_filters, region_filters, tag_filters,
+        whitelist_doctor_ids, whitelist_doctor_quota,
+        patient_channels, patient_regions, patient_tags, patient_gray_percent, patient_cap,
+        note, updated_by, created_at, updated_at
+      )
+      VALUES (?, 'mixed', ?, ?, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, 30, 5000, ?, 'PX 运营组', ?, ?)
+      ON CONFLICT(request_id) DO UPDATE SET
+        assignment_mode = excluded.assignment_mode,
+        whitelist_enabled = excluded.whitelist_enabled,
+        strategy_enabled = excluded.strategy_enabled,
+        department_filters = excluded.department_filters,
+        title_filters = excluded.title_filters,
+        region_filters = excluded.region_filters,
+        tag_filters = excluded.tag_filters,
+        whitelist_doctor_ids = excluded.whitelist_doctor_ids,
+        whitelist_doctor_quota = excluded.whitelist_doctor_quota,
+        patient_channels = excluded.patient_channels,
+        patient_regions = excluded.patient_regions,
+        patient_tags = excluded.patient_tags,
+        patient_gray_percent = excluded.patient_gray_percent,
+        patient_cap = excluded.patient_cap,
+        note = excluded.note,
+        updated_by = excluded.updated_by,
+        updated_at = excluded.updated_at
+    `, [
+      request.id,
+      boolValue(!strategyOnly),
+      boolValue(true),
+      json(['乳腺外科', '肿瘤内科']),
+      json(strategyOnly ? ['主任医师', '副主任医师', '主治医师', '住院医师'] : ['主任医师', '副主任医师']),
+      json(['华东', '华南']),
+      json(['KOL', '患教经验丰富']),
+      json(strategyOnly ? [] : ['doc_1001', 'doc_1002']),
+      json(strategyOnly ? {} : { doc_1001: 1, doc_1002: 1 }),
+      json(['微信公众号', '短信']),
+      json(['华东', '华南']),
+      json(['术后随访', 'HER2 靶向']),
+      'Demo seeded request-level distribution config.',
+      request.createdAt,
+      request.updatedAt,
+    ]);
+  }
+
+  const firstRequest = requestSeeds[0];
+  if (firstRequest) {
+    await run(`
+      INSERT INTO request_distribution_batches (id, request_id, batch_matrix, total_count, whitelist_total, strategy_total, operator, submitted_at, created_at)
+      VALUES (?, ?, ?${jsonCast}, ?, 1, 0, '陆玟昕', '2026-04-22 10:14', ?)
+      ON CONFLICT(id) DO UPDATE SET
+        batch_matrix = excluded.batch_matrix,
+        total_count = excluded.total_count,
+        whitelist_total = excluded.whitelist_total,
+        strategy_total = excluded.strategy_total,
+        operator = excluded.operator,
+        submitted_at = excluded.submitted_at
+    `, [
+      `BATCH-${firstRequest.id}-001`,
+      firstRequest.id,
+      json(firstRequest.matrix),
+      firstRequest.totalCount,
+      firstRequest.createdAt,
+    ]);
+  }
+
+  const azRequest = requestSeeds.find((request) => request.id === 'REQ-2030');
+  if (azRequest) {
+    const batches = [
+      {
+        id: 'BATCH-REQ-2030-1',
+        matrix: { treatment: { article: 2 } },
+        total: 2,
+        whitelist: 1,
+        strategy: 1,
+        operator: '陆玟昕',
+        submittedAt: '2026-04-22 10:14',
+      },
+      {
+        id: 'BATCH-REQ-2030-2',
+        matrix: { adverse: { checklist: 1 } },
+        total: 1,
+        whitelist: 0,
+        strategy: 1,
+        operator: '祝景琰',
+        submittedAt: '2026-04-25 16:32',
+      },
+    ];
+    for (const batch of batches) {
+      await run(`
+        INSERT INTO request_distribution_batches (id, request_id, batch_matrix, total_count, whitelist_total, strategy_total, operator, submitted_at, created_at)
+        VALUES (?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          batch_matrix = excluded.batch_matrix,
+          total_count = excluded.total_count,
+          whitelist_total = excluded.whitelist_total,
+          strategy_total = excluded.strategy_total,
+          operator = excluded.operator,
+          submitted_at = excluded.submitted_at
+      `, [
+        batch.id,
+        azRequest.id,
+        json(batch.matrix),
+        batch.total,
+        batch.whitelist,
+        batch.strategy,
+        batch.operator,
+        batch.submittedAt,
+        azRequest.createdAt,
+      ]);
+    }
   }
 
   await run('DELETE FROM behavior_trends');

@@ -1,6 +1,6 @@
-import { Card } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { FolderOpen, FileCheck, Send, Users, BookOpen, Heart } from 'lucide-react';
+import { Activity, BookOpen, FolderKanban, Heart, Users, Zap } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type { OverviewStats } from '@/types';
 
 interface KpiCardsProps {
@@ -20,31 +20,56 @@ export function KpiCards({ stats, loading }: KpiCardsProps): JSX.Element {
   }
 
   const cards = [
-    { label: '项目数', value: stats.projectCount, icon: <FolderOpen size={16} /> },
-    { label: '已发布内容', value: stats.publishedContent, icon: <FileCheck size={16} />, formatValue: false },
-    { label: '推送人数', value: stats.pushCount, icon: <Send size={16} /> },
-    { label: '阅读人数', value: stats.readUsers, icon: <Users size={16} /> },
-    { label: '阅读次数', value: stats.readCount, icon: <BookOpen size={16} /> },
-    { label: '互动数', value: stats.interactionCount, icon: <Heart size={16} /> },
+    { label: '项目数', value: stats.projectCount, icon: FolderKanban, accent: 'oklch(72% .17 195)' },
+    { label: '已发布内容', value: stats.publishedContent, icon: BookOpen, formatValue: false, accent: 'oklch(78% .15 70)' },
+    { label: '推送人数', value: stats.pushCount, icon: Users, accent: 'oklch(70% .15 200)' },
+    { label: '阅读人数', value: stats.readUsers, icon: Activity, accent: 'oklch(82% .15 165)' },
+    { label: '阅读次数', value: stats.readCount, icon: Zap, accent: 'oklch(82% .16 300)' },
+    { label: '互动数', value: stats.interactionCount, icon: Heart, accent: 'oklch(78% .15 30)' },
   ];
 
   return (
-    <Card className="grid grid-cols-6 gap-4">
+    <div className="grid grid-cols-2 gap-3 rounded-xl border border-border bg-card p-4 md:grid-cols-6">
       {cards.map((card) => (
-        <div key={card.label} className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-blue/12 text-accent-blue">
-            {card.icon}
-          </span>
-          <div>
-            <div className="text-xs text-text-muted">{card.label}</div>
-            <div className="mt-1 font-mono text-lg font-bold text-text-primary">
-              {card.formatValue === false || typeof card.value !== 'number'
-                ? card.value
-                : new Intl.NumberFormat('zh-CN').format(card.value)}
-            </div>
-          </div>
-        </div>
+        <SummaryCell
+          key={card.label}
+          label={card.label}
+          value={card.formatValue === false || typeof card.value !== 'number'
+            ? card.value
+            : new Intl.NumberFormat('zh-CN').format(card.value)}
+          icon={card.icon}
+          accent={card.accent}
+        />
       ))}
-    </Card>
+    </div>
+  );
+}
+
+function SummaryCell({
+  label,
+  value,
+  icon: Icon,
+  accent,
+}: {
+  label: string;
+  value: string | number;
+  icon: LucideIcon;
+  accent: string;
+}): JSX.Element {
+  return (
+    <div className="flex items-center gap-3">
+      <div
+        className="grid h-9 w-9 shrink-0 place-items-center rounded-lg"
+        style={{ background: `${accent.replace(')', ' / .15)')}`, color: accent }}
+      >
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-[11px] text-muted-foreground">{label}</div>
+        <div className="tabular text-[15.5px] font-semibold" style={{ color: accent }}>
+          {value}
+        </div>
+      </div>
+    </div>
   );
 }

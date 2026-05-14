@@ -146,7 +146,21 @@ intake → production → distribution → completed → archived
 编辑审核 → Px 审核 → 药企审核
 ```
 
-### 4.4 生产待确认
+### 4.4 诉求级分发工作台
+
+Manus 的 `/distribute/request/:ticketId` 已落到当前项目源码与 API：
+
+```text
+content_requests 诉求
+  → GET /api/distribution/requests/:id 获取诉求、策略、医生候选、历史批次
+  → POST /api/distribution/requests/:id/accept 运营受理拆单
+  → PUT /api/distribution/requests/:id/config 保存医生/患者诉求级策略
+  → POST /api/distribution/requests/:id/batches 写入本次主题 × 形式分发批次
+```
+
+当前批次用于留痕“指定医生分发”和“策略自动分发”的篇数分配。后续如果新增医生制作子任务实体，可以从 `request_distribution_batches` 继续派生医生任务。
+
+### 4.5 生产待确认
 
 - 分发项目与内容项目是否同一对象。
 - “医生制作”属于内容流、分发流，还是审批流。

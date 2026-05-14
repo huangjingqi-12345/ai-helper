@@ -22,9 +22,9 @@
 | F-002 | 总览 Dashboard | P0 | 🟡 部分完成 | DB/API 驱动；KPI 口径和 `overview_stats` 用途待确认 |
 | F-003 | 内容工坊 | P0 | 🟡 部分完成 | 列表/详情/API/版本表已存在；生产编辑/发布规则待确认 |
 | F-004 | 行为洞察 | P0 | 🟡 部分完成 | 聚合查询、趋势、导入/导出骨架存在；数据来源和口径待确认 |
-| F-005 | 分发策略/项目 | P0 | 🟡 部分完成 | 项目列表/API/详情基础已存在；详情部分硬编码，流程待确认 |
+| F-005 | 分发策略/项目 | P0 | 🟡 部分完成 | 项目列表/API/详情、诉求级分发工作台、批次留痕已存在；生产流程规则待确认 |
 | F-006 | 审批中心 | P0 | 🟡 部分完成 | 单条审批 API 已接；批量审批 demo-only，多节点规则待确认 |
-| F-007 | 平台管理/Admin | P0 | 🟡 部分完成 | 租户、账号、项目、审批流、审计 API/页面基础存在；权限矩阵待确认 |
+| F-007 | 平台管理/Admin | P0 | 🟡 部分完成 | 租户、账号、项目、审批流、审计 API/页面基础存在；页面已同步 Manus 视觉风格，权限矩阵待确认 |
 | F-008 | 设置 | P1 | 🧪 演示模式 | 审计日志可用；团队成员前端硬编码 |
 | F-009 | 财务 | P1/P2 | 🧪 演示模式 | UI 已有；无财务 DB/API/规则 |
 | F-010 | 认证、租户、权限 | P0 | 🟡 部分完成 | demo auth、OIDC/JWKS 骨架、租户隔离、权限表存在；生产 SSO/MFA 待客户配置 |
@@ -97,12 +97,18 @@
 **当前已完成**
 
 - `GET /api/distribution/projects`、`GET /api/distribution/projects/:id`。
+- `GET /api/distribution/requests/:id` 诉求级分发工作台。
+- `POST /api/distribution/requests/:id/accept` 受理拆单。
+- `PUT /api/distribution/requests/:id/config` 保存诉求级医生/患者策略。
+- `POST /api/distribution/requests/:id/batches` 提交并留痕分发批次。
 - `distribution_projects`、`distribution_strategies`、`doctors`、`distribution_records` 等表。
-- 项目化分发列表与详情基础。
+- `request_distribution_configs`、`request_distribution_batches` 支撑 Manus 的 `/distribute/request/:ticketId` 功能。
+- 项目化分发列表、项目详情、诉求级分发详情页已同步 Manus 风格。
+- Seed/API 增加 PRJ-1001 / REQ-2030 live demo 场景，支持项目详情到诉求分发工作台联动。
 
 **demo-only / 待确认**
 
-- 分发详情 `liveRequests` 硬编码。
+- 分发项目详情仍保留少量 `liveRequests` demo 展示映射；点击“配置分发策略”后进入 API-backed 诉求详情。
 - 详情 6 节点 flow 与审批中心 3 节点不一致。
 - 进度和当前节点是否应由流程派生。
 

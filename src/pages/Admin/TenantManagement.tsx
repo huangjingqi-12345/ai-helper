@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, ChevronRight, Search, ToggleLeft, ToggleRight } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -93,29 +94,28 @@ export function TenantManagement(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
-        <Badge color="blue" className="text-[10px] uppercase tracking-wider">平台管理 · 租户管理</Badge>
-        <h1 className="text-2xl font-bold text-text-primary">租户与可见范围</h1>
-        <p className="text-sm text-text-secondary">按租户维度配置药企可见的脱敏聚合范围、灰度上限与 k-匿名阈值，确保合规墙不被穿透。</p>
+      <PageHeader
+        eyebrow="平台管理 · 租户管理"
+        title="租户与可见范围"
+        subtitle="按租户维度配置药企可见的脱敏聚合范围（病种 / 品牌 / 区域）与账号隔离，确保合规墙不被穿透。"
+        actions={
+          <Button onClick={() => { log.action('Add tenant clicked'); setCreateOpen(true); }}>
+            <Building2 className="h-4 w-4" />
+            新增租户
+          </Button>
+        }
+      />
+
+      <div className="grid grid-cols-5 gap-3">
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">全部租户</div><div className="mt-2 text-2xl font-semibold tabular text-foreground">{tenants.length}</div></Card>
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">药企租户</div><div className="mt-2 text-2xl font-semibold tabular text-amber-300">{pharma}</div></Card>
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">已启用</div><div className="mt-2 text-2xl font-semibold tabular text-emerald-300">{activeTenants}</div></Card>
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">已停用</div><div className="mt-2 text-2xl font-semibold tabular text-rose-300">{tenants.length - activeTenants}</div></Card>
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">账号合计</div><div className="mt-2 text-2xl font-semibold tabular text-sky-300">{totalAccounts}</div></Card>
       </div>
 
-      <div className="flex justify-end">
-        <Button onClick={() => { log.action('Add tenant clicked'); setCreateOpen(true); }}>
-          <Building2 className="w-4 h-4" />
-          新增租户
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-5 gap-4">
-        <Card className="text-center"><div className="text-2xl font-bold text-text-primary font-mono">{tenants.length}</div><div className="text-xs text-text-muted mt-1">全部租户</div></Card>
-        <Card className="text-center"><div className="text-2xl font-bold text-accent-blue font-mono">{pharma}</div><div className="text-xs text-text-muted mt-1">药企租户</div></Card>
-        <Card className="text-center"><div className="text-2xl font-bold text-accent-green font-mono">{activeTenants}</div><div className="text-xs text-text-muted mt-1">已启用</div></Card>
-        <Card className="text-center"><div className="text-2xl font-bold text-accent-red font-mono">{tenants.length - activeTenants}</div><div className="text-xs text-text-muted mt-1">未启用</div></Card>
-        <Card className="text-center"><div className="text-2xl font-bold text-accent-purple font-mono">{totalAccounts}</div><div className="text-xs text-text-muted mt-1">账号合计</div></Card>
-      </div>
-
-      <Card>
-        <div className="flex items-center gap-4 mb-4">
+      <Card className="overflow-hidden border-border bg-card/40 p-0">
+        <div className="flex items-center gap-4 border-b border-border/60 px-4 py-3">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
             <input type="text" placeholder="搜索租户名 / 简称 / 合同号 / 联系人" value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-blue" />
@@ -126,7 +126,7 @@ export function TenantManagement(): JSX.Element {
 
         <table className="w-full">
           <thead>
-            <tr className="border-b border-border bg-bg-secondary/50">
+            <tr className="border-b border-border bg-card/70">
               <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">租户</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">类型 / 状态</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">合同 / 联系人</th>
@@ -140,7 +140,7 @@ export function TenantManagement(): JSX.Element {
               <tr><td colSpan={6} className="px-4 py-10 text-center text-sm text-text-muted">正在从 SQLite 加载租户...</td></tr>
             )}
             {!loading && filtered.map((t) => (
-              <tr key={t.id} className="border-b border-border/50 hover:bg-bg-tertiary/30 transition-colors">
+              <tr key={t.id} className="cursor-pointer border-b border-border/50 transition-colors hover:bg-secondary/40">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-accent-blue/20 flex items-center justify-center text-accent-blue text-xs font-bold">{t.shortName.slice(0, 2)}</div>

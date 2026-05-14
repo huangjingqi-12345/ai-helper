@@ -42,6 +42,48 @@ const migrations = [
       );
     `,
   },
+  {
+    id: '20260514-request-distribution-configs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS request_distribution_configs (
+        request_id TEXT PRIMARY KEY,
+        assignment_mode TEXT DEFAULT 'mixed' CHECK(assignment_mode IN ('mixed','whitelist','strategy')),
+        whitelist_enabled INTEGER DEFAULT 1,
+        strategy_enabled INTEGER DEFAULT 1,
+        department_filters TEXT DEFAULT '[]',
+        title_filters TEXT DEFAULT '[]',
+        region_filters TEXT DEFAULT '[]',
+        tag_filters TEXT DEFAULT '[]',
+        whitelist_doctor_ids TEXT DEFAULT '[]',
+        whitelist_doctor_quota TEXT DEFAULT '{}',
+        patient_channels TEXT DEFAULT '[]',
+        patient_regions TEXT DEFAULT '[]',
+        patient_tags TEXT DEFAULT '[]',
+        patient_gray_percent INTEGER DEFAULT 30,
+        patient_cap INTEGER DEFAULT 5000,
+        note TEXT DEFAULT '',
+        updated_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (request_id) REFERENCES content_requests(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS request_distribution_batches (
+        id TEXT PRIMARY KEY,
+        request_id TEXT NOT NULL,
+        batch_matrix TEXT DEFAULT '{}',
+        total_count INTEGER DEFAULT 0,
+        whitelist_total INTEGER DEFAULT 0,
+        strategy_total INTEGER DEFAULT 0,
+        operator TEXT,
+        submitted_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (request_id) REFERENCES content_requests(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_request_distribution_batches_request ON request_distribution_batches(request_id);
+    `,
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

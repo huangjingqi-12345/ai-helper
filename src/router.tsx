@@ -6,6 +6,7 @@ import { ContentDetail } from '@/pages/ContentDetail/ContentDetail';
 import { BehaviorInsights } from '@/pages/BehaviorInsights/BehaviorInsights';
 import { DistributionStrategy } from '@/pages/DistributionStrategy/DistributionStrategy';
 import { DistributionProjectDetail } from '@/pages/DistributionProject/DistributionProjectDetail';
+import { RequestDistributionDetail } from '@/pages/DistributionRequest/RequestDistributionDetail';
 import { ApprovalCenter } from '@/pages/ApprovalCenter/ApprovalCenter';
 import { PlatformManagement } from '@/pages/PlatformManagement/PlatformManagement';
 import { TenantManagement } from '@/pages/Admin/TenantManagement';
@@ -13,7 +14,7 @@ import { AccountManagement } from '@/pages/Admin/AccountManagement';
 import { ProjectManagement } from '@/pages/Admin/ProjectManagement';
 import { ApprovalFlowConfig } from '@/pages/Admin/ApprovalFlowConfig';
 import { Settings } from '@/pages/Settings/Settings';
-import { FinanceBilling, FinanceContracts, FinanceInvoicing, FinanceOverview } from '@/pages/Finance/FinancePages';
+import { FinanceBilling, FinanceContracts, FinanceDataPlatform, FinanceInvoicing, FinanceOverview } from '@/pages/Finance/FinancePages';
 
 export const router = createBrowserRouter([
   {
@@ -25,12 +26,14 @@ export const router = createBrowserRouter([
       { path: 'content/:id', element: <ContentDetail /> },
       { path: 'audience', element: <BehaviorInsights /> },
       { path: 'distribute', element: <DistributionStrategy /> },
+      { path: 'distribute/request/:ticketId', element: <RequestDistributionDetail /> },
       { path: 'distribute/:id', element: <DistributionProjectDetail /> },
       { path: 'approvals', element: <ApprovalCenter /> },
       { path: 'content-workshop', element: <ContentWorkshop /> },
       { path: 'content-workshop/:id', element: <ContentDetail /> },
       { path: 'behavior-insights', element: <BehaviorInsights /> },
       { path: 'distribution-strategy', element: <DistributionStrategy /> },
+      { path: 'distribution-strategy/request/:ticketId', element: <RequestDistributionDetail /> },
       { path: 'distribution-strategy/:id', element: <DistributionProjectDetail /> },
       { path: 'approval-center', element: <ApprovalCenter /> },
       { path: 'platform-management', element: <PlatformManagement /> },
@@ -39,6 +42,7 @@ export const router = createBrowserRouter([
       { path: 'finance/contracts', element: <FinanceContracts /> },
       { path: 'finance/billing', element: <FinanceBilling /> },
       { path: 'finance/invoicing', element: <FinanceInvoicing /> },
+      { path: 'finance/data', element: <FinanceDataPlatform /> },
       // Admin sub-pages
       { path: 'admin', element: <Navigate to="/admin/tenants" replace /> },
       { path: 'admin/tenants', element: <TenantManagement /> },

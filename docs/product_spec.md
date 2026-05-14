@@ -67,6 +67,7 @@ Px Lite 是面向中国医药场景的患者教育内容运营与聚合行为洞
 - 内容归属项目、租户、疾病、品牌、标签、状态、workflow state、pipeline stage。
 - 药企视图可以在内容工坊发起选题诉求：选择项目、填写诉求名、优先级、期望上线日、主题 × 形式篇数矩阵和备注。
 - 提交诉求会写入 `content_requests`，并生成一条 `requirement_submitted` 草稿内容进入内容列表。
+- 运营视图可以进入 `/distribute/request/:ticketId`，受理拆单、配置诉求级医生/患者分发策略，并提交主题 × 形式分发批次。
 - 内容版本表 `content_versions` 已存在。
 - 后端已有内容 CRUD 能力和药企诉求提交 API。
 
@@ -76,7 +77,7 @@ Px Lite 是面向中国医药场景的患者教育内容运营与聚合行为洞
 
 **生产待确认**
 
-- `content_requests` 后续如何拆单到医生制作任务。
+- `content_requests` 后续是否继续由 `request_distribution_batches` 派生医生制作任务，还是新增独立医生任务表。
 - 运营是否允许绕过诉求直接创建内容。
 - 医生制作稿、编辑修改稿、药企审核稿之间是否都要存版本。
 - 内容发布后是否可修改；修改是否产生新版本与新审批。

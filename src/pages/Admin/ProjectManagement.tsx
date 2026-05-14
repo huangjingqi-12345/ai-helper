@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FolderPlus, Search } from 'lucide-react';
+import { Briefcase, CalendarClock, FolderPlus, Layers, Search, TrendingUp } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -130,25 +131,22 @@ export function ProjectManagement(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
-        <Badge color="blue" className="text-[10px] uppercase tracking-wider">Admin · Projects</Badge>
-        <h1 className="text-2xl font-bold text-text-primary">项目管理</h1>
-        <p className="text-sm text-text-secondary max-w-3xl">按租户与病种组织的患教项目；新建项目独立完成基础登记，诉求在内容工坊侧逐条挂载。</p>
+      <PageHeader
+        eyebrow="Admin · Projects"
+        title="项目管理"
+        subtitle="按租户与病种组织的患教项目；新建项目独立完成基础登记，诉求在内容工坊侧逐条挂载。"
+        actions={<Button onClick={() => setCreateOpen(true)}><FolderPlus className="h-4 w-4" />新建项目</Button>}
+      />
+
+      <div className="grid grid-cols-4 gap-3">
+        <MiniKpi icon={<Briefcase className="h-4 w-4 text-primary" />} label="项目总数" value={projects.length} />
+        <MiniKpi icon={<TrendingUp className="h-4 w-4 text-primary" />} label="进行中" value={inProgress} />
+        <MiniKpi icon={<Layers className="h-4 w-4 text-primary" />} label="累计篇数" value={`${formatNumber(totalPieces)}篇`} />
+        <MiniKpi icon={<CalendarClock className="h-4 w-4 text-primary" />} label="已完成" value={completed} />
       </div>
 
-      <div className="flex justify-end">
-        <Button onClick={() => setCreateOpen(true)}><FolderPlus className="h-4 w-4" />新建项目</Button>
-      </div>
-
-      <div className="grid grid-cols-4 gap-4">
-        <Card className="text-center"><div className="font-mono text-2xl font-bold text-text-primary">{projects.length}</div><div className="mt-1 text-xs text-text-muted">项目总数</div></Card>
-        <Card className="text-center"><div className="font-mono text-2xl font-bold text-accent-yellow">{inProgress}</div><div className="mt-1 text-xs text-text-muted">进行中</div></Card>
-        <Card className="text-center"><div className="font-mono text-2xl font-bold text-accent-blue">{formatNumber(totalPieces)}篇</div><div className="mt-1 text-xs text-text-muted">累计篇数</div></Card>
-        <Card className="text-center"><div className="font-mono text-2xl font-bold text-accent-green">{completed}</div><div className="mt-1 text-xs text-text-muted">已完成</div></Card>
-      </div>
-
-      <Card className="space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
+      <Card className="overflow-hidden border-border bg-card/40 p-0">
+        <div className="flex flex-wrap items-center gap-3 border-b border-border/60 px-4 py-3">
           <div className="relative flex-1 min-w-[260px] max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索项目 / 品牌 / 病种 / 负责人" className="h-9 w-full rounded-lg border border-border bg-bg-tertiary pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-blue" />
@@ -161,9 +159,9 @@ export function ProjectManagement(): JSX.Element {
         {loading ? (
           <div className="py-10 text-center text-sm text-text-muted">正在加载项目...</div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 p-4 xl:grid-cols-2">
             {filtered.map((project) => (
-              <div key={project.id} className="rounded-card border border-border bg-bg-secondary/40 p-4">
+              <div key={project.id} className="rounded-xl border border-border bg-card/60 p-4 transition-colors hover:border-primary/40">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-semibold text-text-primary">{project.title}</h3>
@@ -179,7 +177,7 @@ export function ProjectManagement(): JSX.Element {
                 </div>
                 <div className="mt-3 text-xs text-text-muted">创建 {formatProjectTimestamp(project.createdAt)}</div>
                 <div className="mt-4 text-right">
-                  <Link to={`/distribute/${project.id}`} className="text-xs text-accent-blue hover:underline">查看详情</Link>
+                  <Link to={`/distribute/${project.id}`} className="text-xs text-primary hover:underline">查看详情</Link>
                 </div>
               </div>
             ))}
@@ -192,6 +190,17 @@ export function ProjectManagement(): JSX.Element {
         <ProjectWizard onCreate={addProject} />
       </Modal>
     </div>
+  );
+}
+
+function MiniKpi({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }): JSX.Element {
+  return (
+    <Card className="bg-card/60 p-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+        {icon} {label}
+      </div>
+      <div className="mt-1 text-[18px] font-semibold tabular text-foreground">{value}</div>
+    </Card>
   );
 }
 

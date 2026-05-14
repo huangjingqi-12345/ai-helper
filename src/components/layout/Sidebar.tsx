@@ -1,49 +1,70 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, Eye, Send, CheckCircle, Settings, ChevronDown, Building2, UserCog, GitBranch, FolderKanban, WalletCards, FileSignature, ReceiptText, FileCheck2 } from 'lucide-react';
+import {
+  BadgeDollarSign,
+  Briefcase,
+  Building2,
+  ChevronDown,
+  ChevronRight,
+  FileSignature,
+  FileText,
+  KeyRound,
+  Layers,
+  LayoutDashboard,
+  LineChart,
+  LogOut,
+  Megaphone,
+  Receipt,
+  ServerCog,
+  Settings,
+  ShieldCheck,
+  Users,
+  Wallet,
+  Workflow,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useLogger } from '@/hooks/useLogger';
 import { useTenantStore } from '@/stores/useTenantStore';
 import { showToast } from '@/components/ui/Toast';
 
-const mainNavItems = [
-  { key: 'overview', label: '总览', path: '/', icon: 'LayoutDashboard' },
-  { key: 'content-workshop', label: '患教内容工坊', path: '/content', icon: 'FileText' },
-  { key: 'behavior-insights', label: '患者行为洞察', path: '/audience', icon: 'Eye' },
-  { key: 'distribution-strategy', label: '分发策略', path: '/distribute', icon: 'Send' },
-  { key: 'approval-center', label: '审批中心', path: '/approvals', icon: 'CheckCircle' },
-];
-
-const adminSubItems = [
-  { key: 'admin-tenants', label: '租户管理', path: '/admin/tenants', icon: 'Building2' },
-  { key: 'admin-accounts', label: '账号管理', path: '/admin/accounts', icon: 'UserCog' },
-  { key: 'admin-projects', label: '项目管理', path: '/admin/projects', icon: 'FolderKanban' },
-  { key: 'admin-approval-flows', label: '审批流配置', path: '/admin/approval-flows', icon: 'GitBranch' },
-];
-
-const financeSubItems = [
-  { key: 'finance-overview', label: '业财总览', path: '/finance', icon: 'WalletCards' },
-  { key: 'finance-contracts', label: '合同与订阅', path: '/finance/contracts', icon: 'FileSignature' },
-  { key: 'finance-billing', label: '账单引擎', path: '/finance/billing', icon: 'ReceiptText' },
-  { key: 'finance-invoicing', label: '价值交付与开票', path: '/finance/invoicing', icon: 'FileCheck2' },
-];
-
-const iconMap: Record<string, React.ReactNode> = {
-  LayoutDashboard: <LayoutDashboard size={18} />,
-  FileText: <FileText size={18} />,
-  Eye: <Eye size={18} />,
-  Send: <Send size={18} />,
-  CheckCircle: <CheckCircle size={18} />,
-  Settings: <Settings size={18} />,
-  Building2: <Building2 size={16} />,
-  UserCog: <UserCog size={16} />,
-  GitBranch: <GitBranch size={16} />,
-  FolderKanban: <FolderKanban size={16} />,
-  WalletCards: <WalletCards size={16} />,
-  FileSignature: <FileSignature size={16} />,
-  ReceiptText: <ReceiptText size={16} />,
-  FileCheck2: <FileCheck2 size={16} />,
+type NavItem = {
+  key: string;
+  label: string;
+  path: string;
+  icon: LucideIcon;
+  exact?: boolean;
 };
+
+const mainNavItems: NavItem[] = [
+  { key: 'overview', label: '总览', path: '/', icon: LayoutDashboard, exact: true },
+  { key: 'content-workshop', label: '患教内容工坊', path: '/content', icon: FileText },
+  { key: 'behavior-insights', label: '患者行为洞察', path: '/audience', icon: Users },
+  { key: 'distribution-strategy', label: '分发策略', path: '/distribute', icon: Megaphone },
+  { key: 'approval-center', label: '审批中心', path: '/approvals', icon: ShieldCheck },
+];
+
+const adminSubItems: NavItem[] = [
+  { key: 'admin-tenants', label: '租户管理', path: '/admin/tenants', icon: Building2 },
+  { key: 'admin-accounts', label: '账号管理', path: '/admin/accounts', icon: KeyRound },
+  { key: 'admin-projects', label: '项目管理', path: '/admin/projects', icon: Briefcase },
+  { key: 'admin-approval-flows', label: '审批流配置', path: '/admin/approval-flows', icon: Workflow },
+];
+
+const financeSubItems: NavItem[] = [
+  { key: 'finance-overview', label: '业财总览', path: '/finance', icon: LineChart, exact: true },
+  { key: 'finance-contracts', label: '合同与订阅', path: '/finance/contracts', icon: FileSignature },
+  { key: 'finance-billing', label: '账单引擎', path: '/finance/billing', icon: Receipt },
+  { key: 'finance-invoicing', label: '价值交付与开票', path: '/finance/invoicing', icon: BadgeDollarSign },
+  { key: 'finance-data', label: '业财数据基座', path: '/finance/data', icon: Layers },
+];
+
+const ENABLE_FINANCE_MENU = false;
+
+function isActive(pathname: string, path: string, exact?: boolean): boolean {
+  if (exact) return pathname === path;
+  return pathname === path || pathname.startsWith(`${path}/`);
+}
 
 export function Sidebar(): JSX.Element {
   const location = useLocation();
@@ -52,178 +73,165 @@ export function Sidebar(): JSX.Element {
   const { isOps } = useTenantStore();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(
-    location.pathname.startsWith('/admin') || location.pathname === '/platform-management'
+    location.pathname.startsWith('/admin') || location.pathname === '/platform-management',
   );
   const [financeExpanded, setFinanceExpanded] = useState(location.pathname.startsWith('/finance'));
 
   const isAdminActive = location.pathname.startsWith('/admin') || location.pathname === '/platform-management';
   const isFinanceActive = location.pathname.startsWith('/finance');
-  const activeKey =
-    adminSubItems.find((item) => item.path === location.pathname)?.key ||
-    financeSubItems.find((item) => item.path === location.pathname)?.key ||
-    mainNavItems.find((item) => location.pathname === item.path || location.pathname.startsWith(`${item.path}/`))?.key ||
-    (location.pathname === '/settings' ? 'settings' : undefined) ||
-    (location.pathname === '/platform-management' ? 'admin-tenants' : 'overview');
 
   const handleNavClick = (path: string, label: string): void => {
     log.nav(`Navigate to ${label}`, { path });
     navigate(path);
   };
 
-  const toggleAdmin = () => {
-    setAdminExpanded(!adminExpanded);
-    if (!adminExpanded && !isAdminActive) {
-      navigate('/admin/tenants');
-    }
-  };
-
-  const toggleFinance = () => {
-    setFinanceExpanded(!financeExpanded);
-    if (!financeExpanded && !isFinanceActive) {
-      navigate('/finance');
-    }
-  };
-
   const openSettings = (section: 'account' | 'team'): void => {
     setUserMenuOpen(false);
     handleNavClick('/settings', section === 'account' ? '账号设置' : '团队管理');
-    if (section === 'team') {
-      showToast('已打开团队管理', 'info');
-    }
+    if (section === 'team') showToast('已打开团队管理', 'info');
   };
 
   return (
-    <aside className="w-sidebar h-screen bg-bg-secondary/95 border-r border-border flex shrink-0 flex-col overflow-y-auto backdrop-blur">
+    <aside className="relative flex w-[240px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
       <button
         onClick={() => handleNavClick('/', '总览')}
-        className="flex items-center gap-3 border-b border-border px-5 py-4 text-left transition-colors hover:bg-bg-tertiary/60"
+        className="flex h-16 items-center gap-3 border-b border-sidebar-border px-5 text-left transition-colors hover:bg-sidebar-accent/60"
       >
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-blue text-sm font-bold text-bg-primary shadow-[0_0_24px_rgba(8,212,232,0.26)]">
-          Px
+        <div className="relative grid h-9 w-9 place-items-center rounded-lg bg-gradient-to-br from-[oklch(75%_.13_195)] to-[oklch(60%_.16_220)] shadow-[0_0_18px_oklch(70%_.15_200_/.45)]">
+          <span className="text-[15px] font-bold tracking-tight text-[oklch(15%_.02_260)]">Px</span>
         </div>
-        <div>
-          <div className="font-mono text-sm font-bold text-text-primary">Px Lite</div>
-          <div className="text-xs text-text-muted">极简版 · 行为洞察</div>
+        <div className="leading-tight">
+          <div className="text-[13px] font-semibold tracking-wide text-foreground">Px Lite</div>
+          <div className="text-[11px] text-muted-foreground">极简版 · 行为洞察</div>
         </div>
       </button>
 
-      <div className="px-4 py-4">
-        <h3 className="text-[10px] uppercase tracking-widest text-text-muted font-medium mb-3">主菜单</h3>
-        <nav className="flex flex-col gap-1">
+      <nav className="flex-1 overflow-y-auto px-3 py-4">
+        <div className="px-2 pb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">主菜单</div>
+        <ul className="space-y-1">
           {mainNavItems
-            .filter((item) => isOps || !['distribution-strategy'].includes(item.key))
-            .map((item) => (
-            <button
-              key={item.key}
-              onClick={() => handleNavClick(item.path, item.label)}
-              className={clsx(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 text-left w-full',
-                activeKey === item.key
-                  ? 'bg-gradient-to-r from-accent-purple/20 to-accent-blue/10 text-accent-blue border-l-2 border-accent-blue'
-                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
-              )}
-            >
-              {iconMap[item.icon]}
-              <span>{item.label}</span>
-            </button>
-          ))}
-
-          {/* 平台管理 expandable */}
-          {isOps && (
-            <button
-              onClick={toggleAdmin}
-              className={clsx(
-                'flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 text-left w-full',
-                isAdminActive
-                  ? 'bg-gradient-to-r from-accent-purple/20 to-accent-blue/10 text-accent-blue border-l-2 border-accent-blue'
-                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
-              )}
-            >
-              <div className="flex items-center gap-3">
-                {iconMap.Settings}
-                <span>平台管理</span>
-              </div>
-              <ChevronDown
-                size={14}
-                className={clsx('transition-transform duration-200', adminExpanded ? 'rotate-180' : '')}
-              />
-            </button>
-          )}
-
-          {/* Admin sub-items */}
-          {isOps && adminExpanded && (
-            <div className="ml-4 pl-3 border-l border-border/50 flex flex-col gap-0.5">
-              {adminSubItems.map((item) => (
-                <button
-                  key={item.key}
-                  onClick={() => handleNavClick(item.path, item.label)}
-                  className={clsx(
-                    'flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-colors duration-150 text-left w-full',
-                    activeKey === item.key
-                      ? 'bg-accent-blue/10 text-accent-blue'
-                      : 'text-text-muted hover:bg-bg-tertiary hover:text-text-primary'
-                  )}
-                >
-                  {iconMap[item.icon]}
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
+            .filter((item) => isOps || item.key !== 'distribution-strategy')
+            .map((item) => {
+              const active = isActive(location.pathname, item.path, item.exact);
+              const Icon = item.icon;
+              return (
+                <li key={item.key} className="relative">
+                  {active && <span className="nav-indicator" />}
+                  <button
+                    onClick={() => handleNavClick(item.path, item.label)}
+                    className={clsx(
+                      'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors',
+                      active
+                        ? 'bg-sidebar-accent text-foreground'
+                        : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+                    )}
+                  >
+                    <Icon className={clsx('h-[16px] w-[16px] shrink-0', active ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')} />
+                    <span className="flex-1">{item.label}</span>
+                  </button>
+                </li>
+              );
+            })}
 
           {isOps && (
-            <button
-              onClick={toggleFinance}
-              className={clsx(
-                'flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 text-left w-full',
-                isFinanceActive
-                  ? 'bg-gradient-to-r from-accent-purple/20 to-accent-blue/10 text-accent-blue border-l-2 border-accent-blue'
-                  : 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+            <li className="relative">
+              <button
+                onClick={() => setAdminExpanded((open) => !open)}
+                className={clsx(
+                  'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors',
+                  isAdminActive
+                    ? 'bg-sidebar-accent/60 text-foreground'
+                    : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+                )}
+              >
+                <ServerCog className={clsx('h-[16px] w-[16px] shrink-0', isAdminActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')} />
+                <span className="flex-1">平台管理</span>
+                {adminExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+              </button>
+              {adminExpanded && (
+                <ul className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border/60 pl-3">
+                  {adminSubItems.map((item) => {
+                    const active = isActive(location.pathname, item.path, item.exact) || (item.path === '/admin/tenants' && location.pathname === '/platform-management');
+                    const Icon = item.icon;
+                    return (
+                      <li key={item.key} className="relative">
+                        {active && <span className="nav-indicator" />}
+                        <button
+                          onClick={() => handleNavClick(item.path, item.label)}
+                          className={clsx(
+                            'group flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[12.5px] font-medium transition-colors',
+                            active
+                              ? 'bg-sidebar-accent text-foreground'
+                              : 'text-sidebar-foreground/85 hover:bg-sidebar-accent/60 hover:text-foreground',
+                          )}
+                        >
+                          <Icon className={clsx('h-[14px] w-[14px] shrink-0', active ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')} />
+                          <span className="flex-1">{item.label}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
-            >
-              <div className="flex items-center gap-3">
-                {iconMap.WalletCards}
-                <span>财务管理</span>
-              </div>
-              <ChevronDown
-                size={14}
-                className={clsx('transition-transform duration-200', financeExpanded ? 'rotate-180' : '')}
-              />
-            </button>
+            </li>
           )}
 
-          {isOps && financeExpanded && (
-            <div className="ml-4 pl-3 border-l border-border/50 flex flex-col gap-0.5">
-              {financeSubItems.map((item) => (
-                <button
-                  key={item.key}
-                  onClick={() => handleNavClick(item.path, item.label)}
-                  className={clsx(
-                    'flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs transition-colors duration-150 text-left w-full',
-                    activeKey === item.key
-                      ? 'bg-accent-blue/10 text-accent-blue'
-                      : 'text-text-muted hover:bg-bg-tertiary hover:text-text-primary'
-                  )}
-                >
-                  {iconMap[item.icon]}
-                  <span>{item.label}</span>
-                </button>
-              ))}
-            </div>
+          {ENABLE_FINANCE_MENU && isOps && (
+            <li className="relative">
+              <button
+                onClick={() => setFinanceExpanded((open) => !open)}
+                className={clsx(
+                  'group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[13.5px] font-medium transition-colors',
+                  isFinanceActive
+                    ? 'bg-sidebar-accent/60 text-foreground'
+                    : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+                )}
+              >
+                <Wallet className={clsx('h-[16px] w-[16px] shrink-0', isFinanceActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')} />
+                <span className="flex-1">财务管理</span>
+                {financeExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+              </button>
+              {financeExpanded && (
+                <ul className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border/60 pl-3">
+                  {financeSubItems.map((item) => {
+                    const active = isActive(location.pathname, item.path, item.exact);
+                    const Icon = item.icon;
+                    return (
+                      <li key={item.key} className="relative">
+                        {active && <span className="nav-indicator" />}
+                        <button
+                          onClick={() => handleNavClick(item.path, item.label)}
+                          className={clsx(
+                            'group flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[12.5px] font-medium transition-colors',
+                            active
+                              ? 'bg-sidebar-accent text-foreground'
+                              : 'text-sidebar-foreground/85 hover:bg-sidebar-accent/60 hover:text-foreground',
+                          )}
+                        >
+                          <Icon className={clsx('h-[14px] w-[14px] shrink-0', active ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground')} />
+                          <span className="flex-1">{item.label}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </li>
           )}
-        </nav>
-      </div>
+        </ul>
 
-      <div className="px-4 py-4 border-t border-border mt-2">
-        <h3 className="text-[10px] uppercase tracking-widest text-text-muted font-medium mb-2">说明</h3>
-        <p className="text-xs text-text-muted leading-relaxed">
-          {isOps
-            ? '当前视图\n运营视图 Ops View。 合规枢纽 · 唯一可见患者明文 · 全部生产 / 触达能力'
-            : '药企视图 Pharma View。仅可见脱敏聚合数据 · k-匿名 · 不可下钻到个体'}
-        </p>
-      </div>
+        <div className="mt-8 px-2 pb-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">说明</div>
+        <div className="mx-2 rounded-md border border-sidebar-border bg-[oklch(18%_.02_260)] p-3 text-[11.5px] leading-relaxed text-muted-foreground">
+          <div className="mb-1.5 flex items-center gap-1.5 text-foreground">
+            <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+            <span className="text-[11px] font-semibold tracking-wide">当前视图</span>
+          </div>
+          <span className="text-foreground">{isOps ? '运营视图 Ops View' : '药企视图 Pharma View'}</span>。{' '}
+          {isOps ? '合规枢纽 · 唯一可见患者明文 · 全部生产 / 触达能力' : '仅可见脱敏聚合数据 · k-匿名 · 不可下钻到个体'}
+        </div>
+      </nav>
 
-      <div className="relative mt-auto px-4 py-4 border-t border-border">
+      <div className="relative border-t border-sidebar-border p-3">
         {userMenuOpen && (
           <>
             <button
@@ -232,47 +240,36 @@ export function Sidebar(): JSX.Element {
               onClick={() => setUserMenuOpen(false)}
               tabIndex={-1}
             />
-            <div className="absolute bottom-[86px] left-4 z-30 w-[200px] overflow-hidden rounded-lg border border-border-light bg-bg-card shadow-[0_18px_48px_rgba(0,0,0,0.38)]">
-              <div className="border-b border-border px-4 py-3 text-xs text-text-primary">系统管理员</div>
-              <button
-                onClick={() => openSettings('account')}
-                className="block w-full border-b border-border px-4 py-3 text-left text-xs text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
-              >
-                账号设置
+            <div className="absolute bottom-[70px] left-3 z-30 w-[200px] overflow-hidden rounded-lg border border-border bg-card shadow-[0_18px_48px_rgba(0,0,0,0.38)]">
+              <div className="border-b border-border px-4 py-3 text-xs text-foreground">系统管理员</div>
+              <button onClick={() => openSettings('account')} className="block w-full border-b border-border px-4 py-3 text-left text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                <Settings className="mr-2 inline h-3.5 w-3.5" />账号设置
               </button>
-              <button
-                onClick={() => openSettings('team')}
-                className="block w-full border-b border-border px-4 py-3 text-left text-xs text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-text-primary"
-              >
-                团队管理
+              <button onClick={() => openSettings('team')} className="block w-full border-b border-border px-4 py-3 text-left text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                <Users className="mr-2 inline h-3.5 w-3.5" />团队管理
               </button>
               <button
                 onClick={() => {
                   setUserMenuOpen(false);
                   showToast('已退出登录', 'info');
                 }}
-                className="block w-full px-4 py-3 text-left text-xs text-text-secondary transition-colors hover:bg-bg-tertiary hover:text-accent-red"
+                className="block w-full px-4 py-3 text-left text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-[oklch(75%_.18_25)]"
               >
-                退出登录
+                <LogOut className="mr-2 inline h-3.5 w-3.5" />退出登录
               </button>
             </div>
           </>
         )}
         <button
           onClick={() => setUserMenuOpen((open) => !open)}
-          className={clsx(
-            'flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors',
-            activeKey === 'settings' ? 'bg-gradient-to-r from-accent-purple/20 to-accent-blue/10 text-accent-blue' : 'hover:bg-bg-tertiary',
-          )}
+          className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-sidebar-accent"
         >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-500/20 text-xs font-bold text-teal-300">
-            系
+          <div className="grid h-8 w-8 place-items-center rounded-full bg-[oklch(28%_.04_200)] text-[12px] font-semibold text-primary">系</div>
+          <div className="min-w-0 flex-1 leading-tight">
+            <div className="truncate text-[12.5px] font-medium text-foreground">系统管理员</div>
+            <div className="truncate text-[11px] text-muted-foreground">华东区域 · admin</div>
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm text-text-primary">系统管理员</div>
-            <div className="text-xs text-text-muted">华东区域 · admin</div>
-          </div>
-          <ChevronDown size={14} className={clsx('shrink-0 text-text-muted transition-transform', userMenuOpen && 'rotate-180')} />
+          <ChevronDown className={clsx('h-3.5 w-3.5 text-muted-foreground transition-transform', userMenuOpen && 'rotate-180')} />
         </button>
       </div>
     </aside>

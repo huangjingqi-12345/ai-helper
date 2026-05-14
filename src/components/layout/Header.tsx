@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Search, Bell, ChevronDown, Settings, LogOut, User, Building2 } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
 import { showToast } from '@/components/ui/Toast';
 import { useTenantStore } from '@/stores/useTenantStore';
 import { NAV_ITEMS, APP_VERSION } from '@/utils/constants';
@@ -18,6 +17,7 @@ const financeLabels: Record<string, string> = {
   '/finance/contracts': '合同与订阅',
   '/finance/billing': '账单引擎',
   '/finance/invoicing': '价值交付与开票',
+  '/finance/data': '业财数据基座',
 };
 
 export function Header(): JSX.Element {
@@ -45,14 +45,15 @@ export function Header(): JSX.Element {
     : location.pathname === '/settings'
       ? '设置'
     : currentNav?.label || '总览';
+  const displayedVersion = APP_VERSION.includes('LOCAL') ? 'V0.1 · DEMO' : APP_VERSION;
 
   return (
-    <header className="h-header bg-bg-secondary/95 border-b border-border flex items-center justify-between px-6 shrink-0 backdrop-blur">
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-[oklch(17%_.02_260)] px-6">
       <div className="flex items-center gap-4">
-        <div className="text-xs text-text-secondary">
-          <span className="text-text-primary">Px Lite</span>
-          <span className="text-text-muted"> / </span>
-          <span className="text-text-primary">{pageLabel}</span>
+        <div className="flex items-center gap-3 text-[12.5px] text-muted-foreground">
+          <span className="font-medium text-foreground">Px Lite</span>
+          <span className="text-border">/</span>
+          <span className="text-foreground">{pageLabel}</span>
         </div>
       </div>
 
@@ -62,9 +63,9 @@ export function Header(): JSX.Element {
           <button
             aria-label="切换租户视角"
             onClick={() => setPxOpsOpen(!pxOpsOpen)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg-tertiary text-text-secondary text-xs hover:text-text-primary transition-colors"
+            className="flex h-8 items-center gap-2 rounded-md border border-[oklch(30%_.02_260_/.7)] bg-[oklch(24%_.02_260_/.3)] px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground"
           >
-            <Building2 size={14} className="text-accent-blue" />
+            <Building2 size={14} className="text-primary" />
             {currentTenant.shortName} <ChevronDown size={12} className={`transition-transform ${pxOpsOpen ? 'rotate-180' : ''}`} />
           </button>
           {pxOpsOpen && (
@@ -139,16 +140,16 @@ export function Header(): JSX.Element {
 
         <button
           onClick={() => showToast('请在列表页使用搜索框进行精确搜索。', 'info')}
-          className="p-2 rounded-lg hover:bg-bg-tertiary text-text-muted hover:text-text-primary transition-colors"
+          className="grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-[oklch(24%_.02_260)] hover:text-foreground"
         >
           <Search size={16} />
         </button>
         <button
           onClick={() => setNoticeOpen((open) => !open)}
-          className="p-2 rounded-lg hover:bg-bg-tertiary text-text-muted hover:text-text-primary transition-colors relative"
+          className="relative grid h-8 w-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-[oklch(24%_.02_260)] hover:text-foreground"
         >
           <Bell size={16} />
-          <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-accent-red rounded-full" />
+          <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
         </button>
         {noticeOpen && (
           <>
@@ -162,9 +163,9 @@ export function Header(): JSX.Element {
             </div>
           </>
         )}
-        <Badge color="purple" className="text-[10px]">
-          {APP_VERSION}
-        </Badge>
+        <span className="ml-1 rounded-md border border-border bg-[oklch(24%_.02_260_/.4)] px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          {displayedVersion}
+        </span>
       </div>
     </header>
   );

@@ -7,6 +7,9 @@ import type {
   UpdateStrategyDTO,
   DistributionProject,
   DoctorCandidate,
+  DistributionRequestWorkbench,
+  RequestDistributionBatch,
+  RequestDistributionConfig,
 } from '@/types/distribution';
 
 export async function getStrategies(params?: StrategyFilter): Promise<PaginatedResponse<DistributionStrategy>> {
@@ -36,5 +39,28 @@ export async function getDistributionProjectById(id: string): Promise<ApiRespons
 
 export async function getDistributionProjectDoctors(id: string): Promise<ApiResponse<DoctorCandidate[]>> {
   const response = await apiClient.get<ApiResponse<DoctorCandidate[]>>(`/distribution/projects/${id}/doctors`);
+  return response.data;
+}
+
+export async function getDistributionRequestWorkbench(id: string): Promise<ApiResponse<DistributionRequestWorkbench>> {
+  const response = await apiClient.get<ApiResponse<DistributionRequestWorkbench>>(`/distribution/requests/${id}`);
+  return response.data;
+}
+
+export async function acceptDistributionRequest(id: string, note?: string): Promise<ApiResponse<DistributionRequestWorkbench['request']>> {
+  const response = await apiClient.post<ApiResponse<DistributionRequestWorkbench['request']>>(`/distribution/requests/${id}/accept`, { note });
+  return response.data;
+}
+
+export async function saveRequestDistributionConfig(id: string, data: RequestDistributionConfig): Promise<ApiResponse<RequestDistributionConfig>> {
+  const response = await apiClient.put<ApiResponse<RequestDistributionConfig>>(`/distribution/requests/${id}/config`, data);
+  return response.data;
+}
+
+export async function submitRequestDistributionBatch(
+  id: string,
+  data: Pick<RequestDistributionBatch, 'batchMatrix' | 'whitelistTotal' | 'strategyTotal'>
+): Promise<ApiResponse<RequestDistributionBatch>> {
+  const response = await apiClient.post<ApiResponse<RequestDistributionBatch>>(`/distribution/requests/${id}/batches`, data);
   return response.data;
 }

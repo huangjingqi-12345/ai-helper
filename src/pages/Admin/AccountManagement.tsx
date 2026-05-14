@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Key, Search, ToggleLeft, ToggleRight, UserCog } from 'lucide-react';
+import { PageHeader } from '@/components/PageHeader';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -124,30 +125,29 @@ export function AccountManagement(): JSX.Element {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
-        <Badge color="blue" className="text-[10px] uppercase tracking-wider">平台管理 · 账号管理</Badge>
-        <h1 className="text-2xl font-bold text-text-primary">账号 · 角色 · 字段级权限</h1>
-        <p className="text-sm text-text-secondary">按租户与视图分配账号角色；多角色组合自动合并为字段级权限矩阵，越权访问触发告警与冻结。</p>
+      <PageHeader
+        eyebrow="平台管理 · 账号管理"
+        title="账号 · 角色 · 字段级权限"
+        subtitle="按租户与视图分配账号角色；多角色组合自动合并为字段级权限矩阵，越权访问触发告警与冻结。"
+        actions={
+          <Button onClick={() => { log.action('Invite account clicked'); setInviteOpen(true); }}>
+            <UserCog className="h-4 w-4" />
+            邀请账号
+          </Button>
+        }
+      />
+
+      <div className="grid grid-cols-6 gap-3">
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">全部账号</div><div className="mt-2 text-2xl font-semibold tabular text-foreground">{accounts.length}</div></Card>
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">运营视图</div><div className="mt-2 text-2xl font-semibold tabular text-sky-300">{opsCount}</div></Card>
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">药企视图</div><div className="mt-2 text-2xl font-semibold tabular text-amber-300">{pharmaCount}</div></Card>
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">已冻结</div><div className="mt-2 text-2xl font-semibold tabular text-rose-300">{frozenCount}</div></Card>
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">已开二步验证</div><div className="mt-2 text-2xl font-semibold tabular text-cyan-300">{has2faCount}</div></Card>
+        <Card className="bg-card/60 p-4"><div className="text-[11px] uppercase tracking-wider text-muted-foreground">待激活</div><div className="mt-2 text-2xl font-semibold tabular text-foreground">{accounts.filter((a) => a.status === 'invited').length}</div></Card>
       </div>
 
-      <div className="flex justify-end">
-        <Button onClick={() => { log.action('Invite account clicked'); setInviteOpen(true); }}>
-          <UserCog className="w-4 h-4" />
-          邀请账号
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-6 gap-4">
-        <Card className="text-center"><div className="text-2xl font-bold text-text-primary font-mono">{accounts.length}</div><div className="text-xs text-text-muted mt-1">全部账号</div></Card>
-        <Card className="text-center"><div className="text-2xl font-bold text-accent-blue font-mono">{opsCount}</div><div className="text-xs text-text-muted mt-1">运营视图</div></Card>
-        <Card className="text-center"><div className="text-2xl font-bold text-accent-green font-mono">{pharmaCount}</div><div className="text-xs text-text-muted mt-1">药企视图</div></Card>
-        <Card className="text-center"><div className="text-2xl font-bold text-accent-red font-mono">{frozenCount}</div><div className="text-xs text-text-muted mt-1">已冻结</div></Card>
-        <Card className="text-center"><div className="text-2xl font-bold text-accent-purple font-mono">{has2faCount}</div><div className="text-xs text-text-muted mt-1">已开二步验证</div></Card>
-        <Card className="text-center"><div className="text-2xl font-bold text-text-primary font-mono">{accounts.filter((a) => a.status === 'invited').length}</div><div className="text-xs text-text-muted mt-1">待激活</div></Card>
-      </div>
-
-      <Card>
-        <div className="flex items-center gap-3 mb-4 flex-wrap">
+      <Card className="overflow-hidden border-border bg-card/40 p-0">
+        <div className="flex flex-wrap items-center gap-3 border-b border-border/60 px-4 py-3">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
             <input type="text" placeholder="搜索姓名 / 邮箱 / 账号 ID" value={search} onChange={(e) => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 bg-bg-tertiary border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-blue" />
@@ -160,7 +160,7 @@ export function AccountManagement(): JSX.Element {
 
         <table className="w-full">
           <thead>
-            <tr className="border-b border-border bg-bg-secondary/50">
+            <tr className="border-b border-border bg-card/70">
               <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">账号</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">归属租户</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">视图 / 角色</th>
@@ -175,7 +175,7 @@ export function AccountManagement(): JSX.Element {
               <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-text-muted">正在从 SQLite 加载账号...</td></tr>
             )}
             {!loading && filtered.map((a) => (
-              <tr key={a.id} className="border-b border-border/50 hover:bg-bg-tertiary/30 transition-colors">
+              <tr key={a.id} className="cursor-pointer border-b border-border/50 transition-colors hover:bg-secondary/40">
                 <td className="px-4 py-3"><div className="text-sm font-medium text-text-primary">{a.name}</div><div className="text-xs text-text-muted">{a.email}</div></td>
                 <td className="px-4 py-3 text-sm text-text-secondary">{a.tenant}<div className="text-xs text-text-muted">{a.tenantId}</div></td>
                 <td className="px-4 py-3"><Badge color={a.view === '运营视图' ? 'blue' : 'green'}>{a.view}</Badge><div className="mt-0.5 space-y-0.5">{a.roles.map((role) => <div key={role} className="text-xs text-text-muted">{role}</div>)}</div></td>

@@ -139,6 +139,29 @@ paths:
         '403':
           description: 无内容读取权限
   /content/requests:
+    get:
+      summary: 获取药企选题诉求列表
+      description: 支持运营端按状态/项目分页查看 `content_requests`，药企租户仅能查看本租户诉求。
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: projectId
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 诉求分页列表
     post:
       summary: 药企提交选题诉求
       description: 写入 `content_requests`，并生成一条 `requirement_submitted` 草稿内容；不授予药企普通内容写权限。
@@ -177,6 +200,20 @@ paths:
           description: 无药企诉求提交权限
         '404':
           description: 项目不存在
+  /content/requests/{id}:
+    get:
+      summary: 获取单条选题诉求详情
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 诉求详情，包含所属项目摘要
+        '404':
+          description: 诉求不存在
   /content/{id}:
     get:
       summary: 获取内容详情
@@ -295,6 +332,79 @@ paths:
       responses:
         '200':
           description: 医生候选列表
+  /distribution/requests/{id}:
+    get:
+      summary: 获取诉求维度分发工作台
+      description: 返回选题诉求、诉求级分发配置、医生候选与历史分发批次。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 诉求维度分发工作台数据
+        '404':
+          description: 诉求不存在
+  /distribution/requests/{id}/accept:
+    post:
+      summary: 受理诉求并进入拆单/派单流程
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+      responses:
+        '200':
+          description: 诉求已受理
+        '403':
+          description: 无分发写权限
+        '404':
+          description: 诉求不存在
+  /distribution/requests/{id}/config:
+    put:
+      summary: 保存诉求级医生/患者分发策略
+      description: 写入 `request_distribution_configs`，包括医生筛选、指定医生额度、患者触达渠道、灰度比例和患者上限。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 策略已保存
+        '403':
+          description: 无分发写权限
+        '404':
+          description: 诉求不存在
+  /distribution/requests/{id}/batches:
+    post:
+      summary: 提交诉求分发批次
+      description: 写入 `request_distribution_batches`，记录本次主题 × 形式篇数、指定医生篇数和策略自动篇数。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: 分发批次已创建
+        '400':
+          description: 诉求不存在或批次为空
+        '403':
+          description: 无分发写权限
   /distribution:
     get:
       summary: 获取分发策略列表

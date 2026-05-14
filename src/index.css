@@ -3,16 +3,68 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --radius: 0.75rem;
+    --background: oklch(16% .02 260);
+    --foreground: oklch(93% .005 260);
+    --card: oklch(20% .02 260);
+    --card-foreground: oklch(93% .005 260);
+    --popover: oklch(22% .02 260);
+    --popover-foreground: oklch(93% .005 260);
+    --primary: oklch(70% .15 200);
+    --primary-foreground: oklch(16% .02 260);
+    --secondary: oklch(24% .02 260);
+    --secondary-foreground: oklch(80% .01 260);
+    --muted: oklch(22% .015 260);
+    --muted-foreground: oklch(60% .02 260);
+    --accent: oklch(24% .025 260);
+    --accent-foreground: oklch(93% .005 260);
+    --destructive: oklch(60% .2 25);
+    --destructive-foreground: oklch(95% 0 0);
+    --border: oklch(30% .02 260);
+    --input: oklch(28% .02 260);
+    --ring: oklch(70% .15 200);
+    --sidebar: oklch(14% .02 260);
+    --sidebar-foreground: oklch(85% .005 260);
+    --sidebar-primary: oklch(70% .15 200);
+    --sidebar-primary-foreground: oklch(16% .02 260);
+    --sidebar-accent: oklch(22% .025 260);
+    --sidebar-accent-foreground: oklch(93% .005 260);
+    --sidebar-border: oklch(26% .02 260);
+    --sidebar-ring: oklch(70% .15 200);
+  }
+
   * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
   }
 
+  html, body, #root {
+    height: 100%;
+  }
+
   body {
     min-height: 100vh;
     overflow-x: hidden;
-    background: #070b12;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: "DM Sans", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    cursor: pointer;
   }
 
   ::selection {
@@ -21,25 +73,72 @@
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 10px;
+    height: 10px;
   }
 
   ::-webkit-scrollbar-track {
-    background: #070b12;
+    background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #304150;
-    border-radius: 3px;
+    background: oklch(28% .02 260);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #08d4e8;
+    background: oklch(36% .02 260);
+    background-clip: padding-box;
+    border: 2px solid transparent;
   }
 }
 
 @layer components {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .container {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+
+  .flex {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .nav-indicator {
+    @apply absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r;
+    background: var(--primary);
+    box-shadow: 0 0 12px oklch(70% .15 200 / .55);
+  }
+
+  .kpi-card {
+    @apply relative overflow-hidden rounded-xl border border-border bg-card p-5 transition-colors;
+    background-image:
+      linear-gradient(180deg, oklch(22% .025 260) 0%, oklch(20% .02 260) 100%);
+  }
+
+  .kpi-card:hover {
+    border-color: oklch(40% .04 260);
+  }
+
+  .section-rule {
+    height: 1px;
+    width: 100%;
+    background: linear-gradient(90deg, oklch(30% .02 260) 0%, transparent 100%);
+  }
+
+  tr.row-hover:hover {
+    background: oklch(22% .02 260);
+  }
+
   .skeleton {
     @apply bg-bg-tertiary animate-pulse-skeleton rounded;
   }
