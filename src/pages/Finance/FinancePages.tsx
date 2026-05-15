@@ -1,256 +1,579 @@
-import { useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Database, FilePlus2, Send, Upload } from 'lucide-react';
+import { clsx } from 'clsx';
+import {
+  Activity,
+  AlertTriangle,
+  BadgeCheck,
+  BadgeDollarSign,
+  Banknote,
+  Building2,
+  ChevronRight,
+  Clock4,
+  FileBadge,
+  FileSignature,
+  FileText,
+  Hash,
+  Receipt,
+  Repeat2,
+  Send,
+  ShieldCheck,
+  Wallet,
+  TrendingUp,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { PageHeader } from '@/components/PageHeader';
+import { KpiCard } from '@/components/KpiCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
 import { showToast } from '@/components/ui/Toast';
+import {
+  FIN_BILL_STATUS_LABEL,
+  FIN_BILL_STATUS_TONE,
+  FIN_INVOICE_STATUS_LABEL,
+  FIN_PLAN_GROUP_LABEL,
+  FIN_RECON_STATUS_LABEL,
+  FIN_TIER_META,
+  FIN_VALUE_METRIC_LABEL,
+  finBills,
+  finBudgets,
+  finContracts,
+  finDunnings,
+  finInvoices,
+  finKpiSnapshot,
+  finReconciliations,
+  finSubscriptions,
+  finTenants,
+  finTrend,
+  finValueReports,
+  fmtMoney,
+  type FinBill,
+  type FinBillStatus,
+  type FinContract,
+  type FinInvoice,
+  type FinPlanGroup,
+  type FinSubscriptionTier,
+  type FinValueMetric,
+  type FinValueReport,
+} from '@/data/finance';
 
-const contracts = [
-  { customer: '诺欣华制药（中国）有限公司', no: 'PXC-2025-0918-NX', signed: '2025-08-25', bd: '周明轩', csm: '李雨晴', group: 'Px2 组 · 盘古计划', plan: 'L2 专业版', monthly: '100 万 / 月', period: '2025-09-01 ~ 2026-08-31', amount: '1,200 万', status: '生效中' },
-  { customer: '阿斯利康（无锡）贸易有限公司', no: 'PXC-2025-1009-AZ', signed: '2025-09-25', bd: '韩雪', csm: '李雨晴', group: 'Px2 组 · 盘古计划', plan: 'L2 专业版', monthly: '100 万 / 月', period: '2025-10-01 ~ 2026-09-30', amount: '1,200 万', status: '生效中' },
-  { customer: '默沙东（中国）投资有限公司', no: 'PXC-2025-1108-MSD', signed: '2025-10-28', bd: '陆斯远', csm: '王健', group: 'Px3 组 · 星火计划', plan: 'L3 旗舰版', monthly: '200 万 / 月', period: '2025-11-01 ~ 2026-10-31', amount: '2,400 万', status: '生效中' },
-  { customer: '罗氏制药（上海）有限公司', no: 'PXC-2025-1215-RC', signed: '2025-11-30', bd: '陆斯远', csm: '王健', group: 'Px3 组 · 星火计划', plan: 'L3 旗舰版', monthly: '200 万 / 月', period: '2025-12-01 ~ 2026-11-30', amount: '2,400 万', status: '生效中' },
-  { customer: '礼来贸易有限公司', no: 'PXC-2026-0105-LL', signed: '2025-12-22', bd: 'Vivian Yang', csm: '陈思雨', group: 'Px1 组 · 大禹计划', plan: 'L1 探索版', monthly: '50 万 / 月', period: '2026-01-01 ~ 2026-12-31', amount: '600 万', status: '生效中' },
-  { customer: '辉瑞投资有限公司', no: 'PXC-2026-0220-PF', signed: '2026-02-08', bd: '高琪', csm: '陈思雨', group: 'Px3 组 · 星火计划', plan: 'L3 旗舰版', monthly: '200 万 / 月', period: '2026-02-15 ~ 2027-02-14', amount: '2,600 万', status: '生效中' },
-  { customer: '礼来贸易有限公司', no: 'PXC-2026-0501-LL2', signed: '2026-04-15', bd: 'Vivian Yang', csm: '陈思雨', group: 'Px1 组 · 大禹计划', plan: 'L2 专业版', monthly: '100 万 / 月', period: '2026-05-01 ~ 2027-04-30', amount: '1,200 万', status: '待签署' },
-];
-
-const bills = [
-  ['诺欣华制药（中国）有限公司', 'BILL-202604-0004', '李雨晴', '2026-04', '100 万', '已发送'],
-  ['阿斯利康（无锡）贸易有限公司', 'BILL-202604-0009', '李雨晴', '2026-04', '100 万', '已发送'],
-  ['默沙东（中国）投资有限公司', 'BILL-202604-0014', '王健', '2026-04', '200 万', '已发送'],
-  ['罗氏制药（上海）有限公司', 'BILL-202604-0019', '王健', '2026-04', '200 万', '已发送'],
-  ['礼来贸易有限公司', 'BILL-202604-0024', '陈思雨', '2026-04', '50 万', '已发送'],
-  ['辉瑞投资有限公司', 'BILL-202604-0028', '陈思雨', '2026-04', '200 万', '已发送'],
-];
-
-const reports = [
-  ['辉瑞投资有限公司', '2026-04', 'BILL-202604-0028', '2026-05-02', '待转开票', 12, 13, 1814, 39802],
-  ['礼来贸易有限公司', '2026-04', 'BILL-202604-0024', '2026-05-02', '待转开票', 14, 12, 1403, 36829],
-  ['罗氏制药（上海）有限公司', '2026-04', 'BILL-202604-0019', '2026-05-02', '待转开票', 13, 13, 1655, 32865],
-  ['默沙东（中国）投资有限公司', '2026-04', 'BILL-202604-0014', '2026-05-02', '待转开票', 12, 14, 1907, 28901],
-  ['阿斯利康（无锡）贸易有限公司', '2026-04', 'BILL-202604-0009', '2026-05-02', '待转开票', 22, 8, 1359, 24937],
-  ['诺欣华制药（中国）有限公司', '2026-04', 'BILL-202604-0004', '2026-05-02', '待转开票', 21, 9, 1611, 20973],
-  ['辉瑞投资有限公司', '2026-03', 'BILL-202603-0027', '2026-04-05', '待转开票', 20, 8, 1677, 38811],
-  ['礼来贸易有限公司', '2026-03', 'BILL-202603-0023', '2026-04-05', '待转开票', 22, 14, 1266, 35838],
-  ['罗氏制药（上海）有限公司', '2026-03', 'BILL-202603-0018', '2026-04-05', '待转开票', 21, 8, 1518, 31874],
-  ['默沙东（中国）投资有限公司', '2026-03', 'BILL-202603-0013', '2026-04-05', '待转开票', 20, 9, 1770, 27910],
-  ['阿斯利康（无锡）贸易有限公司', '2026-03', 'BILL-202603-0008', '2026-04-05', '待转开票', 19, 10, 1222, 23946],
-  ['诺欣华制药（中国）有限公司', '2026-03', 'BILL-202603-0003', '2026-04-05', '待转开票', 18, 11, 1474, 19982],
-  ['辉瑞投资有限公司', '2026-02', 'BILL-202602-0026', '2026-03-05', '已转开票', 17, 10, 1540, 37820],
-  ['礼来贸易有限公司', '2026-02', 'BILL-202602-0022', '2026-03-05', '已转开票', 19, 9, 1929, 34847],
-  ['罗氏制药（上海）有限公司', '2026-02', 'BILL-202602-0017', '2026-03-05', '待转开票', 18, 10, 1381, 30883],
-  ['默沙东（中国）投资有限公司', '2026-02', 'BILL-202602-0012', '2026-03-05', '已转开票', 17, 11, 1633, 26919],
-  ['阿斯利康（无锡）贸易有限公司', '2026-02', 'BILL-202602-0007', '2026-03-05', '已转开票', 16, 12, 1885, 22955],
-  ['诺欣华制药（中国）有限公司', '2026-02', 'BILL-202602-0002', '2026-03-05', '已转开票', 15, 13, 1337, 18991],
-  ['礼来贸易有限公司', '2026-01', 'BILL-202601-0021', '2026-02-05', '已转开票', 16, 11, 1792, 33856],
-  ['罗氏制药（上海）有限公司', '2026-01', 'BILL-202601-0016', '2026-02-05', '已转开票', 15, 12, 1244, 29892],
-  ['默沙东（中国）投资有限公司', '2026-01', 'BILL-202601-0011', '2026-02-05', '已转开票', 14, 13, 1496, 25928],
-  ['阿斯利康（无锡）贸易有限公司', '2026-01', 'BILL-202601-0006', '2026-02-05', '已转开票', 13, 14, 1748, 21964],
-  ['诺欣华制药（中国）有限公司', '2026-01', 'BILL-202601-0001', '2026-02-05', '已转开票', 12, 8, 1200, 18000],
-];
-
-const invoices = [
-  ['诺欣华制药（中国）有限公司', '32011260000', 'BILL-202601-0001', '增值税普票', '2026-02-07', '100 万'],
-  ['诺欣华制药（中国）有限公司', '32021260001', 'BILL-202602-0002', '增值税专票', '2026-03-07', '100 万'],
-  ['阿斯利康（无锡）贸易有限公司', '32031260002', 'BILL-202601-0006', '增值税专票', '2026-02-07', '100 万'],
-  ['阿斯利康（无锡）贸易有限公司', '32011260003', 'BILL-202602-0007', '增值税普票', '2026-03-07', '100 万'],
-  ['默沙东（中国）投资有限公司', '32021260004', 'BILL-202601-0011', '增值税专票', '2026-02-07', '200 万'],
-  ['默沙东（中国）投资有限公司', '32031260005', 'BILL-202602-0012', '增值税专票', '2026-03-07', '200 万'],
-  ['罗氏制药（上海）有限公司', '32011260006', 'BILL-202601-0016', '增值税普票', '2026-02-07', '200 万'],
-  ['礼来贸易有限公司', '32021260007', 'BILL-202601-0021', '增值税专票', '2026-02-07', '50 万'],
-  ['礼来贸易有限公司', '32031260008', 'BILL-202602-0022', '增值税专票', '2026-03-07', '50 万'],
-  ['辉瑞投资有限公司', '32011260009', 'BILL-202602-0026', '增值税普票', '2026-03-07', '200 万'],
-];
+type Tone = 'default' | 'warn';
 
 export function FinanceOverview(): JSX.Element {
+  const k = finKpiSnapshot;
+  const overdueCount = finBills.filter((bill) => bill.status === 'overdue').length;
+  const pendingInvoiceCount = finBills.filter((bill) => bill.status === 'confirmed').length;
+  const pendingReconCount = finReconciliations.filter((recon) => recon.status === 'disputed').length;
+  const generatedThisMonth = finBills.filter((bill) => bill.period === '2026-04').length;
+
   return (
-    <FinanceShell badge="P2 · Finance" title="业财总览" desc="把客户合同到账单、对账与开票串成一条流水线，确保固定费收入按月自动确认；该模块与患教内容、分发策略、医生池逻辑完全隔离。">
-      <div className="text-xs text-text-muted">数据周期：2026-01 ~ 2026-05 <span className="mx-2">·</span> 所有金额以人民币元为单位</div>
-      <div className="grid grid-cols-4 gap-4">
-        <Kpi title="月度经常性收入" desc="6 份生效合同 · 6 家活跃客户" value="850 万" />
-        <Kpi title="累计签约金额" desc="年度预测 10,200 万" value="10,400 万" />
-        <Kpi title="已回款金额" desc="回款率 20.3%" value="650 万" />
-        <Kpi title="逾期金额" desc="2 张账单逾期 · 已触发催款" value="400 万" tone="red" />
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="P2 · Finance"
+        title="业财总览"
+        subtitle="把客户合同到账单、对账与开票串成一条流水线，确保固定费收入按月自动确认；该模块与患教内容、分发策略、医生池逻辑完全隔离。"
+        meta={
+          <>
+            <span className="rounded-md border border-border bg-secondary/40 px-2 py-1 text-[11.5px] text-muted-foreground">数据周期：2026-01 ~ 2026-05</span>
+            <span className="rounded-md border border-border bg-secondary/40 px-2 py-1 text-[11.5px] text-muted-foreground">所有金额以人民币元为单位</span>
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <KpiCard icon={Wallet} label="月度经常性收入" value={fmtMoney(k.monthlyRecurring, { unit: 'wan' })} hint={`${k.contractCount} 份生效合同 · ${k.activeTenants} 家活跃客户`} />
+        <KpiCard icon={TrendingUp} label="累计签约金额" value={fmtMoney(k.totalSigned, { unit: 'wan' })} hint={`年度预测 ${fmtMoney(k.yearlyForecast, { unit: 'wan' })}`} />
+        <KpiCard icon={Receipt} label="已回款金额" value={fmtMoney(k.cashCollected, { unit: 'wan' })} hint={`回款率 ${(k.collectionRate * 100).toFixed(1)}%`} />
+        <KpiCard icon={AlertTriangle} label="逾期金额" value={fmtMoney(k.overdueAmount, { unit: 'wan' })} hint={`${overdueCount} 张账单逾期 · 已触发催款`} className="[&_.tabular]:text-[oklch(82%_.18_25)]" />
       </div>
-      <div className="grid grid-cols-[1.1fr_0.9fr] gap-4">
-        <Card>
-          <h2 className="text-base font-semibold text-text-primary">收入与回款趋势</h2>
-          <p className="mt-1 text-xs text-text-muted">按月汇总：签约新增 / 收入确认 / 实际回款 · 单位：万元</p>
-          <div className="mt-5 flex h-56 items-end gap-6 border-b border-l border-border px-6 pb-4">
-            {[180, 360, 520, 850, 850].map((value, index) => <div key={index} className="flex flex-1 flex-col items-center gap-2"><div className="w-full rounded-t bg-accent-blue/70" style={{ height: `${value / 5}px` }} /><span className="text-[10px] text-text-muted">0{index + 1}月</span></div>)}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="rounded-xl border border-border bg-card p-5 lg:col-span-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[13.5px] font-semibold tracking-tight">收入与回款趋势</div>
+              <div className="mt-0.5 text-[11.5px] text-muted-foreground">按月汇总：签约新增 / 收入确认 / 实际回款</div>
+            </div>
+            <span className="rounded-md border border-border bg-secondary/40 px-2 py-1 text-[11px] text-muted-foreground tabular">单位：万元</span>
           </div>
-        </Card>
-        <Card>
-          <h2 className="text-base font-semibold text-text-primary">三组预算占用</h2>
-          <p className="mt-1 text-xs text-text-muted">按 BD 组 · 2026 年度</p>
-          {[['Px1 组 · 大禹计划', '600 万 / 10,000 万', 6, 2], ['Px2 组 · 盘古计划', '2,400 万 / 22,000 万', 10.9, 5.5], ['Px3 组 · 星火计划', '7,200 万 / 30,000 万', 24, 12]].map(([name, amount, budget, revenue]) => <div key={String(name)} className="mt-4"><div className="flex justify-between text-xs"><span className="text-text-primary">{name}</span><span className="text-text-muted">{amount}</span></div><div className="mt-2 h-2 rounded bg-bg-tertiary"><div className="h-2 rounded bg-accent-blue" style={{ width: `${budget}%` }} /></div><div className="mt-1 text-[10px] text-text-muted">占用 {budget}% · 已确认收入 {revenue}%</div></div>)}
-        </Card>
-      </div>
-      <div className="grid grid-cols-4 gap-4">
-        <FinanceLink href="/finance/contracts" title="合同与订阅" desc="租户主数据 · P2 智能体合同 · 订阅版本" metrics="活跃合同 6 份 待签订单 1 份" />
-        <FinanceLink href="/finance/billing" title="账单引擎" desc="月度自动排期 · 对账 · 催款联动" metrics="本月生成 6 张 对账异议 2 单" />
-        <FinanceLink href="/finance/invoicing" title="价值交付与开票" desc="月度价值报告 · 一键转开票指令" metrics="已生成报告 23 份 待开票 5 张 已开发票 10 张" />
-        <FinanceLink href="/finance/data" title="业财数据基座" desc="客户主数据 · 收入 / 回款 / 预算 · KPI" metrics="活跃客户 6 家 回款率 20.3%" />
-      </div>
-      <Card>
-        <h2 className="text-base font-semibold text-text-primary">业财待办速览</h2>
-        <div className="mt-4 grid gap-3">
-          <Todo href="/finance/billing" title="2 张账单已逾期" desc="合计 400 万 · 已触发 4 条催款" />
-          <Todo href="/finance/billing" title="2 单对账异议待处理" desc="客户主张服务量不足，需 CSM 联合 BD 复核" />
-          <Todo href="/finance/invoicing" title="5 张账单待转开票" desc="客户已对账确认，等待财务一键申请发票" />
+          <div className="mt-4 h-[260px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={finTrend.map((point) => ({
+                  month: `${point.month.slice(5)}月`,
+                  signed: point.signed / 10000,
+                  recognized: point.recognized / 10000,
+                  collected: point.collected / 10000,
+                }))}
+                margin={{ top: 10, right: 8, left: -16, bottom: 0 }}
+              >
+                <CartesianGrid stroke="oklch(28% .02 260)" strokeDasharray="3 4" vertical={false} />
+                <XAxis dataKey="month" stroke="oklch(60% .02 260)" tickLine={false} axisLine={false} />
+                <YAxis stroke="oklch(60% .02 260)" tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{ background: 'oklch(20% .02 260)', border: '1px solid oklch(30% .02 260)', borderRadius: 8, fontSize: 12 }}
+                  formatter={(value: number) => [`${value.toFixed(0)} 万`, '']}
+                />
+                <Bar dataKey="signed" name="签约 MRR" fill="oklch(58% .14 240)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="recognized" name="收入确认" fill="oklch(72% .14 195)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="collected" name="实际回款" fill="oklch(72% .15 165)" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
-      </Card>
-    </FinanceShell>
+
+        <div className="rounded-xl border border-border bg-card p-5">
+          <div className="text-[13.5px] font-semibold tracking-tight">三组预算占用</div>
+          <div className="mt-0.5 text-[11.5px] text-muted-foreground">按 BD 组 · 2026 年度</div>
+          <ul className="mt-4 space-y-3">
+            {finBudgets.map((budget) => {
+              const usage = budget.committed / budget.cap;
+              const recognizedPct = budget.recognized / budget.cap;
+              return (
+                <li key={budget.id} className="rounded-md border border-border bg-secondary/30 p-3">
+                  <div className="flex items-center justify-between text-[12.5px]">
+                    <span className="font-medium text-foreground">{FIN_PLAN_GROUP_LABEL[budget.group]}</span>
+                    <span className="text-muted-foreground tabular">{fmtMoney(budget.committed, { unit: 'wan' })} / {fmtMoney(budget.cap, { unit: 'wan' })}</span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[oklch(20%_.02_260)]">
+                    <div className="h-full rounded-full bg-[oklch(70%_.14_220)]" style={{ width: `${Math.min(100, usage * 100)}%` }} />
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>占用 {(usage * 100).toFixed(1)}%</span>
+                    <span>已确认收入 {(recognizedPct * 100).toFixed(1)}%</span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <ModuleCard
+          to="/finance/contracts"
+          icon={FileSignature}
+          title="合同与订阅"
+          desc="租户主数据 · P2 智能体合同 · 订阅版本"
+          stats={[{ label: '活跃合同', value: `${finContracts.filter((contract) => contract.status === 'active').length} 份` }, { label: '待签订单', value: `${finContracts.filter((contract) => contract.status === 'pending_sign').length} 份` }]}
+        />
+        <ModuleCard
+          to="/finance/billing"
+          icon={Receipt}
+          title="账单引擎"
+          desc="月度自动排期 · 对账 · 催款联动"
+          stats={[{ label: '本月生成', value: `${generatedThisMonth} 张` }, { label: '对账异议', value: `${pendingReconCount} 单` }]}
+          tone={pendingReconCount > 0 ? 'warn' : 'default'}
+        />
+        <ModuleCard
+          to="/finance/invoicing"
+          icon={BadgeDollarSign}
+          title="价值交付与开票"
+          desc="月度价值报告 · 一键转开票指令"
+          stats={[{ label: '已生成报告', value: `${finValueReports.length} 份` }, { label: '待开票', value: `${pendingInvoiceCount} 张` }, { label: '已开发票', value: `${finInvoices.length} 张` }]}
+        />
+        <ModuleCard
+          to="/finance/data"
+          icon={Building2}
+          title="业财数据基座"
+          desc="客户主数据 · 收入 / 回款 / 预算 · KPI"
+          stats={[{ label: '活跃客户', value: `${k.activeTenants} 家` }, { label: '回款率', value: `${(k.collectionRate * 100).toFixed(1)}%` }]}
+        />
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-5">
+        <div className="text-[13.5px] font-semibold tracking-tight">业财待办速览</div>
+        <div className="mt-0.5 text-[11.5px] text-muted-foreground">按优先级排序 · 仅展示当前需 CSM 或财务介入的事项</div>
+        <ul className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-3">
+          <TodoItem icon={AlertTriangle} tone="danger" label={`${overdueCount} 张账单已逾期`} sub={`合计 ${fmtMoney(k.overdueAmount, { unit: 'wan' })} · 已触发 ${finDunnings.length} 条催款`} link="/finance/billing" />
+          <TodoItem icon={Receipt} tone="warn" label={`${pendingReconCount} 单对账异议待处理`} sub="客户主张服务量不足，需 CSM 联合 BD 复核" link="/finance/billing" />
+          <TodoItem icon={BadgeDollarSign} tone="info" label={`${pendingInvoiceCount} 张账单待转开票`} sub="客户已对账确认，等待财务一键申请发票" link="/finance/invoicing" />
+        </ul>
+      </div>
+    </div>
   );
 }
 
 export function FinanceContracts(): JSX.Element {
-  const [group, setGroup] = useState('全部');
-  const [plan, setPlan] = useState('全部');
-  const [open, setOpen] = useState(false);
-  const planPrefix = plan.split(' ')[0] ?? plan;
-  const groupPrefix = group.replace(' 大禹', '').replace(' 盘古', '').replace(' 星火', '');
-  const filtered = contracts.filter((contract) => (group === '全部' || contract.group.includes(groupPrefix)) && (plan === '全部' || contract.plan.includes(planPrefix)));
+  const [keyword, setKeyword] = useState('');
+  const [groupFilter, setGroupFilter] = useState<FinPlanGroup | 'all'>('all');
+  const [tierFilter, setTierFilter] = useState<FinSubscriptionTier | 'all'>('all');
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const rows = useMemo(() => finContracts
+    .map((contract) => ({
+      contract,
+      tenant: finTenants.find((tenant) => tenant.id === contract.tenantId)!,
+      sub: finSubscriptions.find((sub) => sub.contractId === contract.id),
+    }))
+    .filter((row) => {
+      if (groupFilter !== 'all' && row.tenant.group !== groupFilter) return false;
+      if (tierFilter !== 'all' && row.contract.tier !== tierFilter) return false;
+      if (keyword.trim()) {
+        const k = keyword.trim().toLowerCase();
+        return row.tenant.legalName.toLowerCase().includes(k) || row.contract.no.toLowerCase().includes(k);
+      }
+      return true;
+    }), [groupFilter, keyword, tierFilter]);
+
+  const open = openId ? rows.find((row) => row.contract.id === openId) ?? null : null;
+  const totalMrr = finSubscriptions.reduce((sum, item) => sum + item.monthlyFee, 0);
+
   return (
-    <FinanceShell badge="P2 · Module 1" title="客户合同与订阅" desc="P2 业财链路的总开关：客户主数据 + 合同条款 + 订阅版本三位一体；账单引擎从这里拉取月费规则。">
-      <div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => showToast('已下载合同导入模板', 'success')}><Upload className="h-4 w-4" />导入模板</Button><Button onClick={() => setOpen(true)}><FilePlus2 className="h-4 w-4" />新建合同</Button></div>
-      <div className="grid grid-cols-4 gap-4"><Kpi title="生效合同" value="6" desc="份" /><Kpi title="活跃订阅" value="6" desc="条 · 月费随订阅版本自动派生" /><Kpi title="月度经常性收入" value="850 万" desc="/ 月" /><Kpi title="待签订单" value="1" desc="份" tone="yellow" /></div>
-      <Card className="space-y-4">
-        <Segment label="承接小组" value={group} values={['全部', 'Px1 大禹', 'Px2 盘古', 'Px3 星火']} onChange={setGroup} />
-        <Segment label="版本" value={plan} values={['全部', 'L1 探索', 'L2 专业', 'L3 旗舰']} onChange={setPlan} />
-        <div className="text-xs text-text-muted">共 {filtered.length} 条</div>
-        <table className="w-full"><thead><tr className="border-b border-border bg-bg-secondary/50"><Th>客户 / 合同编号</Th><Th>承接小组</Th><Th>订阅版本</Th><Th>合同期</Th><Th>合同金额</Th><Th>状态</Th></tr></thead><tbody>{filtered.map((contract) => <tr key={contract.no} className="border-b border-border/50"><td className="px-3 py-3"><div className="text-sm font-medium text-text-primary">{contract.customer}</div><div className="text-xs text-text-muted">{contract.no} · 签约 {contract.signed} · BD {contract.bd} · CSM {contract.csm}</div></td><Td>{contract.group}</Td><Td>{contract.plan}<div className="text-[10px] text-text-muted">{contract.monthly}</div></Td><Td>{contract.period}</Td><Td>{contract.amount}</Td><td className="px-3 py-3"><Badge color={contract.status === '生效中' ? 'green' : 'yellow'}>{contract.status}</Badge></td></tr>)}</tbody></table>
-      </Card>
-      <Modal open={open} onClose={() => setOpen(false)} title="新建合同" footer={<><Button variant="secondary" onClick={() => setOpen(false)}>Close</Button><Button onClick={() => { setOpen(false); showToast('合同草稿已创建', 'success'); }}>保存合同</Button></>}><div className="grid grid-cols-2 gap-3"><Input label="客户名称" placeholder="例：新客户制药有限公司" /><Input label="合同编号" placeholder="PXC-2026-0001" /><Input label="订阅版本" placeholder="L2 专业版" /><Input label="月费" placeholder="100 万 / 月" /></div></Modal>
-    </FinanceShell>
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="P2 · Module 1"
+        title="客户合同与订阅"
+        subtitle="P2 业财链路的总开关：客户主数据 + 合同条款 + 订阅版本三位一体；账单引擎从这里拉取月费规则。"
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => showToast('演示版：已下载合同导入模板', 'info')}>导入模板</Button>
+            <Button size="sm" className="border-primary bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => showToast('已创建草拟合同，等待补充条款', 'success')}><FileText className="h-3.5 w-3.5" /> 新建合同</Button>
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <KpiCard icon={FileSignature} label="生效合同" value={`${finContracts.filter((contract) => contract.status === 'active').length}`} unit="份" />
+        <KpiCard icon={Repeat2} label="活跃订阅" value={`${finSubscriptions.length}`} unit="条" hint="月费随订阅版本自动派生" />
+        <KpiCard icon={Wallet} label="月度经常性收入" value={fmtMoney(totalMrr, { unit: 'wan' })} unit="/ 月" />
+        <KpiCard icon={Clock4} label="待签订单" value={`${finContracts.filter((contract) => contract.status === 'pending_sign').length}`} unit="份" />
+      </div>
+
+      <div className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
+          <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索客户法定全称 / 合同编号" className="h-8 max-w-xs rounded-md border border-border bg-bg-tertiary px-3 text-[12.5px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
+          <ChipGroup label="承接小组" value={groupFilter} options={[{ v: 'all', t: '全部' }, { v: 'px1', t: 'Px1 大禹' }, { v: 'px2', t: 'Px2 盘古' }, { v: 'px3', t: 'Px3 星火' }]} onChange={(value) => setGroupFilter(value as FinPlanGroup | 'all')} />
+          <ChipGroup label="版本" value={tierFilter} options={[{ v: 'all', t: '全部' }, { v: 'L1', t: 'L1 探索' }, { v: 'L2', t: 'L2 专业' }, { v: 'L3', t: 'L3 旗舰' }]} onChange={(value) => setTierFilter(value as FinSubscriptionTier | 'all')} />
+          <span className="ml-auto text-[11.5px] text-muted-foreground">共 {rows.length} 条</span>
+        </div>
+
+        <div className="grid grid-cols-[1.4fr_.6fr_.7fr_.7fr_.6fr_.4fr] items-center gap-3 border-b border-border px-5 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <div>客户 / 合同编号</div><div>承接小组</div><div>订阅版本</div><div>合同期</div><div className="text-right">合同金额</div><div className="text-right">状态</div>
+        </div>
+        <ul className="divide-y divide-border">
+          {rows.map((row) => <ContractRow key={row.contract.id} contract={row.contract} tenant={row.tenant} onOpen={() => setOpenId(row.contract.id)} />)}
+        </ul>
+      </div>
+
+      <Modal open={!!open} onClose={() => setOpenId(null)} title={open ? `${open.tenant.legalName} · 合同详情` : '合同详情'} maxWidth="max-w-3xl" footer={<Button variant="secondary" onClick={() => setOpenId(null)}>Close</Button>}>
+        {open && <ContractDetail contract={open.contract} />}
+      </Modal>
+    </div>
   );
 }
 
 export function FinanceBilling(): JSX.Element {
   const [month, setMonth] = useState('2026-04');
-  const [tab, setTab] = useState('账单 · 29');
-  const [status, setStatus] = useState('全部');
+  const [tab, setTab] = useState('bill');
+  const [status, setStatus] = useState<FinBillStatus | 'all'>('all');
+
+  const monthBills = useMemo(() => finBills.filter((bill) => (month === 'all' || bill.period === month) && (status === 'all' || bill.status === status)), [month, status]);
+  const aprilBills = finBills.filter((bill) => bill.period === '2026-04');
+  const aprilReceivable = aprilBills.reduce((sum, bill) => sum + bill.amount, 0);
+  const aprilPaid = aprilBills.filter((bill) => bill.status === 'paid').reduce((sum, bill) => sum + bill.amount, 0);
+  const overdue = finBills.filter((bill) => bill.status === 'overdue');
+  const disputed = finReconciliations.filter((item) => item.status === 'disputed');
+
   return (
-    <FinanceShell badge="P2 · Module 2" title="自动化固定费账单引擎" desc="按客户合同与订阅版本，自动排期生成月度账单；联动对账与催款，覆盖应收 → 已收的全链路。">
-      <div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => showToast('账单排期已按合同重排', 'success')}>手动重排</Button><Button onClick={() => showToast('已批量发送 6 张账单', 'success')}><Send className="h-4 w-4" />批量发送</Button></div>
-      <div className="grid grid-cols-4 gap-4"><Kpi title="2026-04 应收" desc="6 张账单 · 已生成 6" value="850 万" /><Kpi title="2026-04 已收" desc="实际入账金额" value="0 万" /><Kpi title="累计逾期金额" desc="2 张账单 · 已触发 4 条催款" value="400 万" tone="red" /><Kpi title="对账异议" desc="客户主张服务量不足，需 CSM 复核" value="2 单" tone="yellow" /></div>
-      <Card className="space-y-4"><Segment label="账期" value={month} values={['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '全部']} onChange={setMonth} /><div className="text-xs text-text-muted">排期日次月 1 日 00:00 · 引擎运行正常</div><Segment label="" value={tab} values={['账单 · 29', '对账 · 17', '催款 · 4']} onChange={setTab} /><Segment label="" value={status} values={['全部', '已排期', '已生成', '已发送', '已确认', '已开票', '已回款', '逾期']} onChange={setStatus} /><div className="text-xs text-text-muted">共 {bills.length} 张</div><table className="w-full"><thead><tr className="border-b border-border bg-bg-secondary/50"><Th>客户 / 账单号</Th><Th>账期</Th><Th>应收</Th><Th>排期 → 发送 → 确认</Th><Th>开票 → 回款 / 应回</Th><Th>状态</Th></tr></thead><tbody>{bills.map(([customer, no, csm, billMonth, amount, rowStatus]) => <tr key={no} className="border-b border-border/50"><td className="px-3 py-3"><div className="text-sm font-medium text-text-primary">{customer}</div><div className="text-xs text-text-muted">{no} · CSM {csm}</div></td><Td>{billMonth}</Td><Td>{amount}</Td><Td>2026-05-01 → 2026-05-02<div className="text-[10px] text-text-muted">对账：—</div></Td><Td>—</Td><td className="px-3 py-3"><Badge color="blue">{rowStatus}</Badge></td></tr>)}</tbody></table></Card>
-    </FinanceShell>
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="P2 · Module 2"
+        title="自动化固定费账单引擎"
+        subtitle="按客户合同与订阅版本，自动排期生成月度账单；联动对账与催款，覆盖应收 → 已收的全链路。"
+        actions={<><Button variant="secondary" size="sm" onClick={() => showToast('账单排期已按合同重排', 'success')}>手动重排</Button><Button size="sm" className="border-primary bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => showToast(`已批量发送 ${aprilBills.length} 张账单`, 'success')}><Send className="h-3.5 w-3.5" />批量发送</Button></>}
+      />
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <KpiCard icon={Receipt} label="2026-04 应收" value={fmtMoney(aprilReceivable, { unit: 'wan' })} hint={`${aprilBills.length} 张账单 · 已生成 ${aprilBills.length}`} />
+        <KpiCard icon={Wallet} label="2026-04 已收" value={fmtMoney(aprilPaid, { unit: 'wan' })} hint="实际入账金额" />
+        <KpiCard icon={AlertTriangle} label="累计逾期金额" value={fmtMoney(overdue.reduce((sum, bill) => sum + bill.amount, 0), { unit: 'wan' })} hint={`${overdue.length} 张账单 · 已触发 ${finDunnings.length} 条催款`} />
+        <KpiCard icon={ShieldCheck} label="对账异议" value={`${disputed.length}`} unit="单" hint="客户主张服务量不足，需 CSM 复核" />
+      </div>
+
+      <div className="rounded-xl border border-border bg-card">
+        <div className="space-y-3 border-b border-border px-5 py-3">
+          <ChipGroup label="账期" value={month} options={[{ v: '2026-01', t: '2026-01' }, { v: '2026-02', t: '2026-02' }, { v: '2026-03', t: '2026-03' }, { v: '2026-04', t: '2026-04' }, { v: '2026-05', t: '2026-05' }, { v: 'all', t: '全部' }]} onChange={setMonth} />
+          <div className="text-[11.5px] text-muted-foreground">排期日次月 1 日 00:00 · 引擎运行正常</div>
+          <ChipGroup label="" value={tab} options={[{ v: 'bill', t: `账单 · ${finBills.length}` }, { v: 'recon', t: `对账 · ${finReconciliations.length}` }, { v: 'dunning', t: `催款 · ${finDunnings.length}` }]} onChange={setTab} />
+          <ChipGroup label="" value={status} options={[{ v: 'all', t: '全部' }, ...Object.entries(FIN_BILL_STATUS_LABEL).map(([v, t]) => ({ v, t }))]} onChange={(value) => setStatus(value as FinBillStatus | 'all')} />
+          <div className="text-[11.5px] text-muted-foreground">共 {monthBills.length} 张</div>
+        </div>
+        <div className="grid grid-cols-[1.4fr_.45fr_.45fr_1fr_.9fr_.45fr] items-center gap-3 border-b border-border px-5 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <div>客户 / 账单号</div><div>账期</div><div className="text-right">应收</div><div>排期 → 发送 → 确认</div><div>开票 → 回款 / 应回</div><div className="text-right">状态</div>
+        </div>
+        <ul className="divide-y divide-border">
+          {monthBills.map((bill) => <BillRow key={bill.id} bill={bill} />)}
+        </ul>
+      </div>
+    </div>
   );
 }
 
 export function FinanceInvoicing(): JSX.Element {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const totalReports = finValueReports.length;
+  const converted = finValueReports.filter((report) => report.convertedToInvoice).length;
+  const pending = totalReports - converted;
+  const totalInvoiceAmount = finInvoices.reduce((sum, invoice) => sum + invoice.amount, 0);
+  const reports = useMemo(() => [...finValueReports].sort((a, b) => (b.period > a.period ? 1 : -1)), []);
+  const open = openId ? finValueReports.find((report) => report.id === openId) ?? null : null;
+
   return (
-    <FinanceShell badge="P2 · Module 3" title="价值交付报告 × 开票联动" desc="月底以脱敏形式向客户出具价值交付报告，并直接转化为开票指令；客户开票信息自动取自合同档案，杜绝手工录入。">
-      <div className="grid grid-cols-4 gap-4"><Kpi title="累计交付报告" value="23" desc="份" /><Kpi title="待转开票" value="13" desc="客户已确认对账，可一键转开票" tone="yellow" /><Kpi title="已开发票" value="10" desc="张 · 累计 1,300 万" /><Kpi title="转化率" value="43%" desc="价值报告 → 开票" /></div>
-      <Card><h2 className="text-base font-semibold text-text-primary">价值交付报告</h2><p className="mt-1 text-xs text-text-muted">基于交付内容、审核通过、医生触达、患者触达自动汇总（已脱敏）</p><div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">{reports.map(([customer, month, bill, generated, status, content, flows, doctors, patients]) => <div key={`${bill}`} className="rounded-lg border border-border bg-bg-secondary/50 p-4"><div className="flex items-start justify-between"><div><div className="text-sm font-medium text-text-primary">{customer}</div><div className="mt-1 text-xs text-text-muted">账期 {month} · 关联账单 {bill} · 生成于 {generated}</div></div><Badge color={status === '待转开票' ? 'yellow' : 'green'}>{status}</Badge></div><div className="mt-4 grid grid-cols-4 gap-2 text-center"><Mini label="已交付内容" value={content} /><Mini label="已审核流程" value={flows} /><Mini label="触达医生（脱敏）" value={doctors} /><Mini label="触达患者（脱敏）" value={patients} /></div></div>)}</div></Card>
-      <Card><h2 className="text-base font-semibold text-text-primary">开票申请池</h2><p className="mt-1 text-xs text-text-muted">已开发票 · 自动套用合同档案抬头 / 税号 / 银行</p><div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-2">{invoices.map(([customer, no, bill, type, date, amount]) => <div key={no} className="rounded-lg border border-border bg-bg-secondary/50 p-4"><div className="text-sm font-medium text-text-primary">{customer}</div><div className="mt-1 text-xs text-text-muted">发票号 {no} · 关联 {bill}</div><div className="mt-2 flex justify-between text-xs text-text-secondary"><span>{type}</span><span>申请 {date} · 开具 {date}</span><span className="font-mono text-text-primary">{amount}</span></div><div className="mt-2 text-xs text-accent-green">状态：已开票</div></div>)}</div></Card>
-    </FinanceShell>
+    <div className="space-y-5">
+      <PageHeader eyebrow="P2 · Module 3" title="价值交付报告 × 开票联动" subtitle="月底以脱敏形式向客户出具价值交付报告，并直接转化为开票指令；客户开票信息自动取自合同档案，杜绝手工录入。" />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <KpiCard icon={FileBadge} label="累计交付报告" value={`${totalReports}`} unit="份" />
+        <KpiCard icon={Send} label="待转开票" value={`${pending}`} unit="份" hint="客户已确认对账，可一键转开票" />
+        <KpiCard icon={Receipt} label="已开发票" value={`${finInvoices.length}`} unit="张" hint={`累计 ${fmtMoney(totalInvoiceAmount, { unit: 'wan' })}`} />
+        <KpiCard icon={Hash} label="转化率" value={`${Math.round((converted / Math.max(1, totalReports)) * 100)}%`} hint="价值报告 → 开票" />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <div className="rounded-xl border border-border bg-card">
+          <header className="flex items-center justify-between border-b border-border px-5 py-3">
+            <div><div className="text-[13.5px] font-semibold tracking-tight">价值交付报告</div><div className="text-[11.5px] text-muted-foreground">基于交付内容、审核通过、医生触达、患者触达自动汇总（已脱敏）</div></div>
+          </header>
+          <ul className="divide-y divide-border">
+            {reports.map((report) => <ReportRow key={report.id} report={report} onOpen={() => setOpenId(report.id)} />)}
+          </ul>
+        </div>
+        <div className="rounded-xl border border-border bg-card">
+          <header className="flex items-center justify-between border-b border-border px-5 py-3">
+            <div><div className="text-[13.5px] font-semibold tracking-tight">开票申请池</div><div className="text-[11.5px] text-muted-foreground">已开发票 · 自动套用合同档案抬头 / 税号 / 银行</div></div>
+          </header>
+          <ul className="divide-y divide-border">
+            {finInvoices.map((invoice) => <InvoiceRow key={invoice.id} invoice={invoice} />)}
+          </ul>
+        </div>
+      </div>
+
+      <Modal open={!!open} onClose={() => setOpenId(null)} title="价值交付报告" maxWidth="max-w-3xl" footer={<><Button variant="secondary" onClick={() => showToast('演示版：导出 PDF 报告', 'info')}>导出报告</Button><Button onClick={() => { showToast('已生成开票指令并下发财务', 'success'); setOpenId(null); }}><Receipt className="h-4 w-4" />转开票指令</Button></>}>
+        {open && <ReportDetail report={open} />}
+      </Modal>
+    </div>
   );
 }
 
 export function FinanceDataPlatform(): JSX.Element {
-  const groupRows = ['Px1 组 · 大禹计划', 'Px2 组 · 盘古计划', 'Px3 组 · 星火计划'].map((group) => {
-    const groupContracts = contracts.filter((contract) => contract.group === group);
-    const signed = groupContracts.reduce((sum, contract) => sum + parseMoneyWan(contract.amount), 0);
-    const monthly = groupContracts.reduce((sum, contract) => sum + parseMoneyWan(contract.monthly), 0);
-    return { group, signed, monthly, count: groupContracts.length };
-  });
-  const customerRows = contracts.slice(0, 8).map((contract, index) => {
-    const receivable = parseMoneyWan(contract.monthly) * 4;
-    const collected = index < 3 ? parseMoneyWan(contract.monthly) * 2 : parseMoneyWan(contract.monthly);
-    const overdue = index % 4 === 0 ? parseMoneyWan(contract.monthly) : 0;
-    return { customer: contract.customer, group: contract.group, receivable, collected, outstanding: receivable - collected, overdue };
-  });
-  const trend = [
-    { month: '01月', signed: 180, recognized: 120, collected: 90 },
-    { month: '02月', signed: 360, recognized: 240, collected: 190 },
-    { month: '03月', signed: 520, recognized: 420, collected: 310 },
-    { month: '04月', signed: 850, recognized: 650, collected: 430 },
-    { month: '05月', signed: 850, recognized: 720, collected: 650 },
-  ];
-  const max = Math.max(...trend.map((item) => item.signed));
+  const k = finKpiSnapshot;
+  const tenantRanks = useMemo(() => finTenants
+    .map((tenant) => {
+      const bills = finBills.filter((bill) => bill.tenantId === tenant.id);
+      const receivable = bills.reduce((sum, bill) => sum + bill.amount, 0);
+      const collected = bills.filter((bill) => bill.status === 'paid').reduce((sum, bill) => sum + bill.amount, 0);
+      const outstanding = bills.filter((bill) => ['sent', 'confirmed', 'invoiced', 'overdue'].includes(bill.status)).reduce((sum, bill) => sum + bill.amount, 0);
+      const overdue = bills.filter((bill) => bill.status === 'overdue').reduce((sum, bill) => sum + bill.amount, 0);
+      return { tenant, receivable, collected, outstanding, overdue };
+    })
+    .sort((a, b) => b.receivable - a.receivable), []);
+
+  const groupRevenue = useMemo(() => {
+    const byGroup: Record<string, { signed: number; recognized: number; collected: number }> = {};
+    finContracts.forEach((contract) => {
+      const tenant = finTenants.find((item) => item.id === contract.tenantId)!;
+      byGroup[tenant.group] = byGroup[tenant.group] ?? { signed: 0, recognized: 0, collected: 0 };
+      byGroup[tenant.group]!.signed += contract.totalAmount;
+    });
+    finBills.forEach((bill) => {
+      const tenant = finTenants.find((item) => item.id === bill.tenantId)!;
+      byGroup[tenant.group] = byGroup[tenant.group] ?? { signed: 0, recognized: 0, collected: 0 };
+      if (['invoiced', 'paid'].includes(bill.status)) byGroup[tenant.group]!.recognized += bill.amount;
+      if (bill.status === 'paid') byGroup[tenant.group]!.collected += bill.amount;
+    });
+    return byGroup;
+  }, []);
+  const trendMax = Math.max(...finTrend.map((point) => point.signed));
+
   return (
-    <FinanceShell badge="P2 · Module 4" title="业财数据基座" desc="把订阅与账单数据沉淀为统一的业财指标，支持运营、财务、CSM、销售四类视图复用。">
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
-        <Kpi title="累计签约" desc="7 份合同" value="10,400 万" />
-        <Kpi title="MRR" desc="月度经常性收入" value="850 万" />
-        <Kpi title="年度预测" desc="MRR × 12" value="10,200 万" />
-        <Kpi title="已回款" desc="实际到账" value="650 万" />
-        <Kpi title="未回款" desc="含逾期 400 万" value="2,550 万" tone="yellow" />
-        <Kpi title="回款率" desc="已收 / 应收" value="20%" />
+    <div className="space-y-5">
+      <PageHeader eyebrow="P2 · Module 4" title="业财数据基座" subtitle="把订阅与账单数据沉淀为统一的业财指标，支持运营、财务、CSM、销售四类视图复用，作为业绩与回款的真源。" />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+        <KpiCard icon={FileSignature} label="累计签约" value={fmtMoney(k.totalSigned, { unit: 'wan' })} hint={`${k.contractCount} 份合同 · ${k.activeTenants} 家租户`} />
+        <KpiCard icon={Repeat2} label="MRR" value={fmtMoney(k.monthlyRecurring, { unit: 'wan' })} hint="月度经常性收入" />
+        <KpiCard icon={Activity} label="年度预测" value={fmtMoney(k.yearlyForecast, { unit: 'wan' })} hint="MRR × 12" />
+        <KpiCard icon={Banknote} label="已回款" value={fmtMoney(k.cashCollected, { unit: 'wan' })} />
+        <KpiCard icon={Wallet} label="未回款" value={fmtMoney(k.cashOutstanding, { unit: 'wan' })} hint={`其中逾期 ${fmtMoney(k.overdueAmount, { unit: 'wan' })}`} />
+        <KpiCard icon={BadgeCheck} label="回款率" value={`${Math.round(k.collectionRate * 100)}%`} />
       </div>
-      <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
-        <Card>
-          <div className="flex items-center justify-between">
-            <div><h2 className="text-base font-semibold text-text-primary">月度收入趋势</h2><p className="mt-1 text-xs text-text-muted">蓝：签约 · 紫：确认收入 · 绿：实际回款</p></div>
-            <Badge color="gray">单位：万</Badge>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <div className="rounded-xl border border-border bg-card">
+          <header className="flex items-end justify-between border-b border-border px-5 py-3">
+            <div><div className="text-[13.5px] font-semibold tracking-tight">月度收入趋势</div><div className="text-[11.5px] text-muted-foreground">蓝：签约 · 紫：确认收入 · 绿：实际回款</div></div>
+            <div className="text-[11.5px] text-muted-foreground tabular">单位：万</div>
+          </header>
+          <div className="px-5 py-5">
+            <div className="grid grid-cols-5 items-end gap-3" style={{ height: 240 }}>
+              {finTrend.map((point) => {
+                const pct = (value: number) => (value / Math.max(1, trendMax)) * 220;
+                return (
+                  <div key={point.month} className="flex flex-col items-center gap-2">
+                    <div className="flex h-[220px] w-full items-end justify-center gap-1">
+                      <MiniBar h={pct(point.signed)} color="oklch(60% .14 240)" tip={`签约 ${fmtMoney(point.signed, { unit: 'wan' })}`} />
+                      <MiniBar h={pct(point.recognized)} color="oklch(60% .14 300)" tip={`确认 ${fmtMoney(point.recognized, { unit: 'wan' })}`} />
+                      <MiniBar h={pct(point.collected)} color="oklch(60% .14 165)" tip={`实收 ${fmtMoney(point.collected, { unit: 'wan' })}`} />
+                    </div>
+                    <div className="text-[11px] text-muted-foreground tabular">{point.month}</div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div className="mt-5 grid h-64 grid-cols-5 items-end gap-4 border-b border-l border-border px-5 pb-4">
-            {trend.map((item) => (
-              <div key={item.month} className="flex h-full flex-col justify-end gap-2">
-                <div className="flex flex-1 items-end justify-center gap-1">
-                  <Bar value={item.signed} max={max} color="bg-accent-blue" title="签约" />
-                  <Bar value={item.recognized} max={max} color="bg-accent-purple" title="确认" />
-                  <Bar value={item.collected} max={max} color="bg-accent-green" title="实收" />
-                </div>
-                <div className="text-center text-[10px] text-text-muted">{item.month}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-        <Card>
-          <h2 className="text-base font-semibold text-text-primary">小组维度收入</h2>
-          <p className="mt-1 text-xs text-text-muted">销售小组 → 签约 / 月费 / 客户数</p>
-          <div className="mt-4 space-y-4">
-            {groupRows.map((row) => (
-              <div key={row.group}>
-                <div className="flex justify-between text-xs"><span className="text-text-primary">{row.group}</span><span className="text-text-muted">{row.count} 客户 · 月费 {row.monthly} 万</span></div>
-                <div className="mt-2 h-2 rounded bg-bg-tertiary"><div className="h-2 rounded bg-accent-purple" style={{ width: `${Math.min(100, row.signed / 90)}%` }} /></div>
-                <div className="mt-1 text-[10px] text-text-muted">签约 {row.signed} 万</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-      <Card>
-        <div className="flex items-center gap-2"><Database className="h-4 w-4 text-accent-blue" /><h2 className="text-base font-semibold text-text-primary">客户榜单</h2></div>
-        <p className="mt-1 text-xs text-text-muted">按近 5 个月应收金额排名，输出应收、已收、未收、逾期与回款率。</p>
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-sm"><thead><tr className="border-b border-border bg-bg-secondary/50"><Th>#</Th><Th>客户</Th><Th>承接小组</Th><Th>应收</Th><Th>已收</Th><Th>未收</Th><Th>逾期</Th><Th>回款率</Th></tr></thead><tbody>{customerRows.map((row, index) => { const rate = Math.round((row.collected / Math.max(1, row.receivable)) * 100); return <tr key={row.customer} className="border-b border-border/50"><Td>#{index + 1}</Td><td className="px-3 py-3 text-sm font-medium text-text-primary">{row.customer}</td><Td>{row.group}</Td><Td>{row.receivable} 万</Td><Td>{row.collected} 万</Td><Td>{row.outstanding} 万</Td><Td>{row.overdue ? `${row.overdue} 万` : '—'}</Td><td className="px-3 py-3"><div className="h-1.5 rounded bg-bg-tertiary"><div className="h-1.5 rounded bg-accent-green" style={{ width: `${rate}%` }} /></div><div className="mt-1 text-[10px] text-text-muted">{rate}%</div></td></tr>; })}</tbody></table>
         </div>
-      </Card>
-    </FinanceShell>
+
+        <div className="rounded-xl border border-border bg-card">
+          <header className="border-b border-border px-5 py-3"><div className="text-[13.5px] font-semibold tracking-tight">小组维度收入</div><div className="text-[11.5px] text-muted-foreground">销售小组 → 签约 / 确认 / 实收</div></header>
+          <ul className="divide-y divide-border">
+            {Object.entries(groupRevenue).map(([group, value]) => (
+              <li key={group} className="px-5 py-3.5 text-[12.5px]">
+                <div className="flex items-center justify-between"><span className="font-medium text-foreground">{FIN_PLAN_GROUP_LABEL[group as FinPlanGroup]}</span><span className="tabular text-muted-foreground">签约 {fmtMoney(value.signed, { unit: 'wan' })}</span></div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[oklch(20%_.02_260)]"><div className="h-full bg-[oklch(60%_.14_300)]" style={{ width: `${(value.recognized / Math.max(1, value.signed)) * 100}%` }} /></div>
+                <div className="mt-1 flex justify-between text-[11px] text-muted-foreground tabular"><span>确认 {fmtMoney(value.recognized, { unit: 'wan' })}</span><span>实收 {fmtMoney(value.collected, { unit: 'wan' })}</span></div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card">
+        <header className="flex items-center justify-between border-b border-border px-5 py-3"><div><div className="text-[13.5px] font-semibold tracking-tight">客户榜单</div><div className="text-[11.5px] text-muted-foreground">按近 5 个月应收金额排名</div></div></header>
+        <div className="grid grid-cols-[40px_1.4fr_.6fr_.6fr_.6fr_.6fr_1fr] items-center gap-3 border-b border-border px-5 py-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground"><div>#</div><div>客户</div><div className="text-right">应收</div><div className="text-right">已收</div><div className="text-right">未收</div><div className="text-right">逾期</div><div>回款率</div></div>
+        <ul className="divide-y divide-border">
+          {tenantRanks.slice(0, 8).map((rank, index) => {
+            const rate = rank.collected / Math.max(1, rank.collected + rank.outstanding);
+            return (
+              <li key={rank.tenant.id} className="grid grid-cols-[40px_1.4fr_.6fr_.6fr_.6fr_.6fr_1fr] items-center gap-3 px-5 py-3 text-[12.5px]">
+                <div className="text-muted-foreground tabular">#{index + 1}</div>
+                <div className="min-w-0"><div className="truncate font-medium text-foreground">{rank.tenant.legalName}</div><div className="truncate text-[11px] text-muted-foreground">{FIN_PLAN_GROUP_LABEL[rank.tenant.group]} · CSM {rank.tenant.csm}</div></div>
+                <div className="text-right tabular text-foreground">{fmtMoney(rank.receivable, { unit: 'wan' })}</div>
+                <div className="text-right tabular text-[oklch(85%_.16_165)]">{fmtMoney(rank.collected, { unit: 'wan' })}</div>
+                <div className="text-right tabular text-muted-foreground">{fmtMoney(rank.outstanding, { unit: 'wan' })}</div>
+                <div className="text-right tabular text-[oklch(82%_.18_25)]">{rank.overdue > 0 ? fmtMoney(rank.overdue, { unit: 'wan' }) : '—'}</div>
+                <div><div className="h-1.5 overflow-hidden rounded-full bg-[oklch(20%_.02_260)]"><div className="h-full bg-[oklch(60%_.14_165)]" style={{ width: `${rate * 100}%` }} /></div><div className="mt-1 text-[11px] text-muted-foreground tabular">{Math.round(rate * 100)}%</div></div>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
   );
 }
 
-function FinanceShell({ badge, title, desc, children }: { badge: string; title: string; desc: string; children: React.ReactNode }): JSX.Element {
-  return <div className="space-y-6"><div className="space-y-3"><Badge color="blue" className="text-[10px] uppercase tracking-wider">{badge}</Badge><h1 className="text-2xl font-bold text-text-primary">{title}</h1><p className="max-w-3xl text-sm text-text-secondary">{desc}</p></div>{children}</div>;
+function ModuleCard({ to, icon: Icon, title, desc, stats, tone = 'default' }: { to: string; icon: LucideIcon; title: string; desc: string; stats: { label: string; value: string }[]; tone?: Tone }): JSX.Element {
+  return (
+    <Link to={to} className={clsx('group block rounded-xl border bg-card p-5 transition-all hover:-translate-y-0.5', tone === 'warn' ? 'border-[oklch(40%_.14_45_/.6)] hover:border-[oklch(60%_.16_45)] hover:shadow-[0_0_18px_oklch(60%_.16_45_/.18)]' : 'border-border hover:border-primary/50 hover:shadow-[0_0_18px_oklch(70%_.15_200_/.18)]')}>
+      <div className="flex items-start justify-between"><div className={clsx('grid h-9 w-9 place-items-center rounded-md', tone === 'warn' ? 'bg-[oklch(28%_.10_45_/.5)] text-[oklch(86%_.16_45)]' : 'bg-[oklch(28%_.04_200_/.45)] text-primary')}><Icon className="h-4 w-4" /></div><ChevronRight className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" /></div>
+      <div className="mt-3 text-[14px] font-semibold tracking-tight">{title}</div><div className="mt-1 text-[11.5px] text-muted-foreground">{desc}</div>
+      <ul className="mt-3 space-y-1.5">{stats.map((stat) => <li key={stat.label} className="flex items-center justify-between text-[12px]"><span className="text-muted-foreground">{stat.label}</span><span className="font-medium tabular text-foreground">{stat.value}</span></li>)}</ul>
+    </Link>
+  );
 }
 
-function Kpi({ title, desc, value, tone = 'blue' }: { title: string; desc: string; value: string; tone?: 'blue' | 'red' | 'yellow' }): JSX.Element {
-  const color = tone === 'red' ? 'text-accent-red' : tone === 'yellow' ? 'text-accent-yellow' : 'text-text-primary';
-  return <Card><div className="text-xs text-text-muted">{title}</div><div className="mt-1 text-[10px] text-text-muted">{desc}</div><div className={`mt-4 font-mono text-2xl font-bold ${color}`}>{value}</div></Card>;
+function TodoItem({ icon: Icon, tone, label, sub, link }: { icon: LucideIcon; tone: 'danger' | 'warn' | 'info'; label: string; sub: string; link: string }): JSX.Element {
+  const tones = {
+    danger: 'border-[oklch(40%_.16_25_/.55)] bg-[oklch(28%_.14_25_/.4)] text-[oklch(82%_.18_25)]',
+    warn: 'border-[oklch(40%_.14_60_/.55)] bg-[oklch(28%_.10_60_/.4)] text-[oklch(86%_.16_60)]',
+    info: 'border-[oklch(40%_.12_240_/.55)] bg-[oklch(26%_.12_240_/.4)] text-[oklch(82%_.16_240)]',
+  };
+  return <li><Link to={link} className="block rounded-lg border border-border bg-secondary/30 p-3 transition-colors hover:border-primary/40"><div className="flex items-start gap-2.5"><span className={clsx('grid h-7 w-7 flex-shrink-0 place-items-center rounded-md border', tones[tone])}><Icon className="h-3.5 w-3.5" /></span><div className="min-w-0 flex-1"><div className="text-[12.5px] font-medium text-foreground">{label}</div><div className="mt-0.5 text-[11px] text-muted-foreground">{sub}</div></div></div></Link></li>;
 }
 
-function FinanceLink({ href, title, desc, metrics }: { href: string; title: string; desc: string; metrics: string }): JSX.Element {
-  return <Link to={href} className="rounded-card border border-border bg-bg-card p-4 transition-colors hover:border-accent-blue/50"><div className="text-sm font-semibold text-text-primary">{title}</div><div className="mt-2 text-xs text-text-muted">{desc}</div><div className="mt-4 text-xs text-accent-blue">{metrics}</div></Link>;
+function ChipGroup<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { v: T; t: string }[]; onChange: (value: T) => void }): JSX.Element {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+      {label && <span className="mr-1 text-muted-foreground">{label}</span>}
+      {options.map((option) => <button key={option.v} onClick={() => onChange(option.v)} className={clsx('rounded-md border px-2.5 py-1 transition-colors', value === option.v ? 'border-primary/60 bg-primary/15 text-primary' : 'border-border bg-secondary/30 text-muted-foreground hover:text-foreground')}>{option.t}</button>)}
+    </div>
+  );
 }
 
-function Todo({ href, title, desc }: { href: string; title: string; desc: string }): JSX.Element {
-  return <Link to={href} className="rounded-lg border border-border bg-bg-secondary/50 p-3 hover:border-accent-blue/50"><div className="text-sm font-medium text-text-primary">{title}</div><div className="mt-1 text-xs text-text-muted">{desc}</div></Link>;
+const CONTRACT_STATUS_META: Record<FinContract['status'], { label: string; className: string }> = {
+  draft: { label: '草拟', className: 'border-border bg-secondary/40 text-muted-foreground' },
+  pending_sign: { label: '待签署', className: 'border-[oklch(40%_.14_70_/.55)] bg-[oklch(28%_.10_70_/.4)] text-[oklch(86%_.16_70)]' },
+  active: { label: '生效中', className: 'border-[oklch(40%_.12_165_/.55)] bg-[oklch(26%_.12_165_/.4)] text-[oklch(85%_.16_165)]' },
+  expired: { label: '已到期', className: 'border-border bg-secondary/40 text-muted-foreground' },
+  terminated: { label: '已终止', className: 'border-[oklch(48%_.16_25_/.55)] bg-[oklch(28%_.14_25_/.4)] text-[oklch(82%_.18_25)]' },
+};
+
+function ContractRow({ contract, tenant, onOpen }: { contract: FinContract; tenant: (typeof finTenants)[number]; onOpen: () => void }): JSX.Element {
+  const meta = CONTRACT_STATUS_META[contract.status];
+  return (
+    <li onClick={onOpen} className="grid cursor-pointer grid-cols-[1.4fr_.6fr_.7fr_.7fr_.6fr_.4fr] items-center gap-3 px-5 py-3.5 text-[12.5px] transition-colors hover:bg-secondary/40">
+      <div className="min-w-0"><div className="truncate font-medium text-foreground">{tenant.legalName}</div><div className="truncate text-[11.5px] text-muted-foreground">{contract.no} · 签约 {contract.signedAt} · BD {tenant.bd} · CSM {tenant.csm}</div></div>
+      <div className="text-muted-foreground">{FIN_PLAN_GROUP_LABEL[tenant.group]}</div>
+      <div><div className="font-medium text-foreground">{FIN_TIER_META[contract.tier].label}</div><div className="text-[11px] text-muted-foreground">{fmtMoney(contract.monthlyFee, { unit: 'wan' })} / 月</div></div>
+      <div className="text-muted-foreground tabular">{contract.startDate} ~ {contract.endDate}</div>
+      <div className="text-right font-medium tabular text-foreground">{fmtMoney(contract.totalAmount, { unit: 'wan' })}</div>
+      <div className="text-right"><Badge color="gray" className={meta.className}>{meta.label}</Badge></div>
+    </li>
+  );
 }
 
-function Segment({ label, value, values, onChange }: { label: string; value: string; values: string[]; onChange: (value: string) => void }): JSX.Element {
-  return <div className="flex flex-wrap items-center gap-2">{label && <span className="mr-1 text-xs text-text-muted">{label}</span>}{values.map((item) => <Button key={item} size="sm" variant={value === item ? 'primary' : 'secondary'} onClick={() => onChange(item)}>{item}</Button>)}</div>;
+function ContractDetail({ contract }: { contract: FinContract }): JSX.Element {
+  const tenant = finTenants.find((item) => item.id === contract.tenantId)!;
+  return <div className="space-y-4 text-sm text-text-secondary"><InfoGrid items={[['客户法定全称', tenant.legalName], ['合同编号', contract.no], ['订阅版本', FIN_TIER_META[contract.tier].label], ['合同金额', fmtMoney(contract.totalAmount, { unit: 'wan' })], ['付款账期', tenant.paymentTerms], ['附件', contract.attachment]]} /><div className="rounded-lg border border-border bg-secondary/30 p-4"><div className="mb-2 text-sm font-semibold text-foreground">开票信息</div><InfoGrid items={[['抬头', tenant.invoice.legalName], ['税号', tenant.invoice.taxId], ['开户地址', tenant.invoice.address], ['开户行', tenant.invoice.bankName], ['账号', tenant.invoice.bankAccount]]} /></div></div>;
 }
 
-function Th({ children }: { children: React.ReactNode }): JSX.Element { return <th className="px-3 py-3 text-left text-xs text-text-muted">{children}</th>; }
-function Td({ children }: { children: React.ReactNode }): JSX.Element { return <td className="px-3 py-3 text-xs text-text-secondary">{children}</td>; }
-function Input({ label, placeholder }: { label: string; placeholder: string }): JSX.Element { return <label className="text-xs text-text-muted">{label}<input placeholder={placeholder} className="mt-1 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted" /></label>; }
-function Mini({ label, value }: { label: React.ReactNode; value: React.ReactNode }): JSX.Element { return <div className="rounded bg-bg-card p-2"><div className="font-mono text-sm text-text-primary">{value}</div><div className="mt-1 text-[10px] text-text-muted">{label}</div></div>; }
-function Bar({ value, max, color, title }: { value: number; max: number; color: string; title: string }): JSX.Element { return <div title={`${title} ${value} 万`} className={`w-4 rounded-t ${color}`} style={{ height: `${Math.max(4, (value / max) * 210)}px` }} />; }
-function parseMoneyWan(value: string): number { return Number(value.match(/[\\d,]+/)?.[0]?.replace(/,/g, '') ?? 0); }
+function BillRow({ bill }: { bill: FinBill }): JSX.Element {
+  const tenant = finTenants.find((item) => item.id === bill.tenantId)!;
+  const recon = finReconciliations.find((item) => item.billId === bill.id);
+  const invoiceTimeline = bill.invoiceRequestedAt || bill.paidAt || bill.dueDate
+    ? (
+      <>
+        {bill.invoiceRequestedAt ?? '—'} → {bill.paidAt ?? '—'}
+        <div className="text-[11px]">应回：{bill.dueDate ?? '—'}</div>
+      </>
+    )
+    : '—';
+  return (
+    <li className="grid grid-cols-[1.4fr_.45fr_.45fr_1fr_.9fr_.45fr] items-center gap-3 px-5 py-3.5 text-[12.5px]">
+      <div className="min-w-0"><div className="truncate font-medium text-foreground">{tenant.legalName}</div><div className="truncate text-[11.5px] text-muted-foreground">{bill.no} · CSM {tenant.csm}</div></div>
+      <div className="tabular text-muted-foreground">{bill.period}</div>
+      <div className="text-right font-medium tabular text-foreground">{fmtMoney(bill.amount, { unit: 'wan' })}</div>
+      <div className="text-muted-foreground tabular">{bill.scheduledAt} → {bill.sentAt ?? '—'}<div className="text-[11px]">对账：{recon ? FIN_RECON_STATUS_LABEL[recon.status] : '—'}</div></div>
+      <div className="text-muted-foreground tabular">{invoiceTimeline}</div>
+      <div className="text-right"><Badge color="gray" className={FIN_BILL_STATUS_TONE[bill.status]}>{FIN_BILL_STATUS_LABEL[bill.status]}</Badge></div>
+    </li>
+  );
+}
+
+const METRIC_ICON: Record<FinValueMetric, LucideIcon> = {
+  deliverableContents: FileText,
+  approvedFlows: ShieldCheck,
+  doctorReach: Building2,
+  patientReach: Activity,
+};
+
+function ReportRow({ report, onOpen }: { report: FinValueReport; onOpen: () => void }): JSX.Element {
+  const tenant = finTenants.find((item) => item.id === report.tenantId)!;
+  const bill = finBills.find((item) => item.id === report.billId)!;
+  return (
+    <li onClick={onOpen} className="cursor-pointer px-5 py-4 transition-colors hover:bg-secondary/40">
+      <div className="flex items-center justify-between gap-3"><div className="min-w-0"><div className="truncate text-[13px] font-semibold tracking-tight text-foreground">{tenant.legalName}</div><div className="truncate text-[11.5px] text-muted-foreground">账期 {report.period} · 关联账单 {bill.no} · 生成于 {report.generatedAt}</div></div><Badge color="gray" className={report.convertedToInvoice ? 'border-[oklch(40%_.12_165_/.55)] bg-[oklch(26%_.12_165_/.4)] text-[oklch(85%_.16_165)]' : 'border-[oklch(40%_.10_70_/.55)] bg-[oklch(28%_.10_70_/.4)] text-[oklch(86%_.16_70)]'}>{report.convertedToInvoice ? '已转开票' : '待转开票'}</Badge></div>
+      <div className="mt-3 grid grid-cols-4 gap-2">{(Object.keys(report.metrics) as FinValueMetric[]).map((key) => { const Icon = METRIC_ICON[key]; return <div key={key} className="rounded-md border border-border bg-secondary/30 px-3 py-2"><div className="flex items-center gap-1.5 text-[11px] text-muted-foreground"><Icon className="h-3 w-3" /> {FIN_VALUE_METRIC_LABEL[key]}</div><div className="mt-0.5 text-[14px] font-semibold tabular text-foreground">{report.metrics[key].toLocaleString('zh-CN')}</div></div>; })}</div>
+    </li>
+  );
+}
+
+function InvoiceRow({ invoice }: { invoice: FinInvoice }): JSX.Element {
+  const tenant = finTenants.find((item) => item.id === invoice.tenantId)!;
+  const bill = finBills.find((item) => item.id === invoice.billId)!;
+  return <li className="px-5 py-3.5 text-[12.5px]"><div className="flex items-center justify-between gap-2"><div className="min-w-0"><div className="truncate font-medium text-foreground">{tenant.legalName}</div><div className="truncate text-[11.5px] text-muted-foreground">发票号 {invoice.no} · 关联 {bill.no}</div></div><Badge color="gray" className={invoice.type === 'vat_special' ? 'border-[oklch(40%_.14_300_/.55)] bg-[oklch(26%_.14_300_/.4)] text-[oklch(86%_.16_300)]' : 'border-border bg-secondary/40 text-muted-foreground'}>{invoice.type === 'vat_special' ? '增值税专票' : '增值税普票'}</Badge></div><div className="mt-1 flex items-center justify-between text-[11.5px] text-muted-foreground"><span>申请 {invoice.requestedAt}{invoice.issuedAt ? ` · 开具 ${invoice.issuedAt}` : ''}</span><span className="tabular text-foreground">{fmtMoney(invoice.amount, { unit: 'wan' })}</span></div><div className="mt-1.5 text-[11px] text-muted-foreground">状态：<span className="text-foreground">{FIN_INVOICE_STATUS_LABEL[invoice.status]}</span></div></li>;
+}
+
+function ReportDetail({ report }: { report: FinValueReport }): JSX.Element {
+  const tenant = finTenants.find((item) => item.id === report.tenantId)!;
+  const bill = finBills.find((item) => item.id === report.billId)!;
+  return <div className="space-y-4"><p className="text-sm text-text-secondary">{tenant.legalName} · {report.period} 脱敏汇总 · 关联账单 {bill.no} · 应收 {fmtMoney(bill.amount)} 元</p><div className="grid grid-cols-2 gap-3">{(Object.keys(report.metrics) as FinValueMetric[]).map((key) => { const Icon = METRIC_ICON[key]; return <div key={key} className="rounded-lg border border-border bg-secondary/30 p-3"><div className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground"><Icon className="h-3.5 w-3.5" /> {FIN_VALUE_METRIC_LABEL[key]}</div><div className="mt-1 text-[18px] font-semibold tabular tracking-tight text-foreground">{report.metrics[key].toLocaleString('zh-CN')}</div></div>; })}</div><div className="rounded-lg border border-border bg-secondary/30 p-4"><div className="text-[12.5px] font-semibold tracking-tight text-foreground">开票档案（自动取自合同）</div><InfoGrid items={[['抬头', tenant.invoice.legalName], ['税号', tenant.invoice.taxId], ['地址 / 电话', `${tenant.invoice.address} · ${tenant.invoice.phone}`], ['开户行 / 账号', `${tenant.invoice.bankName} · ${tenant.invoice.bankAccount}`]]} /></div></div>;
+}
+
+function InfoGrid({ items }: { items: Array<[string, ReactNode]> }): JSX.Element {
+  return <dl className="grid grid-cols-1 gap-2 text-[12px]">{items.map(([label, value]) => <div key={label} className="grid grid-cols-[110px_1fr] gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="text-foreground">{value}</dd></div>)}</dl>;
+}
+
+function MiniBar({ h, color, tip }: { h: number; color: string; tip: string }): JSX.Element {
+  return <div title={tip} className="w-3 rounded-t-sm transition-all hover:brightness-125" style={{ height: Math.max(2, h), backgroundColor: color }} />;
+}

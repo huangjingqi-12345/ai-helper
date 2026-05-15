@@ -167,45 +167,85 @@ Project.doctorPolicy
 └─────────────────────┘
 ```
 
-**算法详情：**
+**算法详情（PM 已确认）：**
+
+> **互动分定义：** 互动分 = 该医生历史内容的点赞数 + 收藏数之和。
+
+> **一篇文章 = 一个任务（SubTask）**，每个任务包含：医生ID、主题、形式、病种、药品（如有）。
+> 主题和形式按**随机分配原则**，不支持指定。
 
 ```typescript
-function selectCandidatesByPolicy(doctors: DoctorOption[], policy: DoctorPolicy): DoctorOption[] {
-  return doctors
-    .filter(d => policy.titles.includes(d.title))       // 职称匹配
-    .filter(d => d.pendingCount === 0)                   // 无待写任务
-    .sort((a, b) => b.interactionScore - a.interactionScore); // 互动分最高优先
-}
-
-function allocateMixed(
+// 步骤 1：指定分发
+// 在职称命中的候选池中勾选医生，并为每位医生填写本人负责篇数
+function designatedDistribution(
   candidates: DoctorOption[],
-  whitelistQuota: Record<string, number>,
-  totalArticles: number
+  designations: Record<string, number> // { doctorId: 篇数 }
 ): SubTask[] {
   const tasks: SubTask[] = [];
-
-  // 阶段 1：指定派单（白名单医生获得各自配额）
-  let remaining = totalArticles;
-  for (const [docId, quota] of Object.entries(whitelistQuota)) {
-    tasks.push({ doctorId: docId, count: quota });
-    remaining -= quota;
+  for (const [docId, count] of Object.entries(designations)) {
+    tasks.push({ doctorId: docId, count });
   }
+  return tasks;
+}
 
-  // 阶段 2：策略池（剩余文章均匀分配）
-  const strategyPool = candidates.filter(c => !whitelistQuota[c.id]);
-  if (strategyPool.length > 0 && remaining > 0) {
-    const perDoctor = Math.floor(remaining / strategyPool.length);
-    let remainder = remaining % strategyPool.length;
-    for (const doc of strategyPool) {
+// 步骤 2：策略分发（互动派发逻辑）
+// 已被指定分发选中的医生不再参与策略分发，避免重复
+function strategyDistribution(
+  candidates: DoctorOption[],
+  designatedDoctorIds: Set<string>,
+  remainingArticles: number
+): SubTask[] {
+  // 排除已被指定分发选中的医生
+  const pool = candidates.filter(c => !designatedDoctorIds.has(c.id));
+
+  // 按互动分 desc 排序
+  pool.sort((a, b) => b.interactionScore - a.interactionScore);
+
+  // 将剩余篇数平均派发给前 N 位医生
+  const tasks: SubTask[] = [];
+  if (pool.length > 0 && remainingArticles > 0) {
+    const perDoctor = Math.floor(remainingArticles / pool.length);
+    let remainder = remainingArticles % pool.length;
+
+    for (const doc of pool) {
+      // 当出现余数时优先补给互动分更高的医生（因已按 desc 排序）
       const extra = remainder > 0 ? 1 : 0;
-      remainder--;
+      if (extra) remainder--;
       tasks.push({ doctorId: doc.id, count: perDoctor + extra });
     }
   }
 
   return tasks;
 }
+
+// 步骤 3：主题×形式随机分配
+// 将诉求的主题×形式矩阵展开为任务列表，然后随机分配给医生
+function assignThemeFormat(
+  tasks: SubTask[],              // 已确定医生和篇数
+  themeFormatPool: TaskSlot[]    // 展开后的 {theme, format} 列表
+): SubTask[] {
+  // 随机打乱主题×形式组合
+  shuffle(themeFormatPool);
+
+  // 按医生依次分配
+  let slotIdx = 0;
+  for (const task of tasks) {
+    task.slots = [];
+    for (let i = 0; i < task.count; i++) {
+      task.slots.push(themeFormatPool[slotIdx++]);
+    }
+  }
+  return tasks;
+}
 ```
+
+**示例：** 诉求要求疾病认知20篇（长图文10、海报5、手册5）+ 规范治疗50篇（长图文20、海报20、手册10），总计70篇。
+1. 展开为70个 `{theme, format}` 任务槽
+2. 指定分发选中3位医生各负责5篇 = 15篇
+3. 策略分发分配剩余55篇给其他医生（按互动分排序均分）
+4. 70个任务槽随机打乱后依次分配给各医生
+
+> **支持多次分发：** 一次可只分发部分篇数（如先分发30篇），后续多次分发补齐剩余40篇。每次分发从诉求的剩余额度矩阵中扣减。
 
 ### 3b：患者分发
 

@@ -1,4 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+test.describe.configure({ mode: 'serial' });
+
+async function expectKpi(page: Page, label: string, value: string): Promise<void> {
+  await expect(page.locator('div').filter({ has: page.getByText(label, { exact: true }) }).filter({ hasText: value }).first()).toBeVisible();
+}
 
 test('pharma operations dashboard loads without false automation positioning', async ({ page }) => {
   await page.goto('/');
@@ -11,6 +17,41 @@ test('content workshop matches live read-only demo workflow', async ({ page }) =
   await expect(page.getByRole('heading', { name: '患教内容工坊' })).toBeVisible();
   await expect(page.getByText(/共 \d+ 条 · 第 1 \/ 1 页/)).toBeVisible();
   await expect(page.getByRole('button', { name: /新建内容/ })).toHaveCount(0);
+});
+
+test('admin accounts and projects match live demo metrics', async ({ page }) => {
+  await page.goto('/admin/accounts');
+  await expect(page.getByRole('heading', { name: '账号 · 角色 · 字段级权限' })).toBeVisible();
+  await expectKpi(page, '全部账号', '18');
+  await expectKpi(page, '运营视图', '6');
+  await expectKpi(page, '药企视图', '12');
+  await expectKpi(page, '已冻结', '2');
+  await expect(page.getByText('已开二步验证')).toHaveCount(0);
+  await expect(page.getByText('2FA')).toHaveCount(0);
+  await expect(page.getByText('最近登录')).toBeVisible();
+
+  await page.goto('/admin/projects');
+  await expect(page.getByRole('heading', { name: '项目管理' })).toBeVisible();
+  await expectKpi(page, '项目总数', '14');
+  await expectKpi(page, '进行中', '8');
+  await expectKpi(page, '累计篇数', '61篇');
+  await expectKpi(page, '已完成', '2');
+  await expect(page.getByText('他莫昔芬 · 内分泌依从性')).toBeVisible();
+  await expect(page.getByText('主题×形式').first()).toBeVisible();
+});
+
+
+
+test('admin approval flow configuration matches live demo editor', async ({ page }) => {
+  await page.goto('/admin/approval-flows');
+  await expect(page.getByRole('heading', { name: '自定义审批流' })).toBeVisible();
+  await expect(page.getByText('DX 医学审核 / PX 运营审核 为系统内置不可编辑')).toBeVisible();
+  await expect(page.getByText('链路预览')).toBeVisible();
+
+  await page.getByRole('button', { name: /新增节点/ }).click();
+  await expect(page.getByText('已新增节点').last()).toBeVisible();
+  await page.getByRole('button', { name: /^(停用|启用)$/ }).first().click();
+  await expect(page.getByText(/已停用该流|已启用该流/).last()).toBeVisible();
 });
 
 test('pharma content request drawer can select a project and submit', async ({ page }) => {
@@ -58,7 +99,69 @@ test('request-level distribution workbench implements Manus actions', async ({ p
   await expect(page.getByText(/BATCH-REQ-2031/).first()).toBeVisible();
 });
 
+test('approval center matches Manus grouped drawer workflow', async ({ page }) => {
+  await page.goto('/approvals');
+  await expect(page.getByRole('heading', { name: '审批中心' })).toBeVisible();
+  await page.getByRole('button', { name: /诉求 · 首输 6 周内安全信号识别/ }).click();
+
+  await expect(page.getByText('项目 · 优赫得 · HER2 ADC 重点随访 · 诉求 · 首输 6 周内安全信号识别')).toBeVisible();
+  await expect(page.getByText('DX 医学审核').first()).toBeVisible();
+  await expect(page.getByText('531h / 8h')).toBeVisible();
+
+  await page.getByRole('button', { name: '查看 / 处理' }).click();
+  await expect(page.getByText('审批链路')).toBeVisible();
+  await expect(page.getByText('提交 · 作者 · 王医生')).toBeVisible();
+  await expect(page.getByText('在「DX 医学审核」节点处理')).toBeVisible();
+  await page.getByRole('button', { name: '不通过' }).click();
+  await expect(page.getByRole('button', { name: '提交不通过' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByText('审批链路')).toHaveCount(0);
+});
+
+test('tenant management matches Manus list and dialogs', async ({ page }) => {
+  await page.goto('/admin/tenants');
+  await expect(page.getByRole('heading', { name: '租户与可见范围' })).toBeVisible();
+  await expect(page.locator('div').filter({ hasText: /^已停用\s*1$/ }).first()).toBeVisible();
+  await expect(page.getByText('7 / 7 条')).toBeVisible();
+  await expect(page.getByText('全部病种')).toBeVisible();
+  await expect(page.getByText('1 种病').first()).toBeVisible();
+
+  await page.getByRole('button', { name: '详情' }).nth(1).click();
+  await expect(page.getByText('销售经理：沈书远')).toBeVisible();
+  await expect(page.getByText('成功经理：陆玟昕')).toBeVisible();
+  await expect(page.getByText('林筱 · linx@novartis.cn')).toBeVisible();
+  await page.getByRole('button', { name: '邀请账号' }).click();
+  await expect(page.getByText('为 诺华 邀请新账号')).toBeVisible();
+  await expect(page.getByText('账号姓名必填。')).toBeVisible();
+  await page.getByRole('button', { name: 'Close' }).last().click();
+  await page.getByRole('button', { name: 'Close' }).click();
+
+  await page.getByRole('button', { name: '新增租户' }).click();
+  await expect(page.getByText('创建一家药企租户')).toBeVisible();
+  await expect(page.getByRole('button', { name: '合规可见范围 病种 / 品牌 / 区域' })).toBeVisible();
+  await expect(page.getByText('签约销售经理')).toBeVisible();
+  await expect(page.getByRole('button', { name: '上一步' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Close' }).click();
+});
+
 test('finance data platform route is implemented', async ({ page }) => {
+  await page.goto('/finance');
+  await expect(page.getByRole('heading', { name: '业财总览' })).toBeVisible();
+  await expect(page.getByText('月度经常性收入')).toBeVisible();
+  await expect(page.getByText('业财待办速览')).toBeVisible();
+
+  await page.goto('/finance/contracts');
+  await expect(page.getByRole('heading', { name: '客户合同与订阅' })).toBeVisible();
+  await expect(page.getByText('共 7 条')).toBeVisible();
+
+  await page.goto('/finance/billing');
+  await expect(page.getByRole('heading', { name: '自动化固定费账单引擎' })).toBeVisible();
+  await expect(page.getByText('共 6 张')).toBeVisible();
+
+  await page.goto('/finance/invoicing');
+  await expect(page.getByRole('heading', { name: '价值交付报告 × 开票联动' })).toBeVisible();
+  await expect(page.getByText('累计交付报告')).toBeVisible();
+
   await page.goto('/finance/data');
   await expect(page.getByRole('heading', { name: '业财数据基座' })).toBeVisible();
   await expect(page.getByText('客户榜单')).toBeVisible();

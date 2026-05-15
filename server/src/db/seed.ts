@@ -35,7 +35,7 @@ async function seedTenants(now: string): Promise<void> {
     ['T-AZ', '阿斯利康（中国）', '阿斯利康', 'pharma', 'active', 'PXC-2025-A002', '顾承', 'compliance@astrazeneca.cn', '乳腺癌 HER2 ADC + PARP 抑制维持线，灰度上限 30%。', boolValue(true)],
     ['T-MSD', '默沙东（中国）', '默沙东', 'pharma', 'active', 'PXC-2025-A003', '韦珂', 'compliance@msd.cn', '乳腺癌免疫联合线，灰度上限 20%、k-匿名 100。', boolValue(false)],
     ['T-RC', '罗氏制药', '罗氏', 'pharma', 'inactive', 'PXC-2025-A004', '贺珏', 'compliance@roche.cn', '因合规审查暂停服务（2026-04-26），暂停期内账号全部冻结。', boolValue(false)],
-    ['T-LL', '礼来制药', '礼来', 'pharma', 'active', 'PXC-2026-A005', '禾未', 'compliance@lilly.cn', '乳腺癌内分泌依从与随访依从线，灰度上限 30%。', boolValue(true)],
+    ['T-LL', '礼来制药', '礼来', 'pharma', 'active', 'PXC-2026-A005', '禾未', 'compliance@lilly.cn', '乳腺癌内分泌依从与随访依从线，灰度上限 30%，仅 7 个工作日的实时数据。', boolValue(true)],
     ['T-SY', '石药集团', '石药', 'pharma', 'draft', '未签约', '周予安', 'compliance@cspc.cn', '尚未签约，租户处于草稿状态。', boolValue(false)],
   ];
 
@@ -616,7 +616,7 @@ async function seedApproval(now: string): Promise<void> {
   await replaceRowsForSqlite(['approval_task_actions', 'approval_tasks', 'approval_flow_nodes', 'approval_flows', 'approval_items']);
 
   const flows = [
-    ['flow-1', 'T-PX', 'PX 默认审批流', '编辑审核 → Px 审核 → 药企审核', 'active', 'submitter', '2026-04-20T00:00:00Z', '2026-04-20T00:00:00Z'],
+    ['flow-1', 'T-PX', 'PX 默认审批流', 'DX 医学审核 → PX 运营审核 → 药企审核', 'active', 'submitter', '2026-04-20T00:00:00Z', '2026-04-20T00:00:00Z'],
     ['flow-2', 'T-PX', 'PX 快速流（品牌通识类）', '编辑审核 → Px 审核 → 药企审核', 'inactive', 'previous', '2026-03-15T00:00:00Z', '2026-03-15T00:00:00Z'],
     ['flow-nv-standard', 'T-NV', '诺华 · 标准审批流', '编辑审核 → Px 审核 → 药企审核', 'active', 'submitter', '2026-04-18T00:00:00Z', '2026-04-18T00:00:00Z'],
     ['flow-az-standard', 'T-AZ', '阿斯利康 · 标准审批流', '编辑审核 → 药企审核', 'active', 'submitter', '2026-04-18T00:00:00Z', '2026-04-18T00:00:00Z'],
@@ -638,17 +638,17 @@ async function seedApproval(now: string): Promise<void> {
   }
 
   const flowNodes: Array<[string, string, number, string, string, number, string]> = [
-    ['flow-1-node-1', 'flow-1', 1, '编辑审核', 'dx_editor', 8, 'remind_only'],
-    ['flow-1-node-2', 'flow-1', 2, 'Px 审核', 'px_ops', 8, 'remind_only'],
-    ['flow-1-node-3', 'flow-1', 3, '药企审核', 'pharma_med', 8, 'escalate'],
+    ['flow-1-node-1', 'flow-1', 1, 'DX 医学审核', 'dx_editor', 8, 'remind_only'],
+    ['flow-1-node-2', 'flow-1', 2, 'PX 运营审核', 'px_ops', 8, 'remind_only'],
+    ['flow-1-node-3', 'flow-1', 3, '药企审核', 'pharma_med', 8, 'remind_only'],
     ['flow-2-node-1', 'flow-2', 1, '编辑审核', 'dx_editor', 12, 'remind_only'],
-    ['flow-2-node-2', 'flow-2', 2, 'Px 审核', 'px_ops', 24, 'auto_pass'],
+    ['flow-2-node-2', 'flow-2', 2, 'Px 审核', 'px_ops', 24, 'remind_only'],
     ['flow-2-node-3', 'flow-2', 3, '药企审核', 'pharma_med', 24, 'remind_only'],
     ['flow-nv-node-1', 'flow-nv-standard', 1, '编辑审核', 'dx_editor', 24, 'remind_only'],
     ['flow-nv-node-2', 'flow-nv-standard', 2, 'Px 审核', 'px_ops', 24, 'remind_only'],
-    ['flow-nv-node-3', 'flow-nv-standard', 3, '药企审核', 'pharma_med', 48, 'escalate'],
+    ['flow-nv-node-3', 'flow-nv-standard', 3, '药企审核', 'pharma_med', 48, 'remind_only'],
     ['flow-az-node-1', 'flow-az-standard', 1, '编辑审核', 'dx_editor', 24, 'remind_only'],
-    ['flow-az-node-2', 'flow-az-standard', 2, '药企审核', 'pharma_med', 48, 'escalate'],
+    ['flow-az-node-2', 'flow-az-standard', 2, '药企审核', 'pharma_med', 48, 'remind_only'],
   ];
 
   const activeNodeIds = flowNodes.map((node) => node[0]);
@@ -676,11 +676,11 @@ async function seedApproval(now: string): Promise<void> {
 
   const taskSeeds = [
     ['task-CNT-101', 'CNT-101', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-102', 'CNT-102', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '484h / 8h'],
+    ['task-CNT-102', 'CNT-102', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '531h / 8h'],
     ['task-CNT-104', 'CNT-104', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-105', 'CNT-105', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '460h / 8h'],
-    ['task-CNT-106', 'CNT-106', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '484h / 8h'],
-    ['task-CNT-107', 'CNT-107', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '412h / 8h'],
+    ['task-CNT-105', 'CNT-105', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '507h / 8h'],
+    ['task-CNT-106', 'CNT-106', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '531h / 8h'],
+    ['task-CNT-107', 'CNT-107', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '459h / 8h'],
     ['task-CNT-103', 'CNT-103', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
     ['task-CNT-108', 'CNT-108', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
     ['task-CNT-110', 'CNT-110', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],

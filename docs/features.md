@@ -1,7 +1,7 @@
 # Px Lite 功能目录
 
-最后更新时间：2026-05-14  
-状态：已按当前代码和中文规格包重新同步。  
+最后更新时间：2026-05-15  
+状态：基于 PM 确认决策（2026-05-15）更新。v1 scope 以演示站为准。  
 重要说明：`✅ 已实现` 表示当前代码可演示或已有基础能力，不表示生产业务规则全部确认。
 
 ## 1. 状态图例
@@ -13,26 +13,41 @@
 | 🔴 阻塞 | 需要 PM/CEO/Leader 决策后才能继续 |
 | ⚪ 未开始 | 当前没有生产实现 |
 | 🧪 演示模式 | 仅用于 PM demo，不能作为生产承诺 |
+| 🚫 不在范围 | PM 已确认不在 v1 范围内 |
 
-## 2. 核心功能清单
+## 2. v1 范围原则（PM 已确认 2026-05-15）
+
+> **功能范围以 demo（演示站 px.senzco.com）为准。**
+>
+> - 演示站中展示的功能和布局为 v1 基线
+> - 演示站中不存在的功能不在 v1 范围内
+> - PRD 描述与演示站不一致时，以演示站为准
+> - 财务保持 demo-only，不构建后端
+> - AIGC 本期不涉及
+> - 无 RBAC，仅运营/药企两个视图
+
+## 3. 核心功能清单
 
 | ID | 功能 | 优先级 | 当前状态 | 说明 |
 |---|---|---|---|---|
 | F-001 | 应用框架与导航 | P0 | ✅ 已实现 | `AppLayout`、Sidebar/Header、当前路由与旧路由兼容已存在 |
-| F-002 | 总览 Dashboard | P0 | 🟡 部分完成 | DB/API 驱动；KPI 口径和 `overview_stats` 用途待确认 |
-| F-003 | 内容工坊 | P0 | 🟡 部分完成 | 列表/详情/API/版本表已存在；生产编辑/发布规则待确认 |
-| F-004 | 行为洞察 | P0 | 🟡 部分完成 | 聚合查询、趋势、导入/导出骨架存在；数据来源和口径待确认 |
-| F-005 | 分发策略/项目 | P0 | 🟡 部分完成 | 项目列表/API/详情、诉求级分发工作台、批次留痕已存在；生产流程规则待确认 |
-| F-006 | 审批中心 | P0 | 🟡 部分完成 | 单条审批 API 已接；批量审批 demo-only，多节点规则待确认 |
-| F-007 | 平台管理/Admin | P0 | 🟡 部分完成 | 租户、账号、项目、审批流、审计 API/页面基础存在；页面已同步 Manus 视觉风格，权限矩阵待确认 |
+| F-002 | 总览 Dashboard | P0 | 🟡 部分完成 | DB/API 驱动；✅ 布局以 demo 为准（KPI 卡片+项目概览）；KPI 口径部分已确认 |
+| F-003 | 内容工坊 | P0 | 🟡 部分完成 | 列表/详情/API/版本表已存在；✅ 6 态状态机已确认；✅ 布局以 demo 流水线视图为准 |
+| F-004 | 行为洞察 | P0 | 🟡 部分完成 | 聚合查询、趋势、导入/导出骨架存在；✅ 互动数=点赞+收藏；✅ 布局以 demo 为准；✅ 患者表已废弃 |
+| F-005 | 分发策略/项目 | P0 | 🟡 部分完成 | 项目列表/API/详情、诉求级分发工作台已存在；✅ projects=distribution_projects；✅ 布局以 demo 桶视图为准 |
+| F-006 | 审批中心 | P0 | 🟡 部分完成 | 单条/批量审批 API 已接；✅ 3 节点审批流已确认；✅ 驳回策略="医学编辑修改" |
+| F-007 | 平台管理/Admin | P0 | 🟡 部分完成 | 租户、账号、项目、审批流、审计 API/页面基础存在；✅ 无 RBAC，仅两视图 |
 | F-008 | 设置 | P1 | 🧪 演示模式 | 审计日志可用；团队成员前端硬编码 |
-| F-009 | 财务 | P1/P2 | 🧪 演示模式 | UI 已有；无财务 DB/API/规则 |
-| F-010 | 认证、租户、权限 | P0 | 🟡 部分完成 | demo auth、OIDC/JWKS 骨架、租户隔离、权限表存在；生产 SSO/MFA 待客户配置 |
-| F-011 | 导入/导出与合规 | P0 | 🟡 部分完成 | 聚合导入、CSV 导出、k-anonymity guard、审计基础存在；审批/存储/TTL 待确认 |
-| F-012 | Docker 与部署 | P0 | ✅ 已实现基础 | 本地 demo compose + prod override 已存在；外部基础设施仍需配置 |
-| F-013 | 中文规格文档包 | P0 | ✅ 已实现 | 已新增当前状态审计、产品规格、数据模型、业务规则、工作流、开放问题、评审包 |
+| F-009 | 财务 | P2 | 🧪 演示模式 | ✅ **PM 确认不在 v1 scope**：UI 保留 demo-only，不构建后端 |
+| F-010 | 认证、租户、权限 | P0 | 🟡 部分完成 | demo auth、OIDC/JWKS 骨架、租户隔离存在；✅ 无 RBAC，仅 ops/pharma 两种视图 |
+| F-011 | 导入/导出与合规 | P0 | 🟡 部分完成 | 聚合导入、CSV 导出、k-anonymity guard 存在；审批/存储/TTL 待确认 |
+| F-012 | Docker 与部署 | P0 | ✅ 已实现基础 | 本地 demo compose + prod override 已存在 |
+| F-013 | 中文规格文档包 | P0 | ✅ 已实现 | 已新增全套规格文档，包含 PM 确认决策 |
+| F-014 | AIGC 内容生成 | — | 🚫 不在范围 | ✅ **PM 确认本期不涉及** |
+| F-015 | 三端系统集成（DX/CX） | P1 | ⚪ 未开始 | ✅ **PM 确认**：技术自行决策互通方式；本期暂用 mock 数据 |
+| F-016 | 错误处理 | P0 | 🟡 部分完成 | ✅ **PM 确认**：失败提示"系统报错、请重试"，状态回滚 |
 
-## 3. 模块验收摘要
+## 4. 模块验收摘要
 
 ### F-001 应用框架与导航
 
@@ -42,40 +57,42 @@
 - 当前 PM demo 路由：`/content`、`/audience`、`/distribute`、`/approvals`、`/settings`、`/finance`、`/admin/*`。
 - 旧路由兼容：`/content-workshop`、`/behavior-insights`、`/distribution-strategy`、`/approval-center`、`/platform-management`。
 
-**待确认**
+**已确认（PM 2026-05-15）**
 
-- 药企租户是否显示所有导航。
-- 财务是否进入 v1 导航。
+- ✅ 仅运营/药企两个视图，无细粒度 RBAC
+- ✅ 运营账号→运营视图，药企账号→药企视图
+- 移除侧边栏中关于"区域"的描述
 
 ### F-002 总览 Dashboard
 
 **当前已完成**
 
-- `GET /api/overview`。
-- `GET /api/overview/projects`。
+- `GET /api/overview`、`GET /api/overview/projects`。
 - PX admin 读取 `overview_stats`；药企视角按 `projects` 聚合。
 
-**生产待确认**
+**已确认（PM 2026-05-15）**
 
-- KPI 实时计算还是快照。
-- 已发布内容 `x/y` 语义。
-- 阅读人数/阅读次数/互动数口径。
+- ✅ 布局以 demo 为准：6 张 KPI 卡片 + 按病种分组的项目概览
+- ✅ 不构建 PRD B 的待办收件箱、产能曲线、分布饼图
+- ✅ 互动数 = 点赞 + 收藏
+- ✅ 阅读人数：真实数据，移除 0.78 系数，本期暂用虚拟数据
 
 ### F-003 内容工坊
 
 **当前已完成**
 
 - 内容列表、详情、筛选、主要状态展示。
-- 药企视图“发起选题需求”抽屉：项目选择、优先级、期望上线日、主题 × 形式矩阵、备注、提交成功回写列表。
+- 药企视图"发起选题需求"抽屉。
 - `content`、`content_requests`、`content_versions`、`content_assets`、`tags` 等表。
-- 后端 CRUD 能力，以及 `POST /api/content/requests` 药企诉求提交 API。
+- 后端 CRUD 能力。
 
-**生产待确认**
+**已确认（PM 2026-05-15）**
 
-- 前端是否开放完整创建/编辑器。
-- 版本生成规则。
-- 发布后修改和下线流程。
-- `content_requests` 与医生制作/审批拆单的后续状态机细节。
+- ✅ 内容状态机：6 态模型（需求已提交→医生分发中→医生制作中→三方审核中→内部审核中→已发布）
+- ✅ 6 桶是独立存储的状态，不是展示层分组
+- ✅ 布局以 demo 6 状态桶流水线视图为准，不构建 5 张 KPI 卡片
+- ✅ channelBreakdown 字段移除
+- ✅ AIGC 本期不涉及
 
 ### F-004 行为洞察
 
@@ -86,45 +103,42 @@
 - 导入时计算 `interaction_count`。
 - 导出前 k-anonymity guard。
 
-**生产待确认**
+**已确认（PM 2026-05-15）**
 
-- 数据来源和导入频率。
-- Top 内容和疾病聚合是否从日指标实时计算。
-- 药企可见粒度。
+- ✅ 互动数公式 = likes + favorites（不含 dislikes）
+- ✅ 阅读人数：真实数据，移除 0.78 系数
+- ✅ 患者表已废弃，无患者级下钻
+- ✅ 布局以 demo 为准（KPI 卡片 + TopN 列表），不构建人群画像和趋势图表
 
 ### F-005 分发策略/项目
 
 **当前已完成**
 
 - `GET /api/distribution/projects`、`GET /api/distribution/projects/:id`。
-- `GET /api/distribution/requests/:id` 诉求级分发工作台。
-- `POST /api/distribution/requests/:id/accept` 受理拆单。
-- `PUT /api/distribution/requests/:id/config` 保存诉求级医生/患者策略。
-- `POST /api/distribution/requests/:id/batches` 提交并留痕分发批次。
+- 诉求级分发工作台、批次留痕。
 - `distribution_projects`、`distribution_strategies`、`doctors`、`distribution_records` 等表。
-- `request_distribution_configs`、`request_distribution_batches` 支撑 Manus 的 `/distribute/request/:ticketId` 功能。
-- 项目化分发列表、项目详情、诉求级分发详情页已同步 Manus 风格。
-- Seed/API 增加 PRJ-1000 / REQ-2031 live demo 场景：赫赛汀 12 周随访节点提醒、多子项矩阵、策略分发预览与历史批次均可从项目详情联动进入。
 
-**demo-only / 待确认**
+**已确认（PM 2026-05-15）**
 
-- 分发项目详情仍保留少量 `liveRequests` demo 展示映射；点击“配置分发策略”后进入 API-backed 诉求详情。
-- 详情 6 节点 flow 与审批中心 3 节点不一致。
-- 进度和当前节点是否应由流程派生。
+- ✅ `projects` = `distribution_projects`（同一实体），应合并
+- ✅ Project 1:N RequestTicket（一个项目关联多个诉求）
+- ✅ 布局以 demo 桶视图为准，不构建 4 张 KPI 卡片
+- ✅ 医生匹配：互动分=点赞+收藏之和，按互动分 desc 排序
 
 ### F-006 审批中心
 
 **当前已完成**
 
-- `GET /api/approval/tasks`。
-- `PUT /api/approval/tasks/:id` 单条通过/驳回。
+- `GET /api/approval/tasks`、`PUT /api/approval/tasks/:id`。
+- `/approvals` 支持诉求分组、展开内容行、右侧处理抽屉。
 - `approval_flows`、`approval_flow_nodes`、`approval_tasks`、`approval_task_actions`。
 
-**demo-only / 待确认**
+**已确认（PM 2026-05-15）**
 
-- 批量通过/驳回只 toast。
-- 审批列表中的部分需求分组仍通过前端 `requirementByContent` 硬编码，后续应接入 `content_requests` 或审批任务扩展字段。
-- 多节点推进和驳回策略待确认。
+- ✅ 审批流 3 节点：DX 医学编辑审核 → PX 运营审核 → 药企审核
+- ✅ 驳回策略仅"医学编辑修改"，打回 DX 端
+- ✅ 移除 `to_prev_node` 选项
+- ✅ 三方审核中 = DX + PX 审核，内部审核中 = 药企审核
 
 ### F-007 平台管理/Admin
 
@@ -132,12 +146,15 @@
 
 - 租户、账号、审批流、团队、审计日志、用户、设置 API。
 - 角色、权限、字段级访问级别数据模型。
+- `/admin/tenants`、`/admin/accounts`、`/admin/projects`、`/admin/approval-flows` 页面。
 
-**生产待确认**
+**已确认（PM 2026-05-15）**
 
-- 权限矩阵。
-- 客户 SSO/MFA。
-- 药企可见页面和字段脱敏。
+- ✅ 无 RBAC，仅运营/药企两个视图
+- ✅ 不实现区域范围运营账号
+- ✅ 不实现字段级权限
+- ✅ 审批流配置页按 demo：DX/PX 内置节点锁定、仅飞书提醒、打回策略固定为医学编辑修改
+- ✅ 账号邀请、账号详情、新建项目使用 demo 右侧抽屉交互
 
 ### F-008 设置
 
@@ -150,20 +167,39 @@
 
 - 团队成员本地硬编码。
 
-### F-009 财务
+### F-009 财务 — 🚫 不在 v1 scope
+
+**✅ PM 确认（2026-05-15）：** 功能范围以 demo 为准。财务 UI 保留为 demo-only，不构建后端。
 
 **当前已完成**
 
-- 财务首页、合同、账单、开票 UI。
+- 财务首页、合同与订阅、账单引擎、价值交付与开票、业财数据基座 UI。
+- 全部数据为前端常量，无 DB/API。
 
-**demo-only**
+### F-014 AIGC 内容生成 — 🚫 不在 v1 scope
 
-- 全部数据为前端常量。
-- 无 DB/API。
+**✅ PM 确认（2026-05-15）：** 本期不涉及 AIGC 能力。
 
-## 4. 下一阶段功能推进规则
+**工程行动项：** 移除所有 AIGC 相关的 UI 入口、枚举定义和代码。
 
-1. 先关闭 `docs/open_questions.md` 中 P0/P1 问题。
-2. 把已确认规则回写到 `docs/product_spec.md`、`docs/data_model.md`、`docs/business_rules.md`、`docs/workflows.md`。
+### F-015 三端系统集成
+
+**✅ PM 确认（2026-05-15）：** 技术自行决策数据互通方式，可向 DX/CX 提诉求并提供接口。
+
+**工程行动项：**
+1. 技术侧主动与 DX/CX 团队沟通
+2. 本期未对接部分暂用 mock 数据
+
+### F-016 错误处理
+
+**✅ PM 确认（2026-05-15）：**
+- 失败后页面内显示提示文案「系统报错、请重试」
+- 状态回滚到上一步，让用户重新操作
+
+## 5. 下一阶段功能推进规则
+
+1. ~~先关闭 `docs/open_questions.md` 中 P0/P1 问题。~~ ✅ 大部分已关闭
+2. 把已确认规则回写到 `docs/product_spec.md`、`docs/data_model.md`、`docs/business_rules.md`、`docs/workflows.md`。✅ 进行中
 3. 再把本文件中 🟡/🧪 的功能拆成生产化任务。
-4. 未确认模块保持 demo-only，不继续“边做边猜”。
+4. 未确认模块保持 demo-only，不继续"边做边猜"。
+5. 🚫 不在范围的功能（AIGC、财务后端、RBAC）不安排开发。

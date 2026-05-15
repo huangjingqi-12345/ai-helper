@@ -64,7 +64,7 @@ export function Overview(): JSX.Element {
       <KpiCards stats={stats} loading={loading} />
 
       {/* Project Table */}
-      <ProjectTable projects={projects} loading={loading} />
+      <ProjectTable projects={projects.filter((project) => project.contentCount > 0 || project.publishedCount > 0)} loading={loading} />
     </div>
   );
 }

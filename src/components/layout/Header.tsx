@@ -17,7 +17,7 @@ const financeLabels: Record<string, string> = {
   '/finance/contracts': '合同与订阅',
   '/finance/billing': '账单引擎',
   '/finance/invoicing': '价值交付与开票',
-  '/finance/data': '业财数据基座',
+  '/finance/data': '未命名',
 };
 
 export function Header(): JSX.Element {
@@ -39,15 +39,14 @@ export function Header(): JSX.Element {
   const adminLabel = adminLabels[location.pathname];
   const financeLabel = financeLabels[location.pathname];
   const isDistributionDetail = location.pathname.startsWith('/distribute/') && location.pathname !== '/distribute';
-  const pageLabel = adminLabel
-    ? `平台管理 / ${adminLabel}`
+  const pageLabelParts = adminLabel
+    ? ['平台管理', adminLabel]
     : financeLabel
-      ? `财务管理 / ${financeLabel}`
+      ? ['财务管理', financeLabel]
     : isDistributionDetail
-      ? '分发策略 / 项目详情'
-    : location.pathname === '/settings'
-      ? '设置'
-    : currentNav?.label || '总览';
+      ? ['分发策略', '项目详情']
+    : [location.pathname === '/settings' ? '设置' : currentNav?.label || '总览'];
+  const currentPageLabel = pageLabelParts[pageLabelParts.length - 1];
   const displayedVersion = APP_VERSION.includes('LOCAL') ? 'V0.1 · DEMO' : APP_VERSION;
 
   return (
@@ -55,8 +54,12 @@ export function Header(): JSX.Element {
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-3 text-[12.5px] text-muted-foreground">
           <span className="font-medium text-foreground">Px Lite</span>
-          <span className="text-border">/</span>
-          <span className="text-foreground">{pageLabel}</span>
+          {pageLabelParts.map((part) => (
+            <span key={part} className="contents">
+              <span className="text-border">/</span>
+              <span className={part === currentPageLabel ? 'text-foreground' : ''}>{part}</span>
+            </span>
+          ))}
         </div>
       </div>
 

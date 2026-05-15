@@ -107,7 +107,11 @@ export async function getOverviewStats(scope?: QueryScope) {
 
 export async function getOverviewProjects(scope?: QueryScope) {
   const tenant = tenantCondition('projects', scope);
-  const where = tenant.sql ? `WHERE ${tenant.sql}` : '';
+  const conditions = [
+    '(COALESCE(push_count, 0) > 0 OR COALESCE(read_users, 0) > 0 OR COALESCE(read_count, 0) > 0 OR COALESCE(interaction_count, 0) > 0)',
+  ];
+  if (tenant.sql) conditions.push(tenant.sql);
+  const where = `WHERE ${conditions.join(' AND ')}`;
   const rows = await dbAll<Record<string, unknown>>(`SELECT * FROM projects ${where} ORDER BY read_count DESC, updated_at DESC`, tenant.params);
   return rows.map(toCamel);
 }
@@ -1247,9 +1251,20 @@ async function getTenantById(id: string) {
   return rows.find((tenant) => tenant.id === id) ?? null;
 }
 
-function listText(value: unknown, fallback: string): string {
+function listText(value: unknown, fallback: string, wildcard?: string): string {
   const list = parseJson<string[]>(value, []);
+  if (wildcard && list.includes('*')) return wildcard;
   return list.length > 0 ? list.join(' / ') : fallback;
+}
+
+function formListText(value: unknown, fallback: string[] = []): string[] {
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
+  const list = String(value || '')
+    .split('/')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item) => item !== '待配置' && item !== '待配置品牌' && item !== '0 种病');
+  return list.length > 0 ? list : fallback;
 }
 
 function mapTenantRow(row: Record<string, unknown>) {
@@ -1263,9 +1278,9 @@ function mapTenantRow(row: Record<string, unknown>) {
     contract: row.contract_no || '未签约',
     contact: `${row.contact_name || '未设置'} · ${row.contact_email || '未设置邮箱'}`,
     description: row.description || '',
-    diseaseScope: isOps ? '全部病种 · 仅 Px 自营运营组' : listText(row.disease_ids, '0 种病'),
-    brandScope: isOps ? '全部品牌' : listText(row.brand_ids, '待配置'),
-    regionScope: isOps ? '全国 / 不限地域' : listText(row.region_ids, '待配置'),
+    diseaseScope: isOps ? '全部病种 · 仅 Px 自营运营组' : listText(row.disease_ids, '0 种病', '全部病种'),
+    brandScope: isOps ? '全部品牌' : listText(row.brand_ids, '待配置', '全部品牌'),
+    regionScope: isOps ? '全国 / 不限地域' : listText(row.region_ids, '待配置', '全国 / 不限地域'),
     gray: `灰度 ≤ ${asNumber(row.gray_limit_percent)}%`,
     kAnon: `k-匿 ${asNumber(row.k_anonymity_threshold)}`,
     accounts: asNumber(row.accounts),
@@ -1302,16 +1317,28 @@ export async function createTenant(data: Record<string, unknown>) {
   const id = String(data.id || `T-NEW-${Date.now().toString().slice(-4)}`);
   const contact = String(data.contact || '未设置 · unset@example.cn');
   const [contactName = '未设置', contactEmail = 'unset@example.cn'] = contact.split(' · ');
+  const diseaseIds = formListText(data.diseaseScope);
+  const brandIds = formListText(data.brandScope);
+  const regionIds = formListText(data.regionScope, ['全国']);
+  const adminName = String(data.adminName || contactName || '租户管理员').trim();
+  const adminEmail = String(data.adminEmail || contactEmail || `admin-${Date.now()}@example.cn`).trim();
   await dbRun(`
-    INSERT INTO tenants (id, name, short_name, tenant_type, status, contract_no, contact_name, contact_email, description, can_export, created_at, updated_at)
-    VALUES (?, ?, ?, 'pharma', ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tenants (id, name, short_name, tenant_type, status, contract_no, contact_name, contact_email, contact_phone, description, can_export, created_at, updated_at)
+    VALUES (?, ?, ?, 'pharma', ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET name = excluded.name, short_name = excluded.short_name, status = excluded.status, updated_at = excluded.updated_at
-  `, [id, data.name || '新药企租户', data.shortName || '新租户', data.status || 'active', data.contract || '未签约', contactName, contactEmail, data.description || '通过新建租户向导创建。', boolValue(Boolean(data.canExport ?? true)), now, now]);
+  `, [id, data.name || '新药企租户', data.shortName || '新租户', data.status || 'active', data.contract || '未签约', contactName, contactEmail, data.phone || null, data.description || '通过新建租户向导创建。', boolValue(Boolean(data.canExport ?? true)), now, now]);
   await dbRun(`
     INSERT INTO tenant_scopes (id, tenant_id, disease_ids, brand_ids, region_ids, gray_limit_percent, k_anonymity_threshold, can_export_csv, created_at, updated_at)
     VALUES (?, ?, ?${jsonCast}, ?${jsonCast}, ?${jsonCast}, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET disease_ids = excluded.disease_ids, gray_limit_percent = excluded.gray_limit_percent, k_anonymity_threshold = excluded.k_anonymity_threshold, updated_at = excluded.updated_at
-  `, [`scope-${id}`, id, JSON.stringify(String(data.diseaseScope || '').split(' / ').filter(Boolean)), JSON.stringify([]), JSON.stringify(['全国']), Number(String(data.gray || '50').replace(/\D/g, '')) || 50, Number(String(data.kAnon || '50').replace(/\D/g, '')) || 50, boolValue(Boolean(data.canExport ?? true)), now, now]);
+    ON CONFLICT(id) DO UPDATE SET disease_ids = excluded.disease_ids, brand_ids = excluded.brand_ids, region_ids = excluded.region_ids, gray_limit_percent = excluded.gray_limit_percent, k_anonymity_threshold = excluded.k_anonymity_threshold, can_export_csv = excluded.can_export_csv, updated_at = excluded.updated_at
+  `, [`scope-${id}`, id, JSON.stringify(diseaseIds), JSON.stringify(brandIds), JSON.stringify(regionIds), Number(String(data.gray || '50').replace(/\D/g, '')) || 50, Number(String(data.kAnon || '50').replace(/\D/g, '')) || 50, boolValue(Boolean(data.canExport ?? true)), now, now]);
+  if (adminName && adminEmail) {
+    await dbRun(`
+      INSERT INTO users (id, tenant_id, name, email, role, role_labels, view_type, region, status, has_2fa, last_login, note, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'viewer', ?${jsonCast}, 'pharma', '全国', 'invited', ?, '—', ?, ?, ?)
+      ON CONFLICT(email) DO UPDATE SET tenant_id = excluded.tenant_id, name = excluded.name, role_labels = excluded.role_labels, status = excluded.status, updated_at = excluded.updated_at
+    `, [`A-${Date.now().toString().slice(-6)}`, id, adminName, adminEmail, JSON.stringify(['药企 · 合规']), boolValue(true), `通过租户 ${String(data.shortName || data.name || id)} 新建向导创建。`, now, now]);
+  }
   return getTenantById(id);
 }
 

@@ -534,26 +534,60 @@
 
 执行派单 —— 为分配的医生创建 SubTask 记录。
 
+> **PM 已确认关键规则：**
+> - 一篇文章 = 一个任务（SubTask），每个任务包含：医生ID、主题、形式、病种、药品（如有）
+> - 主题和形式按**随机分配原则**，不支持指定
+> - 指定分发选中的医生不再参与策略分发（避免重复）
+> - 支持多次分发：一次可只分发部分篇数，后续多次补齐
+
 **请求体：**
 ```json
 {
-  "whitelistAssignments": [
-    { "doctorId": "doc_1001", "quota": 2 },
-    { "doctorId": "doc_1003", "quota": 2 }
+  "designatedAssignments": [
+    { "doctorId": "doc_1001", "count": 5 },
+    { "doctorId": "doc_1003", "count": 5 }
   ],
-  "strategyQuota": 8,
-  "channels": ["wechat"]
+  "strategyCount": 20,
+  "channels": ["wechat"],
+  "disease": "breast_cancer",
+  "drug": "赫赛汀"
 }
 ```
+
+> 说明：`designatedAssignments` 为指定分发（在职称命中候选池中勾选医生并填写篇数），
+> `strategyCount` 为策略分发篇数（系统按互动分自动分配）。
+> 主题×形式组合由系统从诉求剩余额度矩阵中随机分配，请求中不传入。
 
 **响应体：**
 ```json
 {
   "data": {
     "subtasks": [
-      { "id": "ST-001", "doctorId": "doc_1001", "status": "assigned", "assignedAt": "..." },
-      { "id": "ST-002", "doctorId": "doc_1003", "status": "assigned", "assignedAt": "..." }
-    ]
+      {
+        "id": "ST-001",
+        "doctorId": "doc_1001",
+        "theme": "treatment",
+        "format": "longtext",
+        "disease": "breast_cancer",
+        "drug": "赫赛汀",
+        "status": "assigned",
+        "assignedAt": "2026-05-15T10:00:00Z"
+      },
+      {
+        "id": "ST-002",
+        "doctorId": "doc_1001",
+        "theme": "awareness",
+        "format": "poster",
+        "disease": "breast_cancer",
+        "drug": "赫赛汀",
+        "status": "assigned",
+        "assignedAt": "2026-05-15T10:00:00Z"
+      }
+    ],
+    "remainingQuota": {
+      "treatment": { "longtext": 18, "poster": 19, "manual": 10 },
+      "awareness": { "longtext": 9, "poster": 4, "manual": 5 }
+    }
   }
 }
 ```
@@ -743,7 +777,7 @@
 
 **查询参数：** `search`、`status`、`page`、`pageSize`
 
-**响应体：** 分页的 `Tenant` 对象列表，包含 `accountCount`。
+**响应体：** 分页的 `Tenant` 对象列表，包含 `accountCount`。当前实现的 demo baseline 与 Manus `/admin/tenants` 对齐：7 家租户、5 个 active、1 个 inactive、1 个 draft、18 个账号。
 
 #### `GET /api/v1/platform/tenants/:id`
 
@@ -751,34 +785,33 @@
 
 #### `POST /api/v1/platform/tenants`
 
-创建租户（向导结果）。
+创建租户（`/admin/tenants` 右侧 4 步向导结果）。当前实现会同时写入：
+
+- `tenants` 基础信息（法人主体、简称、合同、主联系人、联系电话）
+- `tenant_scopes` 合规范围（病种、品牌、区域、灰度上限、k-匿名阈值、导出权限）
+- `users` 首位管理员账号（`status=invited`，默认药企合规角色）
 
 **请求体：**
 ```json
 {
   "name": "诺华制药（中国）",
   "shortName": "诺华",
-  "type": "pharma",
-  "contractNo": "PXC-2025-A001",
-  "contactName": "林牧",
-  "contactEmail": "compliance@novartis.cn",
-  "contactPhone": "13800138000",
-  "salesManager": "张经理",
-  "csManager": "李经理",
-  "notes": "",
-  "scope": {
-    "diseases": ["breast_cancer"],
-    "brands": ["赫赛汀", "帕杰特"],
-    "regions": ["*"],
-    "rampUpperBound": 30,
-    "exportEnabled": true,
-    "kAnonymity": 50
-  },
-  "initialAdmin": {
-    "name": "林牧",
-    "email": "compliance@novartis.cn",
-    "roleId": "pharma-compliance"
-  }
+  "type": "药企租户",
+  "status": "active",
+  "contract": "PXC-2026-A006",
+  "contact": "林牧 · compliance@novartis.cn",
+  "phone": "+86 138-0000-0000",
+  "salesManager": "沈书远",
+  "successManager": "陆玟昕",
+  "description": "乳腺癌 HER2 + CDK4/6 线，仅限相关药品的脱敏聚合。",
+  "diseaseScope": "乳腺癌",
+  "brandScope": "飞赛尔 / 来曲唑",
+  "regionScope": "华东 / 华北 / 华南",
+  "gray": "灰度 ≤ 50%",
+  "kAnon": "k-匿 50",
+  "canExport": true,
+  "adminName": "宋知节",
+  "adminEmail": "songzj@example.cn"
 }
 ```
 
@@ -788,7 +821,7 @@
 
 **请求体：**
 ```json
-{ "status": "suspended" }
+{ "status": "inactive" }
 ```
 
 **守卫：** 不可停用 `px_internal` 类型。

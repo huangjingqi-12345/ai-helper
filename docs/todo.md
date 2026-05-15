@@ -28,10 +28,10 @@
 | TODO-SPEC-001 | 评审 `docs/spec_review_packet.md` | PM/Leader/CEO | ⬜ Pending |
 | TODO-SPEC-002 | 关闭 `docs/open_questions.md` 中 v1 P0/P1 问题 | PM/CEO | ⬜ Pending |
 | TODO-SPEC-003 | 确认财务是否进入 v1 production | CEO/PM | ⬜ Pending |
-| TODO-SPEC-004 | 确认 `projects` 与 `distribution_projects` 关系 | PM/Leader | ⬜ Pending |
-| TODO-SPEC-005 | 确认是否新增“诉求/需求”实体 | PM | ⬜ Pending |
-| TODO-SPEC-006 | 统一审批 3 节点与分发详情 6 节点流程 | PM/Leader | ⬜ Pending |
-| TODO-SPEC-007 | 确认总览、行为、分发、审批 KPI 口径 | PM/数据负责人 | ⬜ Pending |
+| TODO-SPEC-004 | 确认 `projects` 与 `distribution_projects` 关系 | PM/Leader | ✅ **已确认（2026-05-15）**：同一实体。租户→项目→诉求→分发，项目必须关联租户 |
+| TODO-SPEC-005 | 确认是否新增"诉求/需求"实体 | PM | ✅ **已确认（2026-05-15）**：需要 RequestTicket。药企诉求必须关联项目，分发按诉求维度进行，支持多次分发。一篇文章=一个任务（含医生ID/主题/形式/病种/药品），主题×形式随机分配 |
+| TODO-SPEC-006 | 统一审批 3 节点与分发详情 6 节点流程 | PM/Leader | ✅ **已确认（2026-05-15）**：审核流程为 医学编辑审核→[医学编辑修改]→PX运营审核→药企审核→患者端发布。所有节点驳回均打回至医学编辑修改。6 桶为展示层分组 |
+| TODO-SPEC-007 | 确认总览、行为、分发、审批 KPI 口径 | PM/数据负责人 | ⬜ Pending（互动分=点赞+收藏已确认用于分发；KPI 口径尚未全部确认） |
 | TODO-SPEC-008 | 确认药企/Px/字段级权限矩阵 | PM/合规/Leader | ⬜ Pending |
 
 ## 3. 规格确认后待办

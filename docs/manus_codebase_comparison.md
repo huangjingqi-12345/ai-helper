@@ -140,6 +140,14 @@ Ported Manus gaps now covered in current source:
 - Patient distribution configuration backed by `request_distribution_configs`.
 - Distribution batch submission and history backed by `request_distribution_batches`.
 - `/finance/data` route for the Manus “业财数据基座” page.
+- `/approvals` grouped approval list, expanded task rows, and right-side approval drawer now match the Manus demo flow.
+- `/admin/tenants` tenant-management stats, table, detail modal, and new-tenant wizard now match the Manus demo flow.
+- `/admin/accounts` now matches the live demo shell: 4 KPI cards, no extra 2FA table column, live-style 6-column account table, invite-account action, and detail entry.
+- `/admin/projects` now matches the live demo counts and cards: active includes production + distribution, total pieces is 61, PRJ-1004 carries the 6-piece / 3×3 matrix, and tenant labels are live-style Chinese names.
+- `/finance`, `/finance/contracts`, `/finance/billing`, `/finance/invoicing`, and `/finance/data` now use the Manus finance data model and live-style PageHeader/KPI/table/report layouts instead of simplified local placeholders.
+- `/admin/approval-flows` has been reworked to the Manus editor layout: tenant selector, left flow list, locked DX/PX nodes, Feishu-remind-only timeout action, reject strategy fixed to 医学编辑修改, and chain preview.
+- `/admin/accounts` and `/admin/projects` now use Manus-style right-side sheets for detail/invite/create flows instead of local centered modals where the live demo uses drawers.
+- Approval-flow seed data now uses the demo's Feishu-remind-only timeout policy for all seeded nodes.
 - Manus-style shell, `PageHeader`, KPI cards, content/detail pages, distribution project/detail pages, request distribution workbench, and admin page visual treatment.
 - Backend/DB seed data now includes the live-style PRJ-1000 / REQ-2031 distribution scenario used by the Manus demo, including the 6-piece matrix, strategy-only doctor policy, and two historical batches.
 

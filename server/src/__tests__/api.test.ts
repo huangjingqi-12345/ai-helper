@@ -215,6 +215,16 @@ describe('Backend API Integration Tests', () => {
       expect(data[0]).toHaveProperty('status');
       expect(data[0]).toHaveProperty('submittedBy');
     });
+
+    it('returns Manus-style approval task details for CNT-102', async () => {
+      const res = await fetch(`${BASE_URL}/approval/tasks?pageSize=100`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      const task = body.data.find((item: { contentId: string }) => item.contentId === 'CNT-102');
+      expect(task.node).toBe('DX 医学审核');
+      expect(task.sla).toBe('531h / 8h');
+    });
   });
 
   describe('POST /api/approval/:id/approve', () => {
@@ -251,6 +261,55 @@ describe('Backend API Integration Tests', () => {
       expect(data[0]).toHaveProperty('name');
       expect(data[0]).toHaveProperty('role');
       expect(data[0]).toHaveProperty('email');
+    });
+  });
+
+  describe('GET /api/platform/tenants', () => {
+    it('returns Manus tenant-management baseline', async () => {
+      const res = await fetch(`${BASE_URL}/platform/tenants`);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data).toHaveLength(7);
+      expect(body.data.filter((tenant: { status: string }) => tenant.status === 'active')).toHaveLength(5);
+      expect(body.data.filter((tenant: { status: string }) => tenant.status === 'inactive')).toHaveLength(1);
+      const novartis = body.data.find((tenant: { id: string }) => tenant.id === 'T-NV');
+      expect(novartis.accounts).toBe(3);
+      expect(novartis.diseaseScope).toBe('乳腺癌');
+    });
+
+    it('creates a tenant scope and first invited admin from the Manus wizard payload', async () => {
+      const id = `T-IT-${Date.now().toString().slice(-5)}`;
+      const res = await fetch(`${BASE_URL}/platform/tenants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id,
+          name: '自动化测试药企',
+          shortName: '测试药企',
+          type: '药企租户',
+          status: 'active',
+          contract: 'PXC-2026-IT',
+          contact: '赵合规 · compliance-it@example.cn',
+          phone: '+86 138-0000-9999',
+          description: '通过 API 测试验证新建租户向导。',
+          diseaseScope: '乳腺癌',
+          brandScope: '飞赛尔 / 来曲唑',
+          regionScope: '华东 / 华北',
+          gray: '灰度 ≤ 50%',
+          kAnon: 'k-匿 50',
+          canExport: true,
+          adminName: '宋知节',
+          adminEmail: `songzj-${id.toLowerCase()}@example.cn`,
+        }),
+      });
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.data.id).toBe(id);
+      expect(body.data.accounts).toBe(1);
+      expect(body.data.brandScope).toBe('飞赛尔 / 来曲唑');
+      expect(body.data.regionScope).toBe('华东 / 华北');
     });
   });
 
