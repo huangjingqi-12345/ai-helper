@@ -78,8 +78,8 @@ function requestFallback(project: DistributionProject): ProjectRequest[] {
       title: `${project.brand} · ${project.disease} 患教诉求`,
       strategy: '继承项目默认',
       status: project.status === 'completed' ? 'completed' : project.status === 'distribution' ? 'distributing' : project.status === 'production' ? 'in_progress' : 'pending',
-      topics: project.topics.map((topic) => topic.split('·')[0] || topic),
-      formats: project.formats.split(' · ').filter(Boolean).map((format) => format.replace(/\s+(\d+)$/, ' × $1')),
+      topics: (project.topics ?? []).map((topic) => topic.split('·')[0] || topic),
+      formats: (project.formats ?? '').split(' · ').filter(Boolean).map((format) => format.replace(/\s+(\d+)$/, ' × $1')),
       note: project.currentNode ? `当前节点：${project.currentNode}` : '等待派单',
     },
   ];

@@ -223,7 +223,7 @@ function ProjectRow({ project }: { project: DistributionProject }): JSX.Element 
 
       <div className="mt-3 grid grid-cols-4 gap-2 text-[11.5px]">
         <Metric icon={<Layers className="h-3.5 w-3.5 text-primary" />} label="累计篇数" value={String(project.totalPieces)} />
-        <Metric icon={<Palette className="h-3.5 w-3.5 text-primary" />} label="主题×形式" value={project.cadence.replace(' 主题 · ', ' · ').replace(' 形式', '')} />
+        <Metric icon={<Palette className="h-3.5 w-3.5 text-primary" />} label="主题×形式" value={(project.cadence ?? '').replace(' 主题 · ', ' · ').replace(' 形式', '')} />
         <Metric icon={<Users className="h-3.5 w-3.5 text-primary" />} label="关联诉求" value={String(requirementCountByProject[project.id] ?? project.topics.length)} />
         <Metric icon={<CalendarClock className="h-3.5 w-3.5 text-primary" />} label="期望上线" value={project.expectedDate} />
       </div>

@@ -10,13 +10,17 @@ import type { DistributionProject, DistributionProjectPriority, DistributionProj
 import { useLogger } from '@/hooks/useLogger';
 import { useTenantStore } from '@/stores/useTenantStore';
 
-const STATUS_META: Record<DistributionProjectStatus, { label: string; color: string }> = {
+const STATUS_META: Record<string, { label: string; color: string }> = {
   intake: { label: '受理中', color: 'text-sky-300 bg-sky-500/15 border-sky-500/30' },
   production: { label: '制作中', color: 'text-amber-300 bg-amber-500/15 border-amber-500/30' },
   distribution: { label: '分发中', color: 'text-emerald-300 bg-emerald-500/15 border-emerald-500/30' },
   completed: { label: '已完成', color: 'text-muted-foreground bg-[oklch(22%_.015_260_/.3)] border-border' },
   archived: { label: '已归档', color: 'text-muted-foreground bg-[oklch(22%_.015_260_/.3)] border-border' },
+  active: { label: '进行中', color: 'text-sky-300 bg-sky-500/15 border-sky-500/30' },
+  paused: { label: '已暂停', color: 'text-amber-300 bg-amber-500/15 border-amber-500/30' },
 };
+
+const STATUS_META_FALLBACK = { label: '未知', color: 'text-muted-foreground bg-[oklch(22%_.015_260_/.3)] border-border' };
 
 const STATUS_ORDER: DistributionProjectStatus[] = ['intake', 'production', 'distribution', 'completed', 'archived'];
 
@@ -84,7 +88,7 @@ export function DistributionStrategy(): JSX.Element {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         {STATUS_ORDER.map((status) => {
-          const meta = STATUS_META[status];
+          const meta = STATUS_META[status] ?? STATUS_META_FALLBACK;
           return (
             <button
               key={status}
@@ -120,7 +124,7 @@ export function DistributionStrategy(): JSX.Element {
             className="h-9 w-36 rounded-md border border-border bg-[oklch(18%_.02_260)] px-2 text-[13px] outline-none focus:border-[oklch(70%_.15_200_/.5)]"
           >
             <option value="all">全部状态</option>
-            {STATUS_ORDER.map((status) => <option key={status} value={status}>{STATUS_META[status].label} · {counters[status] ?? 0}</option>)}
+            {STATUS_ORDER.map((status) => <option key={status} value={status}>{(STATUS_META[status] ?? STATUS_META_FALLBACK).label} · {counters[status] ?? 0}</option>)}
           </select>
         </FilterField>
         <FilterField label="优先级">
@@ -150,7 +154,7 @@ export function DistributionStrategy(): JSX.Element {
 }
 
 function ProjectRow({ project }: { project: DistributionProject }): JSX.Element {
-  const themes = project.topics.slice(0, 3);
+  const themes = (project.topics ?? []).slice(0, 3);
   return (
     <Link to={`/distribute/${project.id}`} className="group block rounded-lg border border-border bg-[oklch(20%_.02_260_/.6)] p-4 transition hover:border-[oklch(70%_.15_200_/.6)] hover:bg-card">
       <div className="flex flex-wrap items-start gap-4">
@@ -159,7 +163,7 @@ function ProjectRow({ project }: { project: DistributionProject }): JSX.Element 
             <Megaphone className="size-4 text-primary" />
             <h3 className="text-[15px] font-semibold tracking-tight text-foreground">{project.title}</h3>
             <span className={clsx('rounded border px-1.5 py-0.5 text-[10.5px]', PRIORITY_COLOR[project.priority])}>{project.priority}</span>
-            <span className={clsx('rounded border px-1.5 py-0.5 text-[10.5px]', STATUS_META[project.status].color)}>{STATUS_META[project.status].label}</span>
+            <span className={clsx('rounded border px-1.5 py-0.5 text-[10.5px]', (STATUS_META[project.status] ?? STATUS_META_FALLBACK).color)}>{(STATUS_META[project.status] ?? STATUS_META_FALLBACK).label}</span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
             <span className="inline-flex items-center gap-1"><Building2 className="size-3.5" />{project.brand || '—'}</span>
