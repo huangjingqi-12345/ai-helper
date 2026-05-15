@@ -1,6 +1,6 @@
 import { apiClient } from '@/api/client';
 import type { ApiResponse, PaginatedResponse } from '@/types/api';
-import type { ApprovalItem, ApprovalFilter, ApprovalTask } from '@/types/approval';
+import type { ApprovalAttachment, ApprovalItem, ApprovalFilter, ApprovalTask } from '@/types/approval';
 
 export async function getApprovalQueue(params?: ApprovalFilter): Promise<PaginatedResponse<ApprovalItem>> {
   const response = await apiClient.get<PaginatedResponse<ApprovalItem>>('/approval', { params });
@@ -25,6 +25,11 @@ export async function rejectContent(id: string, comments: string): Promise<ApiRe
 
 export async function getApprovalTasks(params?: { status?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<ApprovalTask>> {
   const response = await apiClient.get<PaginatedResponse<ApprovalTask>>('/approval/tasks', { params });
+  return response.data;
+}
+
+export async function getApprovalTaskAttachment(id: string): Promise<ApiResponse<ApprovalAttachment>> {
+  const response = await apiClient.get<ApiResponse<ApprovalAttachment>>(`/approval/tasks/${id}/attachment`);
   return response.data;
 }
 

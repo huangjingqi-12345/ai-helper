@@ -211,7 +211,7 @@ export function AccountManagement(): JSX.Element {
         <span className="ml-auto text-[12px] text-muted-foreground">{filtered.length} / {accounts.length} 条</span>
       </div>
 
-      <Card className="mt-3 overflow-hidden border-border bg-card/40 p-0">
+      <Card className="mt-3 overflow-hidden border-transparent bg-card/40 p-0">
         <table className="w-full text-[13px]">
           <thead className="bg-card/70 text-[11px] uppercase tracking-wider text-muted-foreground">
             <tr className="text-left">
@@ -232,7 +232,7 @@ export function AccountManagement(): JSX.Element {
               return (
                 <tr
                   key={account.id}
-                  className="cursor-pointer border-t border-border/60 transition-colors hover:bg-secondary/40"
+                  className="cursor-pointer transition-colors hover:bg-secondary/40"
                   onClick={() => setActiveId(account.id)}
                 >
                   <td className="px-4 py-3">

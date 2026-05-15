@@ -158,7 +158,7 @@ export function Sidebar(): JSX.Element {
                 {adminExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
               </button>
               {adminExpanded && (
-                <ul className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border/60 pl-3">
+                <ul className="ml-5 mt-0.5 space-y-0.5 pl-3">
                   {adminSubItems.map((item) => {
                     const active = isActive(location.pathname, item.path, item.exact) || (item.path === '/admin/tenants' && location.pathname === '/platform-management');
                     const Icon = item.icon;
@@ -201,7 +201,7 @@ export function Sidebar(): JSX.Element {
                 {financeExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
               </button>
               {financeExpanded && (
-                <ul className="ml-5 mt-0.5 space-y-0.5 border-l border-sidebar-border/60 pl-3">
+                <ul className="ml-5 mt-0.5 space-y-0.5 pl-3">
                   {financeSubItems.map((item) => {
                     const active = isActive(location.pathname, item.path, item.exact);
                     const Icon = item.icon;

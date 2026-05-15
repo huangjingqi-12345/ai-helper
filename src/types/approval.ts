@@ -19,6 +19,32 @@ export interface ApprovalFilter {
   pageSize?: number;
 }
 
+
+export interface ApprovalAttachment {
+  id: string;
+  type: 'content_detail';
+  label: string;
+  contentId: string;
+  title?: string;
+  contentType?: string;
+  excerpt?: string;
+  body?: string;
+  tags?: string[];
+  priority?: string;
+  projectName?: string;
+  disease?: string;
+  author?: string;
+  updatedAt?: string;
+  versionNo?: number;
+  immutableHash?: string;
+  route?: string;
+  source?: 'dx_api' | 'local_cache';
+  sourceLabel?: string;
+  status?: 'pending' | 'ready' | 'unavailable';
+  retrievedAt?: string;
+  error?: string;
+}
+
 export interface ApprovalTask {
   id: string;
   taskId?: string;
@@ -30,4 +56,5 @@ export interface ApprovalTask {
   progress: string;
   sla: string;
   status: ApprovalStatus;
+  attachments?: ApprovalAttachment[];
 }

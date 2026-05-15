@@ -1,6 +1,7 @@
 import { dbAll, dbGet, dbRun, DB_DRIVER } from './connection.js';
 import { createHash, randomUUID } from 'crypto';
 import type { AuthUser } from '../middleware/auth.js';
+import { fetchDxContentAttachment, isDxContentApiConfigured, type DxContentAttachment } from '../integrations/dxContent.js';
 
 const jsonCast = DB_DRIVER === 'postgres' ? '::jsonb' : '';
 const boolValue = (value: boolean): boolean | number => (DB_DRIVER === 'postgres' ? value : value ? 1 : 0);
@@ -207,9 +208,11 @@ export async function createContent(data: Record<string, unknown>, scope?: Query
   const now = new Date().toISOString();
   const projectId = String(data.projectId || 'proj-hf');
   const tenantId = scope?.tenantId || 'T-PX';
-  const status = String(data.status || 'draft');
-  const workflowState = String(data.workflowState || 'draft');
   const pipelineStage = String(data.pipelineStage || 'requirement_submitted');
+  const validContentStatuses = new Set(['requirement_submitted', 'doctor_distributing', 'doctor_producing', 'third_party_review', 'internal_review', 'published']);
+  const requestedStatus = String(data.status || pipelineStage);
+  const status = validContentStatuses.has(requestedStatus) ? requestedStatus : pipelineStage;
+  const workflowState = String(data.workflowState || status);
   const priority = String(data.priority || 'P2');
 
   await dbRun(`
@@ -341,8 +344,8 @@ export async function submitContentRequest(data: Record<string, unknown>, scope?
     priority,
     expectedDate,
     pipelineStage: 'requirement_submitted',
-    workflowState: 'draft',
-    status: 'draft',
+    workflowState: 'requirement_submitted',
+    status: 'requirement_submitted',
     classification: 'content_request',
     diseaseArea: disease,
   }, scope);
@@ -691,9 +694,9 @@ export async function updateContent(id: string, data: Record<string, unknown>, s
   if (updates.length === 0) return getContentById(id, scope);
   if (createNewDraftAfterLock) {
     updates.push('workflow_state = ?');
-    params.push('draft');
+    params.push('doctor_producing');
     updates.push('status = ?');
-    params.push('draft');
+    params.push('doctor_producing');
   }
   updates.push('updated_at = ?');
   params.push(new Date().toISOString(), id);
@@ -703,7 +706,7 @@ export async function updateContent(id: string, data: Record<string, unknown>, s
     `UPDATE content SET ${updates.join(', ')} WHERE LOWER(id) = LOWER(?) ${updateTenant.sql ? `AND ${updateTenant.sql}` : ''}`,
     [...params, ...updateTenant.params]
   );
-  await createContentVersion(id, { ...existing, ...data, workflowState: createNewDraftAfterLock ? 'draft' : existingState }, scope, createNewDraftAfterLock ? 'new draft created after approved lock' : 'content updated');
+  await createContentVersion(id, { ...existing, ...data, workflowState: createNewDraftAfterLock ? 'doctor_producing' : existingState }, scope, createNewDraftAfterLock ? 'new draft created after approved lock' : 'content updated');
   return getContentById(id, scope);
 }
 
@@ -1163,11 +1166,32 @@ export async function getApprovalTasks(filters: { status?: string; page: number;
   const total = Number(totalRow?.cnt ?? 0);
   const offset = (filters.page - 1) * filters.pageSize;
   const rows = await dbAll<Record<string, unknown>>(`
-    SELECT t.*, c.title, c.author, p.disease, n.node_name
+    SELECT
+      t.*,
+      c.title,
+      c.author,
+      c.type AS content_type,
+      c.excerpt AS content_excerpt,
+      c.content AS content_body,
+      c.tags AS content_tags,
+      c.priority AS content_priority,
+      c.updated_at AS content_updated_at,
+      c.pipeline_stage AS content_pipeline_stage,
+      p.disease,
+      COALESCE(p.title, p.name) AS project_name,
+      n.node_name,
+      cv.version_no AS attachment_version_no,
+      cv.immutable_hash AS attachment_hash,
+      cv.change_note AS attachment_change_note,
+      cv.workflow_state AS attachment_workflow_state,
+      COALESCE(cv.body, c.content) AS attachment_body,
+      COALESCE(cv.excerpt, c.excerpt) AS attachment_excerpt
     FROM approval_tasks t
     LEFT JOIN content c ON c.id = t.content_id
     LEFT JOIN projects p ON p.id = t.project_id
     LEFT JOIN approval_flow_nodes n ON n.id = t.current_node_id
+    LEFT JOIN content_versions cv ON cv.content_id = t.content_id
+      AND cv.version_no = (SELECT MAX(version_no) FROM content_versions WHERE content_id = t.content_id)
     ${where}
     ORDER BY t.submitted_at DESC
     LIMIT ? OFFSET ?
@@ -1183,18 +1207,163 @@ export async function getApprovalTasks(filters: { status?: string; page: number;
 function mapApprovalTaskRow(row: Record<string, unknown>) {
   const task = toCamel(row);
   const status = String(task.status);
+  const contentId = String(task.contentId ?? '');
+  const title = String(task.title ?? '未命名内容');
   return {
     id: task.id,
     taskId: task.id,
-    contentId: task.contentId,
-    title: task.title,
+    contentId,
+    title,
     disease: task.disease,
     author: task.author || task.submittedBy,
     node: status === 'approved' ? '发布' : task.nodeName || '未提交',
     progress: task.progressText || '0/3',
     sla: task.slaDueAt || '—',
     status,
+    // Attachment body is intentionally not embedded in the queue list.
+    // The drawer resolves it on demand through /api/approval/tasks/:id/attachment,
+    // which calls the DX content-detail API server-side.
+    attachments: [buildApprovalAttachmentStub(task)],
   };
+}
+
+function buildApprovalAttachmentStub(task: Record<string, unknown>): DxContentAttachment {
+  const contentId = String(task.contentId ?? '');
+  const title = String(task.title ?? '未命名内容');
+  return {
+    id: `${String(task.id)}-content-detail`,
+    type: 'content_detail',
+    label: '患教内容详情',
+    contentId,
+    title,
+    contentType: String(task.contentType ?? 'article'),
+    route: `/content/${contentId}`,
+    source: 'dx_api',
+    sourceLabel: 'DX API',
+    status: 'pending',
+  };
+}
+
+function buildLocalApprovalAttachment(row: Record<string, unknown>, error?: string): DxContentAttachment {
+  const task = toCamel(row);
+  const contentId = String(task.contentId ?? '');
+  const title = String(task.title ?? '未命名内容');
+  const tags = parseJson<string[]>(task.contentTags, []);
+  return {
+    id: `${String(task.id)}-content-detail`,
+    type: 'content_detail',
+    label: '患教内容详情',
+    contentId,
+    title,
+    contentType: String(task.contentType ?? 'article'),
+    excerpt: String(task.attachmentExcerpt ?? task.contentExcerpt ?? ''),
+    body: String(task.attachmentBody ?? task.contentBody ?? ''),
+    tags,
+    priority: task.contentPriority ? String(task.contentPriority) : undefined,
+    projectName: task.projectName ? String(task.projectName) : undefined,
+    disease: task.disease ? String(task.disease) : undefined,
+    author: task.author ? String(task.author) : String(task.submittedBy ?? ''),
+    updatedAt: task.contentUpdatedAt ? String(task.contentUpdatedAt) : undefined,
+    versionNo: asNumber(task.attachmentVersionNo, 1),
+    immutableHash: task.attachmentHash ? String(task.attachmentHash) : undefined,
+    route: `/content/${contentId}`,
+    source: 'local_cache',
+    sourceLabel: '本地内容缓存',
+    status: 'ready',
+    retrievedAt: new Date().toISOString(),
+    error,
+  };
+}
+
+function localDxFallbackAllowed(): boolean {
+  const explicit = process.env.DX_CONTENT_FALLBACK?.trim();
+  if (explicit === 'none' || explicit === 'false') return false;
+  if (explicit === 'local') return true;
+  return process.env.NODE_ENV !== 'production';
+}
+
+function mergeDxAttachment(row: Record<string, unknown>, dx: DxContentAttachment): DxContentAttachment {
+  const local = buildLocalApprovalAttachment(row);
+  return {
+    ...local,
+    ...dx,
+    id: `${String(toCamel(row).id)}-content-detail`,
+    type: 'content_detail',
+    label: dx.label || '患教内容详情',
+    contentId: local.contentId,
+    title: dx.title || local.title,
+    contentType: dx.contentType || local.contentType,
+    tags: dx.tags && dx.tags.length > 0 ? dx.tags : local.tags,
+    route: local.route,
+    source: 'dx_api',
+    sourceLabel: 'DX API',
+    status: 'ready',
+    retrievedAt: dx.retrievedAt ?? new Date().toISOString(),
+    error: undefined,
+  };
+}
+
+export async function getApprovalTaskAttachment(id: string, scope?: QueryScope): Promise<DxContentAttachment | null> {
+  const row = await dbGet<Record<string, unknown>>(`
+    SELECT
+      t.*,
+      c.title,
+      c.author,
+      c.type AS content_type,
+      c.excerpt AS content_excerpt,
+      c.content AS content_body,
+      c.tags AS content_tags,
+      c.priority AS content_priority,
+      c.updated_at AS content_updated_at,
+      p.disease,
+      COALESCE(p.title, p.name) AS project_name,
+      cv.version_no AS attachment_version_no,
+      cv.immutable_hash AS attachment_hash,
+      COALESCE(cv.body, c.content) AS attachment_body,
+      COALESCE(cv.excerpt, c.excerpt) AS attachment_excerpt
+    FROM approval_tasks t
+    LEFT JOIN content c ON c.id = t.content_id
+    LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN content_versions cv ON cv.content_id = t.content_id
+      AND cv.version_no = (SELECT MAX(version_no) FROM content_versions WHERE content_id = t.content_id)
+    WHERE (t.id = ? OR t.content_id = ?) ${!isPxAdmin(scope) ? 'AND t.tenant_id = ?' : ''}
+  `, !isPxAdmin(scope) ? [id, id, scope!.tenantId] : [id, id]);
+
+  if (!row) return null;
+
+  const task = toCamel(row);
+  const contentId = String(task.contentId ?? '');
+  let dxError: string | undefined;
+
+  if (isDxContentApiConfigured()) {
+    try {
+      const dxAttachment = await fetchDxContentAttachment(contentId, {
+        taskId: String(task.id ?? id),
+        tenantId: String(task.tenantId ?? scope?.tenantId ?? ''),
+      });
+      if (dxAttachment) return mergeDxAttachment(row, dxAttachment);
+    } catch (error) {
+      dxError = error instanceof Error ? error.message : 'DX API 调用失败';
+      if (!localDxFallbackAllowed()) {
+        return {
+          ...buildApprovalAttachmentStub(task),
+          status: 'unavailable',
+          error: dxError,
+        };
+      }
+    }
+  } else {
+    dxError = 'DX API 未配置（缺少 DX_API_BASE_URL）';
+    if (!localDxFallbackAllowed()) {
+      return {
+        ...buildApprovalAttachmentStub(task),
+        status: 'unavailable',
+        error: dxError,
+      };
+    }
+  }
+
+  return buildLocalApprovalAttachment(row, dxError);
 }
 
 export async function handleApprovalTask(id: string, action: 'approve' | 'reject', comments?: string, rejectReason?: string, user?: QueryScope) {
@@ -1227,8 +1396,8 @@ export async function handleApprovalTask(id: string, action: 'approve' | 'reject
     UPDATE content SET workflow_state = ?, status = ?, updated_at = ? WHERE id = ?
     ${!isPxAdmin(user) ? 'AND tenant_id = ?' : ''}
   `, !isPxAdmin(user)
-    ? [action === 'approve' ? 'approved_locked' : 'rejected', action === 'approve' ? 'approved' : 'draft', now, existing.content_id, user!.tenantId]
-    : [action === 'approve' ? 'approved_locked' : 'rejected', action === 'approve' ? 'approved' : 'draft', now, existing.content_id]);
+    ? [action === 'approve' ? 'approved_locked' : 'rejected', action === 'approve' ? 'published' : 'doctor_producing', now, existing.content_id, user!.tenantId]
+    : [action === 'approve' ? 'approved_locked' : 'rejected', action === 'approve' ? 'published' : 'doctor_producing', now, existing.content_id]);
 
   if (action === 'approve') {
     await dbRun(`
@@ -1239,11 +1408,32 @@ export async function handleApprovalTask(id: string, action: 'approve' | 'reject
   }
 
   const row = await dbGet<Record<string, unknown>>(`
-    SELECT t.*, c.title, c.author, p.disease, n.node_name
+    SELECT
+      t.*,
+      c.title,
+      c.author,
+      c.type AS content_type,
+      c.excerpt AS content_excerpt,
+      c.content AS content_body,
+      c.tags AS content_tags,
+      c.priority AS content_priority,
+      c.updated_at AS content_updated_at,
+      c.pipeline_stage AS content_pipeline_stage,
+      p.disease,
+      COALESCE(p.title, p.name) AS project_name,
+      n.node_name,
+      cv.version_no AS attachment_version_no,
+      cv.immutable_hash AS attachment_hash,
+      cv.change_note AS attachment_change_note,
+      cv.workflow_state AS attachment_workflow_state,
+      COALESCE(cv.body, c.content) AS attachment_body,
+      COALESCE(cv.excerpt, c.excerpt) AS attachment_excerpt
     FROM approval_tasks t
     LEFT JOIN content c ON c.id = t.content_id
     LEFT JOIN projects p ON p.id = t.project_id
     LEFT JOIN approval_flow_nodes n ON n.id = t.current_node_id
+    LEFT JOIN content_versions cv ON cv.content_id = t.content_id
+      AND cv.version_no = (SELECT MAX(version_no) FROM content_versions WHERE content_id = t.content_id)
     WHERE (t.id = ? OR t.content_id = ?) ${!isPxAdmin(user) ? 'AND t.tenant_id = ?' : ''}
   `, !isPxAdmin(user) ? [id, id, user!.tenantId] : [id, id]);
   return row ? mapApprovalTaskRow(row) : null;

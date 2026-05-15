@@ -224,6 +224,26 @@ describe('Backend API Integration Tests', () => {
       const task = body.data.find((item: { contentId: string }) => item.contentId === 'CNT-102');
       expect(task.node).toBe('DX 医学审核');
       expect(task.sla).toBe('531h / 8h');
+      expect(task.attachments).toBeTruthy();
+      expect(task.attachments[0]).toMatchObject({
+        type: 'content_detail',
+        label: '患教内容详情',
+        contentId: 'CNT-102',
+        source: 'dx_api',
+        status: 'pending',
+      });
+
+      const attachmentRes = await fetch(`${BASE_URL}/approval/tasks/${task.id}/attachment`);
+      expect(attachmentRes.status).toBe(200);
+      const attachmentBody = await attachmentRes.json();
+      expect(attachmentBody.success).toBe(true);
+      expect(attachmentBody.data).toMatchObject({
+        type: 'content_detail',
+        label: '患教内容详情',
+        contentId: 'CNT-102',
+        status: 'ready',
+      });
+      expect(attachmentBody.data.body).toContain('服药顺序');
     });
   });
 

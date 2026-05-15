@@ -6,6 +6,12 @@ async function expectKpi(page: Page, label: string, value: string): Promise<void
   await expect(page.locator('div').filter({ has: page.getByText(label, { exact: true }) }).filter({ hasText: value }).first()).toBeVisible();
 }
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('pxlite.authToken', 'dev-px-admin');
+  });
+});
+
 test('pharma operations dashboard loads without false automation positioning', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '患者教育内容运营总览' })).toBeVisible();
@@ -56,6 +62,7 @@ test('admin approval flow configuration matches live demo editor', async ({ page
 
 test('pharma content request drawer can select a project and submit', async ({ page }) => {
   await page.addInitScript(() => {
+    window.localStorage.setItem('pxlite.authToken', 'dev-pharma-admin');
     window.localStorage.setItem('pxlite.currentTenantId', 'T-NV');
     window.localStorage.setItem('pxlite.role', 'pharma');
   });
@@ -111,6 +118,8 @@ test('approval center matches Manus grouped drawer workflow', async ({ page }) =
   await page.getByRole('button', { name: '查看 / 处理' }).click();
   await expect(page.getByText('审批链路')).toBeVisible();
   await expect(page.getByText('提交 · 作者 · 王医生')).toBeVisible();
+  await expect(page.getByText('审核附件（患教内容详情）')).toBeVisible();
+  await expect(page.getByText('服药顺序、漏服补救、中断策略与重启路径。').first()).toBeVisible();
   await expect(page.getByText('在「DX 医学审核」节点处理')).toBeVisible();
   await page.getByRole('button', { name: '不通过' }).click();
   await expect(page.getByRole('button', { name: '提交不通过' })).toBeVisible();

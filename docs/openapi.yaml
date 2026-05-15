@@ -472,6 +472,7 @@ paths:
   /approval/tasks:
     get:
       summary: 获取审批任务列表
+      description: 返回审批任务分页列表；每个任务包含 `attachments` 占位元数据。正文不在列表响应中返回，前端打开抽屉后调用 `/approval/tasks/{id}/attachment` 由后端实时读取 DX 内容详情 API。
       parameters:
         - name: status
           in: query
@@ -488,6 +489,21 @@ paths:
       responses:
         '200':
           description: 审批任务分页列表
+  /approval/tasks/{id}/attachment:
+    get:
+      summary: 获取审批任务待审附件
+      description: PX 后端调用 DX 内容详情 API 并归一化为 `content_detail` 附件；本地/测试可降级为 PX 本地内容缓存。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 待审核患教内容详情附件
+        '404':
+          description: 审批任务或附件不存在
   /approval/tasks/{id}:
     put:
       summary: 处理单条审批任务

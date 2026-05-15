@@ -36,6 +36,14 @@ services:
       # Demo stack: frontend has no login screen, so allow backend dev user fallback.
       # Disable this and provide OIDC settings for real production auth.
       - ALLOW_DEMO_AUTH=true
+      # Approval attachments are loaded by backend through the DX content-detail API.
+      # Local demo can fall back to the SQLite content cache when DX is not configured.
+      - DX_API_BASE_URL=${DX_API_BASE_URL:-}
+      - DX_CONTENT_DETAIL_PATH_TEMPLATE=${DX_CONTENT_DETAIL_PATH_TEMPLATE:-/content/{contentId}}
+      - DX_API_TOKEN=${DX_API_TOKEN:-}
+      - DX_API_KEY=${DX_API_KEY:-}
+      - DX_API_TIMEOUT_MS=${DX_API_TIMEOUT_MS:-5000}
+      - DX_CONTENT_FALLBACK=${DX_CONTENT_FALLBACK:-local}
     volumes:
       - pxlite-db:/app/data
       - pxlite-logs:/app/logs

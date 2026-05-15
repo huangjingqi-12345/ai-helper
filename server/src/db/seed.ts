@@ -177,8 +177,10 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     ]);
   }
 
+  const contentWorkflowStates = new Set(['requirement_submitted', 'doctor_distributing', 'doctor_producing', 'third_party_review', 'internal_review', 'published']);
   for (const item of contentList) {
     const itemStatus = String(item.status);
+    const dbStatus = contentWorkflowStates.has(itemStatus) ? itemStatus : item.pipelineStage;
     await run(`
       INSERT INTO content (id, tenant_id, project_id, title, type, status, workflow_state, pipeline_stage, priority, author, excerpt, content, tags, push_count, read_users, read_count, like_count, dislike_count, bookmark_count, share_count, finish_rate, avg_read_sec, expected_date, rejection_note, created_at, updated_at, published_at)
       VALUES (?, 'T-PX', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -212,8 +214,8 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
       item.projectId,
       item.title,
       item.type,
-      item.status,
-      itemStatus === 'published' ? 'published' : itemStatus === 'approved' ? 'approved_locked' : 'draft',
+      dbStatus,
+      dbStatus,
       item.pipelineStage,
       item.priority,
       item.author,
@@ -247,7 +249,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
         item.content,
         item.excerpt ?? null,
         item.author,
-        itemStatus === 'published' ? 'published' : 'draft',
+        dbStatus,
         json({
           classification: 'patient_education',
           diseaseArea: item.projectName,

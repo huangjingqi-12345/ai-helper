@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, ChevronDown, ChevronRight, Circle, Layers, ShieldAlert, X } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, Circle, ExternalLink, FileText, Layers, Paperclip, ShieldAlert, X } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { showToast } from '@/components/ui/Toast';
 import { useLogger } from '@/hooks/useLogger';
-import { getApprovalTasks, updateApprovalTask } from '@/api/endpoints/approval';
-import type { ApprovalTask } from '@/types/approval';
+import { getApprovalTaskAttachment, getApprovalTasks, updateApprovalTask } from '@/api/endpoints/approval';
+import type { ApprovalAttachment, ApprovalTask } from '@/types/approval';
 
 type ApprovalFilter = 'pending' | 'approved' | 'rejected' | 'all';
 type ApprovalDecision = 'approve' | 'reject';
@@ -379,6 +379,11 @@ function TaskTable({
                 <div className="text-[13.5px] font-medium text-foreground">{task.title}</div>
                 {requirement && <div className="mt-0.5 text-[11.5px] text-muted-foreground">项目 · {requirement.projectName} · 诉求 · {requirement.shortLabel}</div>}
                 <div className="mt-0.5 text-[11.5px] text-muted-foreground">{task.contentId} · {task.disease ?? '—'}</div>
+                {(task.attachments?.length ?? 0) > 0 && (
+                  <div className="mt-1 inline-flex items-center gap-1 rounded border border-primary/25 bg-primary/10 px-1.5 py-0.5 text-[10.5px] text-primary">
+                    <Paperclip className="h-3 w-3" /> 患教详情附件 · {task.attachments?.length}
+                  </div>
+                )}
               </td>
               <td className="px-4 py-3">
                 <span className="inline-flex items-center gap-1 rounded-md border border-[oklch(70%_.15_200_/.3)] bg-[oklch(70%_.15_200_/.1)] px-2 py-0.5 text-[11.5px] text-primary">
@@ -417,6 +422,42 @@ function ApprovalDrawer({
   onClose: () => void;
   onSubmit: () => void;
 }): JSX.Element | null {
+  const [attachment, setAttachment] = useState<ApprovalAttachment | null>(null);
+  const [attachmentLoading, setAttachmentLoading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!task) {
+      setAttachment(null);
+      setAttachmentLoading(false);
+      setAttachmentError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setAttachment(null);
+    setAttachmentError(null);
+    setAttachmentLoading(true);
+    getApprovalTaskAttachment(task.id)
+      .then((res) => {
+        if (cancelled) return;
+        setAttachment(res.data);
+        setAttachmentError(res.data.status === 'unavailable' ? (res.data.error ?? 'DX API 暂不可用') : null);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setAttachment(null);
+        setAttachmentError(error instanceof Error ? error.message : 'DX API 附件获取失败');
+      })
+      .finally(() => {
+        if (!cancelled) setAttachmentLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [task]);
+
   if (!task) return null;
   const stepIndex = currentStepIndex(task);
   const activeNode = displayNode(task);
@@ -425,7 +466,7 @@ function ApprovalDrawer({
   const historyDate = requirement?.historyDate ?? '2026-04-10';
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-50 w-full max-w-[544px] border-l border-border bg-[oklch(18%_.02_260)] p-5 shadow-[-24px_0_60px_rgba(0,0,0,0.35)]">
+    <aside className="fixed inset-y-0 right-0 z-50 w-full max-w-[544px] overflow-y-auto border-l border-border bg-[oklch(18%_.02_260)] p-5 shadow-[-24px_0_60px_rgba(0,0,0,0.35)]">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-[14px] font-semibold leading-snug text-foreground">{task.title}</h2>
@@ -460,6 +501,12 @@ function ApprovalDrawer({
             <span className="tabular-nums text-muted-foreground">{historyDate}</span>
           </div>
         </section>
+
+        <AttachmentPanel
+          attachments={attachment ? [attachment] : (task.attachments ?? [])}
+          loading={attachmentLoading}
+          error={attachmentError}
+        />
 
         <section>
           <div className="mb-3 text-[12.5px] text-muted-foreground">在「{activeNode}」节点处理</div>
@@ -496,6 +543,64 @@ function ApprovalDrawer({
       </div>
     </aside>
   );
+}
+
+function AttachmentPanel({ attachments, loading = false, error }: { attachments: ApprovalAttachment[]; loading?: boolean; error?: string | null }): JSX.Element {
+  const attachment = attachments[0];
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between gap-3 text-[12.5px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5"><Paperclip className="h-3.5 w-3.5" />审核附件（患教内容详情）</span>
+        <span className="tabular text-[11px]">{loading ? 'DX API 拉取中' : (attachment?.sourceLabel ? `来源：${attachment.sourceLabel}` : `${attachments.length} 个附件`)}</span>
+      </div>
+      {loading ? (
+        <div className="rounded-xl border border-primary/20 bg-[oklch(20%_.02_260_/.72)] p-4 text-[12px] text-muted-foreground">
+          正在从 DX API 拉取待审患教内容详情…
+        </div>
+      ) : error ? (
+        <div className="rounded-lg border border-dashed border-rose-400/40 bg-rose-500/10 px-3 py-4 text-[12px] leading-relaxed text-rose-100">
+          附件获取失败：{error}
+        </div>
+      ) : attachment ? (
+        <div className="rounded-xl border border-primary/25 bg-[oklch(20%_.02_260_/.72)] p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-[12.5px] font-semibold text-foreground">
+                <FileText className="h-4 w-4 shrink-0 text-primary" />
+                <span className="truncate">{attachment.title ?? '患教内容详情'}</span>
+              </div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {attachment.contentId} · {formatContentType(attachment.contentType ?? 'article')} · v{attachment.versionNo ?? 1}
+                {attachment.updatedAt ? ` · 更新 ${String(attachment.updatedAt).slice(0, 10)}` : ''}
+                {attachment.retrievedAt ? ` · 拉取 ${String(attachment.retrievedAt).slice(11, 16)}` : ''}
+              </div>
+            </div>
+            {attachment.route && (
+              <Link to={attachment.route} className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-secondary px-2 py-1 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-primary">
+                打开详情 <ExternalLink className="h-3 w-3" />
+              </Link>
+            )}
+          </div>
+          {attachment.excerpt && <p className="mt-3 rounded-md border border-border/70 bg-background/40 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground">{attachment.excerpt}</p>}
+          <div className="mt-3 max-h-40 overflow-y-auto rounded-md border border-border/70 bg-background/50 px-3 py-2 text-[12px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
+            {attachment.body || '暂无正文内容。'}
+          </div>
+          {(attachment.tags?.length ?? 0) > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1">
+              {attachment.tags?.map((tag) => <span key={tag} className="rounded border border-border bg-secondary/60 px-1.5 py-0.5 text-[10.5px] text-muted-foreground">#{tag}</span>)}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed border-border bg-secondary/40 px-3 py-4 text-center text-[12px] text-muted-foreground">暂无可审核附件。</div>
+      )}
+    </section>
+  );
+}
+
+function formatContentType(value: string): string {
+  const labels: Record<string, string> = { article: '长图文', checklist: '清单手册', poster: '海报', video: '视频', infographic: '信息图', quiz: '问答测验', qa: '问答' };
+  return labels[value] ?? value;
 }
 
 function EmptyApprovalList(): JSX.Element {

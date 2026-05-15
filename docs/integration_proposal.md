@@ -130,6 +130,42 @@ POST /api/integration/dx/task-callback
 - [ ] 内容提交时，正文格式是什么？（HTML / Markdown / 富文本 JSON）
 - [ ] 医学编辑审核是在 DX 系统内完成的对吗？审核结果如何传递？
 
+### 2.2.1 PX 审批中心实时读取 DX 内容详情（已落地适配层）
+
+**场景：** PX 审批人在 `/approvals` 打开审批抽屉时，需要看到待审核的具体患教内容。该附件不应在前端硬编码，也不应依赖审批列表的静态种子数据；PX 后端会在抽屉打开时实时调用 DX 内容详情 API。
+
+**PX 后端调用 DX 的约定（可配置）：**
+
+```
+GET {DX_API_BASE_URL}{DX_CONTENT_DETAIL_PATH_TEMPLATE}
+默认：GET {DX_API_BASE_URL}/content/{contentId}
+```
+
+**PX 会发送的 Header：**
+- `Authorization: Bearer <DX_API_TOKEN>`（如配置）
+- `X-API-Key: <DX_API_KEY>`（如配置）
+- `X-PX-Integration: approval-content-attachment`
+- `X-PX-Approval-Task-Id: <approvalTaskId>`
+- `X-PX-Tenant-Id: <tenantId>`
+
+**DX 建议返回字段（PX 已做兼容归一化）：**
+
+```json
+{
+  "contentId": "CNT-102",
+  "title": "爱博新 · CDK4/6 口服药服药顺序与漏服处理 5 问",
+  "contentType": "article",
+  "excerpt": "摘要",
+  "body": "正文，可为 Markdown/HTML/纯文本",
+  "tags": ["乳腺癌", "CDK4/6"],
+  "versionNo": 3,
+  "updatedAt": "2026-05-15T10:30:00Z",
+  "immutableHash": "sha256..."
+}
+```
+
+**PX 对前端暴露的接口：** `GET /api/approval/tasks/:id/attachment`。前端只调用 PX 后端；DX 凭据只保存在后端环境变量中。
+
 ### 2.3 驳回-修改-重新提交流程
 
 **PM 已确认：** 所有审核节点驳回均打回至「医学编辑修改」（DX 端）。
@@ -257,13 +293,13 @@ POST /api/integration/cx/behavior-sync
 
 ---
 
-## 6. 本期 mock 策略（DX/CX 未对接前）
+## 6. 本期 mock / fallback 策略（DX/CX 未对接前）
 
 PM 已确认本期可暂时使用虚拟数据。PX 的 mock 策略：
 
 | 数据 | Mock 方式 | 标注 |
 |------|----------|------|
-| 医生制作内容 | seed 数据预置已完成内容 | 代码注释标注 `// MOCK: DX integration pending` |
+| 医生制作内容 | 审批附件优先实时读取 DX API；本地/测试环境可 fallback 到 PX SQLite 内容缓存 | 配置 `DX_API_BASE_URL` 后关闭 fallback |
 | 审核回调 | PX 端手动触发（管理员操作） | — |
 | 行为数据 | seed 数据预置虚拟指标 | 代码注释标注 `// MOCK: CX integration pending` |
 | 阅读人数 | 使用虚拟整数（不再用 0.78 系数） | — |

@@ -25,3 +25,11 @@ services:
       # unless you intentionally override these values for a demo environment.
       RUN_DEMO_SEED: ${RUN_DEMO_SEED:-false}
       ALLOW_DEMO_AUTH: ${ALLOW_DEMO_AUTH:-false}
+
+      # Required for approval attachments: PX backend calls DX content detail API.
+      DX_API_BASE_URL: ${DX_API_BASE_URL:?DX_API_BASE_URL is required for approval attachments}
+      DX_CONTENT_DETAIL_PATH_TEMPLATE: ${DX_CONTENT_DETAIL_PATH_TEMPLATE:-/content/{contentId}}
+      DX_API_TOKEN: ${DX_API_TOKEN:-}
+      DX_API_KEY: ${DX_API_KEY:-}
+      DX_API_TIMEOUT_MS: ${DX_API_TIMEOUT_MS:-5000}
+      DX_CONTENT_FALLBACK: ${DX_CONTENT_FALLBACK:-none}

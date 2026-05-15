@@ -679,7 +679,21 @@
           "id": "REQ-005",
           "title": "首轮 6 周内安全信号识别",
           "projectName": "优赫得·HER2 ADC 重点随访"
-        }
+        },
+        "attachments": [
+          {
+            "id": "task-CNT-102-content-detail",
+            "type": "content_detail",
+            "label": "患教内容详情",
+            "contentId": "CNT-102",
+            "title": "爱博新 · CDK4/6 口服药服药顺序与漏服处理 5 问",
+            "contentType": "article",
+            "route": "/content/CNT-102",
+            "source": "dx_api",
+            "sourceLabel": "DX API",
+            "status": "pending"
+          }
+        ]
       }
     ],
     "total": 4,
@@ -695,9 +709,46 @@
 }
 ```
 
+**附件约定：** 审批任务列表只返回附件占位元数据，不在列表响应里嵌入正文。前端打开审批抽屉时必须调用 `GET /api/v1/approvals/tasks/:id/attachment`，由 PX 后端服务端调用 DX 内容详情 API 获取最新待审核患教内容。
+
 ### `GET /api/v1/approvals/tasks/:id`
 
 获取单个审批任务（含完整历史）。
+
+### `GET /api/v1/approvals/tasks/:id/attachment`
+
+按审批任务实时获取待审核附件。该接口是 PX → DX 的后端集成适配层：PX 前端不直接调用 DX，PX 后端根据 `DX_API_BASE_URL`、`DX_CONTENT_DETAIL_PATH_TEMPLATE`、`DX_API_TOKEN` / `DX_API_KEY` 调用 DX 内容详情 API，并将返回值归一化为审批附件。
+
+**响应体：**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "task-CNT-102-content-detail",
+    "type": "content_detail",
+    "label": "患教内容详情",
+    "contentId": "CNT-102",
+    "title": "爱博新 · CDK4/6 口服药服药顺序与漏服处理 5 问",
+    "contentType": "article",
+    "excerpt": "与内分泌联合口服机制下的服药顺序、漏服补救、中断策略与重启路径。",
+    "body": "# 爱博新 · CDK4/6 口服药服药顺序与漏服处理 5 问\n\n服药顺序、漏服补救、中断策略与重启路径。",
+    "tags": ["乳腺癌", "CDK4/6", "服药依从"],
+    "versionNo": 1,
+    "route": "/content/CNT-102",
+    "source": "dx_api",
+    "sourceLabel": "DX API",
+    "status": "ready",
+    "retrievedAt": "2026-05-15T10:00:00.000Z"
+  }
+}
+```
+
+**DX 集成配置：**
+- `DX_API_BASE_URL`：DX API 基础地址。
+- `DX_CONTENT_DETAIL_PATH_TEMPLATE`：内容详情路径模板，默认 `/content/{contentId}`。
+- `DX_API_TOKEN` 或 `DX_API_KEY`：服务端调用 DX 使用的凭据。
+- `DX_API_TIMEOUT_MS`：超时时间，默认 5000ms。
+- `DX_CONTENT_FALLBACK=local`：仅用于本地/测试环境；DX 未对接或不可用时读取 PX 本地内容缓存，响应 `source=local_cache`，方便离线开发。生产环境应配置 DX API。
 
 ### `POST /api/v1/approvals/tasks/:id/decide`
 

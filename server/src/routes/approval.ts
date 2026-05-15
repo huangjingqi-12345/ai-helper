@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getApprovalQueue, approveItem, rejectItem, getApprovalTasks, handleApprovalTask } from '../db/repositories.js';
+import { getApprovalQueue, approveItem, rejectItem, getApprovalTasks, handleApprovalTask, getApprovalTaskAttachment } from '../db/repositories.js';
 import { logger } from '../utils/logger.js';
 import { asyncRoute } from './asyncRoute.js';
 import { requirePermission } from '../middleware/auth.js';
@@ -39,6 +39,20 @@ router.get('/tasks', asyncRoute(async (req, res) => {
     },
     timestamp: new Date().toISOString(),
   });
+}));
+
+router.get('/tasks/:id/attachment', asyncRoute(async (req, res) => {
+  logger.info({ id: String(req.params.id) }, 'GET /api/approval/tasks/:id/attachment');
+  const attachment = await getApprovalTaskAttachment(String(req.params.id), req.user!);
+  if (!attachment) {
+    return res.status(404).json({
+      success: false,
+      data: null,
+      message: 'Approval task attachment not found',
+      timestamp: new Date().toISOString(),
+    });
+  }
+  res.json({ success: true, data: attachment, timestamp: new Date().toISOString() });
 }));
 
 router.put('/tasks/:id', requirePermission('approval:write'), asyncRoute(async (req, res) => {
