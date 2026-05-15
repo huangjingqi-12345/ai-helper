@@ -240,8 +240,21 @@ Live parity note（2026-05-15）：`/admin/tenants` 展示 7 个租户、5 个�
 平台管理员创建用户
   → 绑定 tenant_id
   → 设置 role / role_labels / view_type / region / status
-  → 用户通过 OIDC/SSO 登录
+  → 用户通过本地登录或 OIDC/SSO 登录
   → 后端解析用户与租户范围
+  → 前端根据 view_type 锁定运营视图或药企视图
+```
+
+### 6.3 自助注册与视图锁定
+
+```text
+未登录用户访问业务路由
+  → 跳转 /login
+  → 用户选择注册
+  → 填写姓名、邮箱、密码、账号类型、角色、公司
+  → accountType=ops：绑定 T-PX，进入运营视图
+  → accountType=pharma：绑定/创建药企租户，进入药企视图
+  → Header 展示当前公司 + 🔒 固定视图，不再提供“切换租户视角”
 ```
 
 ### 6.3 权限管理

@@ -9,7 +9,7 @@
 > - 分页：`?page=1&pageSize=12` → 响应包含 `{ items: T[], total: number, page: number, pageSize: number }`
 > - 日期：ISO 8601 字符串（`YYYY-MM-DDTHH:mm:ssZ`）
 > - 鉴权：`Authorization` 头部携带 Bearer token
-> - 租户上下文：`X-Tenant-Id` 头部（运营可切换；药企锁定）
+> - 租户上下文：服务端根据 Bearer token 中的账号归属解析；前端不再提供手动租户切换
 
 ---
 
@@ -45,33 +45,43 @@
 {
   "success": true,
   "data": {
-    "token": "eyJhbG...",
-    "account": {
-      "id": "ACC-001",
-      "name": "齐晓川",
-      "email": "qixc@px.health",
-      "tenantId": "T-PX",
-      "roleIds": ["ops-admin"],
-      "view": "ops"
-    }
+    "token": "local.<payload>.<signature>"
   }
 }
 ```
+
+### `POST /api/v1/auth/register`
+
+自助注册。注册时填写角色和公司；`accountType=ops` 固定绑定 `T-PX`，`accountType=pharma` 绑定或创建药企租户。
+
+**请求体：**
+```json
+{
+  "name": "林筱",
+  "email": "linx@example.cn",
+  "password": "********",
+  "accountType": "pharma",
+  "role": "pharma_compliance",
+  "companyId": "T-NV",
+  "companyName": "诺华制药（中国）"
+}
+```
+
+**响应体：** 与登录一致，返回 `{ token }`。
+
+### `GET /api/v1/auth/registration-options`
+
+返回注册页可选公司与角色选项。
 
 ### `GET /api/v1/auth/me`
 
 获取当前用户信息（验证 token）。
 
-**响应体：** 与登录返回的 `account` 对象相同。
+**响应体：** 当前用户对象：`id/email/name/tenantId/tenantType/roles/permissions/authProvider/mfa`。
 
-### `POST /api/v1/auth/switch-tenant`
+### `GET /api/v1/tenants/current`
 
-切换活跃租户（仅运营）。
-
-**请求体：**
-```json
-{ "tenantId": "T-NV" }
-```
+获取当前 token 解析出的公司/租户。Header 用该接口展示当前公司和锁定视图。
 
 ---
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NextFunction, Request, Response } from 'express';
 import { authenticate, hasPermission, rolePermissions, type AuthUser } from '../middleware/auth.js';
+import { createLocalSessionToken, hashPassword, verifyLocalSessionToken, verifyPassword } from '../utils/localAuth.js';
 
 const originalNodeEnv = process.env.NODE_ENV;
 
@@ -59,5 +60,17 @@ describe('Production authentication boundary', () => {
 
     expect(res.status).toHaveBeenCalledWith(401);
     expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('Local login token helpers', () => {
+  it('hashes passwords and verifies signed local session tokens', () => {
+    const password = hashPassword('password123');
+    expect(verifyPassword('password123', password.salt, password.hash)).toBe(true);
+    expect(verifyPassword('wrong-password', password.salt, password.hash)).toBe(false);
+
+    const token = createLocalSessionToken('A-LOCAL');
+    expect(verifyLocalSessionToken(token)?.userId).toBe('A-LOCAL');
+    expect(verifyLocalSessionToken(`${token}x`)).toBeNull();
   });
 });

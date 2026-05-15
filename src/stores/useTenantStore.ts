@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { getTenantOptions } from '@/api/endpoints/platform';
+import { getCurrentTenant } from '@/api/endpoints/auth';
 import { logger } from '@/utils/logger';
 
 export type TenantType = 'ops' | 'pharma';
@@ -27,43 +28,61 @@ interface TenantState {
   isOps: boolean;
   loading: boolean;
   fetchTenants: () => Promise<void>;
+  fetchCurrentTenant: () => Promise<void>;
+  setCurrentTenant: (tenant: TenantOption) => void;
   setTenant: (id: string) => void;
+  resetTenant: () => void;
 }
 
-const storageKey = 'pxlite.currentTenantId';
 const fallbackTenant = TENANTS[0]!;
 
-function pickInitialTenant(tenants: TenantOption[]): TenantOption {
-  if (typeof window === 'undefined') return tenants[0] ?? fallbackTenant;
-  const saved = window.localStorage.getItem(storageKey);
-  return tenants.find((tenant) => tenant.id === saved) ?? tenants[0] ?? fallbackTenant;
+function applyTenant(tenant: TenantOption): Pick<TenantState, 'currentTenantId' | 'currentTenant' | 'isOps'> {
+  return { currentTenantId: tenant.id, currentTenant: tenant, isOps: tenant.type === 'ops' };
 }
 
-export const useTenantStore = create<TenantState>((set, get) => {
-  const initialTenant = pickInitialTenant(TENANTS);
-  return {
-    tenants: TENANTS,
-    currentTenantId: initialTenant.id,
-    currentTenant: initialTenant,
-    isOps: initialTenant.type === 'ops',
-    loading: false,
-    fetchTenants: async () => {
-      set({ loading: true });
-      try {
-        const res = await getTenantOptions();
-        const tenants = res.data.length > 0 ? res.data : TENANTS;
-        const selected = tenants.find((tenant) => tenant.id === get().currentTenantId) ?? pickInitialTenant(tenants);
-        set({ tenants, currentTenantId: selected.id, currentTenant: selected, isOps: selected.type === 'ops' });
-      } catch (error) {
-        logger.error('Failed to load tenants from DB, using fallback tenants', error);
-      } finally {
-        set({ loading: false });
-      }
-    },
-    setTenant: (id: string) => {
-      const tenant = get().tenants.find((item) => item.id === id) ?? get().tenants[0] ?? fallbackTenant;
-      if (typeof window !== 'undefined') window.localStorage.setItem(storageKey, tenant.id);
-      set({ currentTenantId: tenant.id, currentTenant: tenant, isOps: tenant.type === 'ops' });
-    },
-  };
-});
+export const useTenantStore = create<TenantState>((set, get) => ({
+  tenants: TENANTS,
+  currentTenantId: fallbackTenant.id,
+  currentTenant: fallbackTenant,
+  isOps: true,
+  loading: false,
+  fetchTenants: async () => {
+    set({ loading: true });
+    try {
+      const res = await getTenantOptions();
+      const tenants = res.data.length > 0 ? res.data : TENANTS;
+      const selected = tenants.find((tenant) => tenant.id === get().currentTenantId) ?? tenants[0] ?? fallbackTenant;
+      set({ tenants, ...applyTenant(selected) });
+    } catch (error) {
+      logger.error('Failed to load tenant options from DB, using existing tenant list', error);
+    } finally {
+      set({ loading: false });
+    }
+  },
+  fetchCurrentTenant: async () => {
+    set({ loading: true });
+    try {
+      const res = await getCurrentTenant();
+      set((state) => ({
+        tenants: state.tenants.some((tenant) => tenant.id === res.data.id) ? state.tenants : [res.data, ...state.tenants],
+        ...applyTenant(res.data),
+      }));
+    } catch (error) {
+      logger.error('Failed to load authenticated tenant context', error);
+      throw error;
+    } finally {
+      set({ loading: false });
+    }
+  },
+  setCurrentTenant: (tenant: TenantOption) => {
+    set((state) => ({
+      tenants: state.tenants.some((item) => item.id === tenant.id) ? state.tenants : [tenant, ...state.tenants],
+      ...applyTenant(tenant),
+    }));
+  },
+  setTenant: (id: string) => {
+    const tenant = get().tenants.find((item) => item.id === id) ?? get().currentTenant ?? fallbackTenant;
+    set(applyTenant(tenant));
+  },
+  resetTenant: () => set({ tenants: TENANTS, ...applyTenant(fallbackTenant) }),
+}));

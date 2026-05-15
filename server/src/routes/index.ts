@@ -7,6 +7,7 @@ import approvalRoutes from './approval.js';
 import platformRoutes from './platform.js';
 import logRoutes from './logs.js';
 import authRoutes from './auth.js';
+import publicAuthRoutes from './publicAuth.js';
 import tenantRoutes from './tenants.js';
 import ingestRoutes from './ingest.js';
 import importRoutes from './imports.js';
@@ -53,6 +54,9 @@ router.get('/ready', async (_req, res) => {
     });
   }
 });
+
+// Login/register must be available before authenticated API middleware.
+router.use('/auth', publicAuthRoutes);
 
 // Everything below this line requires authenticated context in production.
 router.use(authenticate);

@@ -1,5 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { RequireAuth } from '@/components/auth/RequireAuth';
+import { RequireOps } from '@/components/auth/RequireOps';
 import { Overview } from '@/pages/Overview/Overview';
 import { ContentWorkshop } from '@/pages/ContentWorkshop/ContentWorkshop';
 import { ContentDetail } from '@/pages/ContentDetail/ContentDetail';
@@ -15,40 +17,46 @@ import { ProjectManagement } from '@/pages/Admin/ProjectManagement';
 import { ApprovalFlowConfig } from '@/pages/Admin/ApprovalFlowConfig';
 import { Settings } from '@/pages/Settings/Settings';
 import { FinanceBilling, FinanceContracts, FinanceDataPlatform, FinanceInvoicing, FinanceOverview } from '@/pages/Finance/FinancePages';
+import { LoginRegister } from '@/pages/Auth/LoginRegister';
 
 export const router = createBrowserRouter([
+  { path: '/login', element: <LoginRegister /> },
   {
     path: '/',
-    element: <AppLayout />,
+    element: (
+      <RequireAuth>
+        <AppLayout />
+      </RequireAuth>
+    ),
     children: [
       { index: true, element: <Overview /> },
       { path: 'content', element: <ContentWorkshop /> },
       { path: 'content/:id', element: <ContentDetail /> },
       { path: 'audience', element: <BehaviorInsights /> },
-      { path: 'distribute', element: <DistributionStrategy /> },
-      { path: 'distribute/request/:ticketId', element: <RequestDistributionDetail /> },
-      { path: 'distribute/:id', element: <DistributionProjectDetail /> },
+      { path: 'distribute', element: <RequireOps><DistributionStrategy /></RequireOps> },
+      { path: 'distribute/request/:ticketId', element: <RequireOps><RequestDistributionDetail /></RequireOps> },
+      { path: 'distribute/:id', element: <RequireOps><DistributionProjectDetail /></RequireOps> },
       { path: 'approvals', element: <ApprovalCenter /> },
       { path: 'content-workshop', element: <ContentWorkshop /> },
       { path: 'content-workshop/:id', element: <ContentDetail /> },
       { path: 'behavior-insights', element: <BehaviorInsights /> },
-      { path: 'distribution-strategy', element: <DistributionStrategy /> },
-      { path: 'distribution-strategy/request/:ticketId', element: <RequestDistributionDetail /> },
-      { path: 'distribution-strategy/:id', element: <DistributionProjectDetail /> },
+      { path: 'distribution-strategy', element: <RequireOps><DistributionStrategy /></RequireOps> },
+      { path: 'distribution-strategy/request/:ticketId', element: <RequireOps><RequestDistributionDetail /></RequireOps> },
+      { path: 'distribution-strategy/:id', element: <RequireOps><DistributionProjectDetail /></RequireOps> },
       { path: 'approval-center', element: <ApprovalCenter /> },
-      { path: 'platform-management', element: <PlatformManagement /> },
+      { path: 'platform-management', element: <RequireOps><PlatformManagement /></RequireOps> },
       { path: 'settings', element: <Settings /> },
-      { path: 'finance', element: <FinanceOverview /> },
-      { path: 'finance/contracts', element: <FinanceContracts /> },
-      { path: 'finance/billing', element: <FinanceBilling /> },
-      { path: 'finance/invoicing', element: <FinanceInvoicing /> },
-      { path: 'finance/data', element: <FinanceDataPlatform /> },
+      { path: 'finance', element: <RequireOps><FinanceOverview /></RequireOps> },
+      { path: 'finance/contracts', element: <RequireOps><FinanceContracts /></RequireOps> },
+      { path: 'finance/billing', element: <RequireOps><FinanceBilling /></RequireOps> },
+      { path: 'finance/invoicing', element: <RequireOps><FinanceInvoicing /></RequireOps> },
+      { path: 'finance/data', element: <RequireOps><FinanceDataPlatform /></RequireOps> },
       // Admin sub-pages
-      { path: 'admin', element: <Navigate to="/admin/tenants" replace /> },
-      { path: 'admin/tenants', element: <TenantManagement /> },
-      { path: 'admin/accounts', element: <AccountManagement /> },
-      { path: 'admin/projects', element: <ProjectManagement /> },
-      { path: 'admin/approval-flows', element: <ApprovalFlowConfig /> },
+      { path: 'admin', element: <RequireOps><Navigate to="/admin/tenants" replace /></RequireOps> },
+      { path: 'admin/tenants', element: <RequireOps><TenantManagement /></RequireOps> },
+      { path: 'admin/accounts', element: <RequireOps><AccountManagement /></RequireOps> },
+      { path: 'admin/projects', element: <RequireOps><ProjectManagement /></RequireOps> },
+      { path: 'admin/approval-flows', element: <RequireOps><ApprovalFlowConfig /></RequireOps> },
     ],
   },
 ]);

@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { logger } from '../utils/logger.js';
+import { verifyLocalSessionToken } from '../utils/localAuth.js';
+import { dbGet } from '../db/connection.js';
 
 export type AppRole =
   | 'px_super_admin'
@@ -39,7 +41,7 @@ export interface AuthUser {
   tenantType: 'ops' | 'pharma';
   roles: AppRole[];
   permissions: Permission[];
-  authProvider: 'oidc' | 'dev' | 'break_glass';
+  authProvider: 'oidc' | 'dev' | 'local' | 'break_glass';
   mfa: boolean;
 }
 
@@ -136,6 +138,19 @@ const DEV_USERS: Record<string, AuthUser> = {
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
 
+type LocalUserRow = {
+  id: string;
+  tenant_id: string;
+  tenant_type?: 'ops' | 'pharma';
+  name: string;
+  email: string;
+  role: 'admin' | 'editor' | 'viewer';
+  role_labels?: string | string[];
+  view_type?: 'ops' | 'pharma';
+  status?: 'active' | 'inactive' | 'frozen' | 'invited';
+  has_2fa?: boolean | number | string;
+};
+
 function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
@@ -154,6 +169,47 @@ function parseRoles(value: unknown): AppRole[] {
   const allowed = new Set(Object.keys(ROLE_PERMISSIONS));
   const roles = raw.map(String).filter((role): role is AppRole => allowed.has(role));
   return roles.length > 0 ? roles : ['pharma_viewer'];
+}
+
+function boolFromDb(value: unknown): boolean {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function appRolesFromLocalUser(row: LocalUserRow): AppRole[] {
+  const viewType = row.view_type || row.tenant_type || (row.tenant_id === 'T-PX' ? 'ops' : 'pharma');
+  // Local self-service auth intentionally keeps the product model simple:
+  // registered users are separated by ops/pharma view only; role labels are
+  // collected for account metadata, not for a fine-grained RBAC matrix.
+  return viewType === 'ops' ? ['px_ops_admin'] : ['pharma_admin'];
+}
+
+function authUserFromLocalRow(row: LocalUserRow): AuthUser | null {
+  if (row.status && row.status !== 'active') return null;
+  const tenantType = row.view_type || row.tenant_type || (row.tenant_id === 'T-PX' ? 'ops' : 'pharma');
+  const roles = appRolesFromLocalUser(row);
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    tenantId: row.tenant_id,
+    tenantType,
+    roles,
+    permissions: rolePermissions(roles),
+    authProvider: 'local',
+    mfa: boolFromDb(row.has_2fa),
+  };
+}
+
+async function verifyLocalToken(token: string): Promise<AuthUser | null> {
+  const session = verifyLocalSessionToken(token);
+  if (!session) return null;
+  const row = await dbGet<LocalUserRow>(`
+    SELECT u.*, t.tenant_type
+    FROM users u
+    LEFT JOIN tenants t ON t.id = u.tenant_id
+    WHERE u.id = ?
+  `, [session.userId]);
+  return row ? authUserFromLocalRow(row) : null;
 }
 
 function claimString(payload: JWTPayload, names: string[], fallback = ''): string {
@@ -242,6 +298,13 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
 
     if (DEV_USERS[token] && demoAuthAllowed()) {
       req.user = DEV_USERS[token];
+      next();
+      return;
+    }
+
+    const localUser = await verifyLocalToken(token);
+    if (localUser) {
+      req.user = localUser;
       next();
       return;
     }

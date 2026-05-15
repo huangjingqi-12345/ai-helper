@@ -15,7 +15,8 @@ apiClient.interceptors.request.use(
   (config) => {
     const method = (config.method || 'GET').toUpperCase();
     const url = config.url || '';
-    const token = import.meta.env.VITE_DEV_AUTH_TOKEN || window.localStorage.getItem('pxlite.authToken');
+    const storedToken = typeof window !== 'undefined' ? window.localStorage.getItem('pxlite.authToken') : null;
+    const token = storedToken || import.meta.env.VITE_DEV_AUTH_TOKEN;
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }

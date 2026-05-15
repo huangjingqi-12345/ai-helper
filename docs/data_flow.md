@@ -425,10 +425,9 @@ ContentItem（已上线）
         └───────────────────┘
                 │
                 ▼
-步骤 2：药企管理员收到邀请，登录
-        │
-        ▼
-        Account.status → 'active'
+步骤 2：用户登录/注册
+        ├── 已邀请药企管理员：使用邮箱登录后 Account.status → 'active'
+        └── 自助注册：填写角色与公司，系统创建/绑定 Account + Tenant
         │
         ▼
 步骤 3：药企管理员通过药企视图邀请更多用户
@@ -500,8 +499,7 @@ ContentItem（已上线）
 
 | 视图 | 过滤逻辑 |
 |------|---------|
-| 运营（选择 Px Ops 租户） | 全量数据，不过滤 |
-| 运营（选择特定药企租户） | `tenantOfContent(content) = selectedTenant` |
+| 运营账号 | `view_type=ops`，绑定 Px Ops，默认全量运营视图 |
 | 药企 | `tenantOfContent(content) = lockedTenantId`，k-匿名生效（分组 < 50 的隐藏） |
 
 函数 `tenantOfContent(content)` 解析租户来源：

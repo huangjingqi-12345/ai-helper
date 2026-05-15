@@ -13,7 +13,7 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: local-session-or-JWT
   schemas:
     ApiSuccess:
       type: object
@@ -69,6 +69,34 @@ paths:
           description: 服务和数据库已就绪
         '503':
           description: 数据库未就绪
+  /auth/registration-options:
+    get:
+      security: []
+      summary: 获取注册页公司与角色选项
+      responses:
+        '200':
+          description: 可注册公司、运营角色和药企角色选项
+  /auth/register:
+    post:
+      security: []
+      summary: 自助注册并返回本地会话 token
+      description: 注册时填写账号类型、角色和公司；账号类型决定登录后的 ops/pharma 锁定视图。
+      responses:
+        '201':
+          description: 注册成功，返回 `{ token }`
+        '400':
+          description: 注册字段无效
+        '409':
+          description: 邮箱已注册
+  /auth/login:
+    post:
+      security: []
+      summary: 邮箱密码登录
+      responses:
+        '200':
+          description: 登录成功，返回 `{ token }`
+        '401':
+          description: 邮箱或密码不正确
   /auth/me:
     get:
       summary: 获取当前认证用户与权限

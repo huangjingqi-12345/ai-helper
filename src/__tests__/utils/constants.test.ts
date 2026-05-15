@@ -22,12 +22,13 @@ describe('NAV_ITEMS', () => {
 });
 
 describe('CONTENT_STATUS_MAP', () => {
-  it('has all expected statuses', () => {
-    expect(CONTENT_STATUS_MAP.draft).toBeDefined();
-    expect(CONTENT_STATUS_MAP.under_review).toBeDefined();
-    expect(CONTENT_STATUS_MAP.approved).toBeDefined();
+  it('has all expected statuses (PM confirmed 6-state model)', () => {
+    expect(CONTENT_STATUS_MAP.requirement_submitted).toBeDefined();
+    expect(CONTENT_STATUS_MAP.doctor_distributing).toBeDefined();
+    expect(CONTENT_STATUS_MAP.doctor_producing).toBeDefined();
+    expect(CONTENT_STATUS_MAP.third_party_review).toBeDefined();
+    expect(CONTENT_STATUS_MAP.internal_review).toBeDefined();
     expect(CONTENT_STATUS_MAP.published).toBeDefined();
-    expect(CONTENT_STATUS_MAP.archived).toBeDefined();
   });
 
   it('each status has label and color', () => {

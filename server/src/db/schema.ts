@@ -495,6 +495,8 @@ const sqliteSchema = `
     region TEXT NOT NULL,
     status TEXT DEFAULT 'active' CHECK(status IN ('active','inactive','frozen','invited')),
     has_2fa INTEGER DEFAULT 0,
+    password_hash TEXT,
+    password_salt TEXT,
     last_login TEXT,
     note TEXT DEFAULT '',
     created_at TEXT NOT NULL,
@@ -832,7 +834,7 @@ const postgresSchema = `
   CREATE TABLE IF NOT EXISTS approval_tasks (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), content_id TEXT NOT NULL, project_id TEXT NOT NULL, flow_id TEXT NOT NULL, current_node_id TEXT, status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','cancelled')), progress_text TEXT, sla_due_at TEXT, submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS approval_task_actions (id BIGSERIAL PRIMARY KEY, task_id TEXT NOT NULL REFERENCES approval_tasks(id), node_id TEXT, action TEXT NOT NULL CHECK(action IN ('submit','approve','reject','comment','auto_pass')), actor_user_id TEXT, actor_name TEXT, reject_reason TEXT, comment TEXT, created_at TEXT NOT NULL);
 
-  CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, tenant_id TEXT DEFAULT 'T-PX' REFERENCES tenants(id), name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, phone TEXT, role TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('admin','editor','viewer')), role_labels JSONB DEFAULT '[]'::jsonb, view_type TEXT DEFAULT 'ops' CHECK(view_type IN ('ops','pharma')), region TEXT NOT NULL, status TEXT DEFAULT 'active' CHECK(status IN ('active','inactive','frozen','invited')), has_2fa BOOLEAN DEFAULT FALSE, last_login TEXT, note TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT);
+  CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, tenant_id TEXT DEFAULT 'T-PX' REFERENCES tenants(id), name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, phone TEXT, role TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('admin','editor','viewer')), role_labels JSONB DEFAULT '[]'::jsonb, view_type TEXT DEFAULT 'ops' CHECK(view_type IN ('ops','pharma')), region TEXT NOT NULL, status TEXT DEFAULT 'active' CHECK(status IN ('active','inactive','frozen','invited')), has_2fa BOOLEAN DEFAULT FALSE, password_hash TEXT, password_salt TEXT, last_login TEXT, note TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT);
   CREATE TABLE IF NOT EXISTS roles (id TEXT PRIMARY KEY, tenant_id TEXT REFERENCES tenants(id), name TEXT NOT NULL, code TEXT NOT NULL UNIQUE, view_type TEXT NOT NULL CHECK(view_type IN ('ops','pharma')), description TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS user_roles (id BIGSERIAL PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), role_id TEXT NOT NULL REFERENCES roles(id), created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS permissions (id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, group_name TEXT NOT NULL, field_name TEXT NOT NULL, description TEXT);
@@ -973,6 +975,8 @@ const sqliteColumnSpecs: SqliteColumnSpec[] = [
   { table: 'users', name: 'role_labels', definition: "TEXT DEFAULT '[]'" },
   { table: 'users', name: 'view_type', definition: "TEXT DEFAULT 'ops'" },
   { table: 'users', name: 'has_2fa', definition: 'INTEGER DEFAULT 0' },
+  { table: 'users', name: 'password_hash', definition: 'TEXT' },
+  { table: 'users', name: 'password_salt', definition: 'TEXT' },
   { table: 'users', name: 'note', definition: "TEXT DEFAULT ''" },
   { table: 'users', name: 'updated_at', definition: 'TEXT' },
 ];
@@ -994,6 +998,8 @@ async function ensurePostgresColumns(): Promise<void> {
   await dbExec(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS role_labels JSONB DEFAULT '[]'::jsonb;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS note TEXT DEFAULT '';
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS password_salt TEXT;
   `);
 }
 

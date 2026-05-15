@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Search, Bell, ChevronDown, Settings, LogOut, User, Building2 } from 'lucide-react';
+import { Search, Bell, Settings, LogOut, User, Building2, LockKeyhole, ChevronDown } from 'lucide-react';
 import { showToast } from '@/components/ui/Toast';
 import { useTenantStore } from '@/stores/useTenantStore';
+import { useAuthStore } from '@/stores/useAuthStore';
 import { NAV_ITEMS, APP_VERSION } from '@/utils/constants';
 
 const adminLabels: Record<string, string> = {
@@ -23,13 +24,10 @@ const financeLabels: Record<string, string> = {
 export function Header(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
-  const { tenants, currentTenant, isOps, setTenant, fetchTenants } = useTenantStore();
-  const [pxOpsOpen, setPxOpsOpen] = useState(false);
+  const { currentTenant, isOps } = useTenantStore();
+  const { user, logout } = useAuthStore();
+  const [accountOpen, setAccountOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
-
-  useEffect(() => {
-    void fetchTenants();
-  }, [fetchTenants]);
 
   const currentNav = NAV_ITEMS.find((item) =>
     item.path === '/'
@@ -48,6 +46,14 @@ export function Header(): JSX.Element {
     : [location.pathname === '/settings' ? '设置' : currentNav?.label || '总览'];
   const currentPageLabel = pageLabelParts[pageLabelParts.length - 1];
   const displayedVersion = APP_VERSION.includes('LOCAL') ? 'V0.1 · DEMO' : APP_VERSION;
+  const viewLabel = isOps ? '运营视图' : '药企视图';
+
+  const handleLogout = (): void => {
+    setAccountOpen(false);
+    logout();
+    showToast('已退出登录', 'info');
+    navigate('/login', { replace: true });
+  };
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-[oklch(17%_.02_260)] px-6">
@@ -64,76 +70,65 @@ export function Header(): JSX.Element {
       </div>
 
       <div className="flex items-center gap-3">
-        {/* Px Ops Dropdown */}
         <div className="relative">
           <button
-            aria-label="切换租户视角"
-            onClick={() => setPxOpsOpen(!pxOpsOpen)}
+            aria-label="当前登录身份"
+            onClick={() => setAccountOpen((open) => !open)}
             className="flex h-8 items-center gap-2 rounded-md border border-[oklch(30%_.02_260_/.7)] bg-[oklch(24%_.02_260_/.3)] px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground"
           >
             <Building2 size={14} className="text-primary" />
-            {currentTenant.shortName} <ChevronDown size={12} className={`transition-transform ${pxOpsOpen ? 'rotate-180' : ''}`} />
+            {currentTenant.shortName}
+            <span className="rounded-full border border-primary/35 bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">{viewLabel}</span>
+            <LockKeyhole size={11} className="text-muted-foreground" />
+            <ChevronDown size={12} className={`transition-transform ${accountOpen ? 'rotate-180' : ''}`} />
           </button>
-          {pxOpsOpen && (
+          {accountOpen && (
             <>
-              <div className="fixed inset-0 z-40" onClick={() => setPxOpsOpen(false)} />
-              <div className="absolute right-0 mt-2 w-80 bg-bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
-                <div className="px-4 py-3 border-b border-border">
-                  <div className="text-xs text-text-muted mb-1">当前租户</div>
-                  <div className="text-sm font-medium text-text-primary">{currentTenant.name}</div>
-                  <div className="text-xs text-text-muted">{isOps ? '运营视图 · 平台管理员' : '药企视图 · 脱敏聚合'}</div>
+              <div className="fixed inset-0 z-40" onClick={() => setAccountOpen(false)} />
+              <div className="absolute right-0 z-50 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-bg-card shadow-lg">
+                <div className="border-b border-border px-4 py-3">
+                  <div className="text-xs text-text-muted mb-1">当前登录身份</div>
+                  <div className="text-sm font-medium text-text-primary">{user?.name ?? '已登录用户'}</div>
+                  <div className="text-xs text-text-muted">{user?.email ?? '—'}</div>
+                </div>
+                <div className="border-b border-border px-4 py-3 text-xs leading-5 text-text-secondary">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>公司</span>
+                    <span className="text-right text-foreground">{currentTenant.name}</span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <span>固定视图</span>
+                    <span className="text-right text-primary">{viewLabel}</span>
+                  </div>
+                  <p className="mt-2 rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 text-[11px] text-muted-foreground">
+                    视图由注册/登录账号的角色和公司决定，不能在面板中手动切换。
+                  </p>
                 </div>
                 <div className="py-1">
                   <button
                     onClick={() => {
-                      setPxOpsOpen(false);
+                      setAccountOpen(false);
                       navigate('/settings');
                     }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-text-secondary hover:bg-bg-tertiary transition-colors text-left"
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-text-secondary transition-colors hover:bg-bg-tertiary"
                   >
                     <User size={14} />
                     个人设置
                   </button>
                   <button
                     onClick={() => {
-                      setPxOpsOpen(false);
+                      setAccountOpen(false);
                       navigate('/settings');
                     }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-text-secondary hover:bg-bg-tertiary transition-colors text-left"
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-text-secondary transition-colors hover:bg-bg-tertiary"
                   >
                     <Settings size={14} />
                     系统设置
                   </button>
-                  <div className="border-t border-border my-1" />
-                  <div className="px-4 py-2">
-                    <div className="text-[10px] text-text-muted uppercase tracking-wider mb-1">切换租户视角</div>
-                    <p className="text-[10px] leading-relaxed text-text-muted">
-                      切换后，工坊 / 分发 / 洞察 / KPI 数据均按所选租户视角呈现。
-                    </p>
-                  </div>
-                  {tenants.map((tenant) => (
-                    <button
-                      key={tenant.id}
-                      onClick={() => {
-                        setTenant(tenant.id);
-                        setPxOpsOpen(false);
-                        if (tenant.type === 'pharma' && (location.pathname.startsWith('/admin') || location.pathname.startsWith('/distribute') || location.pathname.startsWith('/finance'))) {
-                          navigate('/');
-                        }
-                      }}
-                      className="w-full flex items-center justify-between px-4 py-2 text-xs text-text-secondary hover:bg-bg-tertiary transition-colors"
-                    >
-                      <span>
-                        {tenant.shortName}（{tenant.type === 'ops' ? '运营视图' : '药企视图'}）
-                        <span className="block text-[10px] text-text-muted text-left">{tenant.name}</span>
-                      </span>
-                      {tenant.id === currentTenant.id && <span className="w-1.5 h-1.5 rounded-full bg-accent-green" />}
-                    </button>
-                  ))}
-                  <div className="border-t border-border my-1" />
+                  <div className="my-1 border-t border-border" />
                   <button
-                    onClick={() => showToast('已退出登录', 'info')}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-accent-red hover:bg-bg-tertiary transition-colors text-left"
+                    onClick={handleLogout}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-accent-red transition-colors hover:bg-bg-tertiary"
                   >
                     <LogOut size={14} />
                     退出登录

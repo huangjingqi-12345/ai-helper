@@ -1,26 +1,24 @@
 export type ContentType = 'article' | 'video' | 'infographic' | 'quiz' | 'qa' | 'checklist' | 'poster';
-export type ContentStatus = 'draft' | 'under_review' | 'approved' | 'published' | 'archived' | 'offline';
 
-export type PipelineStage =
-  | 'requirement_submitted'
-  | 'doctor_distributing'
-  | 'doctor_creating'
-  | 'external_review'
-  | 'internal_review'
-  | 'published';
+/**
+ * PM 确认的 6 态内容状态模型（2026-05-15 产品确定）
+ * 需求已提交→医生分发中→医生制作中→三方审核中→内部审核中→已发布
+ */
+export type ContentStatus =
+  | 'requirement_submitted'   // 需求已提交
+  | 'doctor_distributing'     // 医生分发中（中间态）
+  | 'doctor_producing'        // 医生制作中
+  | 'third_party_review'      // 三方审核中（DX医学编辑+PX运营）
+  | 'internal_review'         // 内部审核中（药企）
+  | 'published';              // 已发布
+
+/** @deprecated Use ContentStatus instead — PM confirmed 6-state model replaces pipeline stage */
+export type PipelineStage = ContentStatus;
 
 export type ContentPriority = 'P0' | 'P1' | 'P2';
-export type ContentWorkflowState =
-  | 'draft'
-  | 'system_precheck'
-  | 'px_content_review'
-  | 'pharma_medical_review'
-  | 'pharma_marketing_review'
-  | 'approved_locked'
-  | 'scheduled'
-  | 'published'
-  | 'archived'
-  | 'rejected';
+
+/** @deprecated Removed per PM decision (2026-05-15). Use ContentStatus 6-state model instead. */
+export type ContentWorkflowState = string;
 
 export interface Content {
   id: string;

@@ -26,6 +26,7 @@ import type { LucideIcon } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useLogger } from '@/hooks/useLogger';
 import { useTenantStore } from '@/stores/useTenantStore';
+import { useAuthStore } from '@/stores/useAuthStore';
 import { showToast } from '@/components/ui/Toast';
 
 type NavItem = {
@@ -70,7 +71,8 @@ export function Sidebar(): JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
   const { log } = useLogger('Sidebar');
-  const { isOps } = useTenantStore();
+  const { currentTenant, isOps } = useTenantStore();
+  const { user, logout } = useAuthStore();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(
     location.pathname.startsWith('/admin') || location.pathname === '/platform-management',
@@ -83,6 +85,13 @@ export function Sidebar(): JSX.Element {
   const handleNavClick = (path: string, label: string): void => {
     log.nav(`Navigate to ${label}`, { path });
     navigate(path);
+  };
+
+  const handleLogout = (): void => {
+    setUserMenuOpen(false);
+    logout();
+    showToast('已退出登录', 'info');
+    navigate('/login', { replace: true });
   };
 
   const openSettings = (section: 'account' | 'team'): void => {
@@ -227,7 +236,7 @@ export function Sidebar(): JSX.Element {
             <span className="text-[11px] font-semibold tracking-wide">当前视图</span>
           </div>
           <span className="text-foreground">{isOps ? '运营视图 Ops View' : '药企视图 Pharma View'}</span>。{' '}
-          {isOps ? '合规枢纽 · 唯一可见患者明文 · 全部生产 / 触达能力' : '仅可见脱敏聚合数据 · k-匿名 · 不可下钻到个体'}
+          {isOps ? '全部内容运营 · 审批 · 分发 · 行为洞察能力' : '仅可见脱敏聚合数据 · k-匿名 · 不可下钻到个体'}
         </div>
       </nav>
 
@@ -241,7 +250,7 @@ export function Sidebar(): JSX.Element {
               tabIndex={-1}
             />
             <div className="absolute bottom-[70px] left-3 z-30 w-[200px] overflow-hidden rounded-lg border border-border bg-card shadow-[0_18px_48px_rgba(0,0,0,0.38)]">
-              <div className="border-b border-border px-4 py-3 text-xs text-foreground">系统管理员</div>
+              <div className="border-b border-border px-4 py-3 text-xs text-foreground">{user?.name ?? '已登录用户'}</div>
               <button onClick={() => openSettings('account')} className="block w-full border-b border-border px-4 py-3 text-left text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
                 <Settings className="mr-2 inline h-3.5 w-3.5" />账号设置
               </button>
@@ -249,10 +258,7 @@ export function Sidebar(): JSX.Element {
                 <Users className="mr-2 inline h-3.5 w-3.5" />团队管理
               </button>
               <button
-                onClick={() => {
-                  setUserMenuOpen(false);
-                  showToast('已退出登录', 'info');
-                }}
+                onClick={handleLogout}
                 className="block w-full px-4 py-3 text-left text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-[oklch(75%_.18_25)]"
               >
                 <LogOut className="mr-2 inline h-3.5 w-3.5" />退出登录
@@ -264,10 +270,10 @@ export function Sidebar(): JSX.Element {
           onClick={() => setUserMenuOpen((open) => !open)}
           className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-sidebar-accent"
         >
-          <div className="grid h-8 w-8 place-items-center rounded-full bg-[oklch(28%_.04_200)] text-[12px] font-semibold text-primary">系</div>
+          <div className="grid h-8 w-8 place-items-center rounded-full bg-[oklch(28%_.04_200)] text-[12px] font-semibold text-primary">{(user?.name ?? '用').slice(0, 1)}</div>
           <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-[12.5px] font-medium text-foreground">系统管理员</div>
-            <div className="truncate text-[11px] text-muted-foreground">华东区域 · admin</div>
+            <div className="truncate text-[12.5px] font-medium text-foreground">{user?.name ?? '已登录用户'}</div>
+            <div className="truncate text-[11px] text-muted-foreground">{currentTenant.shortName} · {isOps ? '运营视图' : '药企视图'}</div>
           </div>
           <ChevronDown className={clsx('h-3.5 w-3.5 text-muted-foreground transition-transform', userMenuOpen && 'rotate-180')} />
         </button>

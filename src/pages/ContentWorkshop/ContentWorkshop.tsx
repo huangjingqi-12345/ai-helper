@@ -14,19 +14,22 @@ import { CONTENT_TYPE_LABELS, PIPELINE_STAGE_MAP } from '@/utils/constants';
 import { formatDateOnly, formatNumber } from '@/utils/formatters';
 import type { Content, ContentStatus, PipelineStage } from '@/types';
 
+/** PM 确认的 6 态内容状态（2026-05-15 产品确定） */
 const STATUS_OPTIONS: Array<{ value: 'all' | ContentStatus; label: string }> = [
   { value: 'all', label: '全部状态' },
-  { value: 'draft', label: '草稿' },
+  { value: 'requirement_submitted', label: '需求已提交' },
+  { value: 'doctor_distributing', label: '医生分发中' },
+  { value: 'doctor_producing', label: '医生制作中' },
+  { value: 'third_party_review', label: '三方审核中' },
+  { value: 'internal_review', label: '内部审核中' },
   { value: 'published', label: '已发布' },
-  { value: 'offline', label: '已下架' },
-  { value: 'archived', label: '已下架' },
 ];
 
 const PIPELINE_STAGE_OPTIONS: PipelineStage[] = [
   'requirement_submitted',
   'doctor_distributing',
-  'doctor_creating',
-  'external_review',
+  'doctor_producing',
+  'third_party_review',
   'internal_review',
   'published',
 ];
@@ -39,44 +42,45 @@ const CONTENT_PROJECT_BRIEFS: Record<string, string> = {
   'CNT-105': '项目 · 他莫昔芬 · 内分泌依从性 · 诉求 · 5 年辅助服药遗忘补救 5 问',
 };
 
+/** PM 确认的 6 态状态样式映射 */
 const statusMeta: Record<string, { label: string; cls: string; dot: string }> = {
-  draft: {
-    label: '草稿',
+  requirement_submitted: {
+    label: '需求已提交',
     cls: 'border-[oklch(40%_.04_70_/.5)] bg-[oklch(28%_.06_70_/.35)] text-[oklch(82%_.13_75)]',
     dot: 'bg-[oklch(78%_.15_70)]',
+  },
+  doctor_distributing: {
+    label: '医生分发中',
+    cls: 'border-[oklch(70%_.15_200_/.3)] bg-[oklch(70%_.15_200_/.1)] text-primary',
+    dot: 'bg-primary',
+  },
+  doctor_producing: {
+    label: '医生制作中',
+    cls: 'border-[oklch(40%_.06_280_/.5)] bg-[oklch(26%_.06_280_/.35)] text-[oklch(82%_.15_280)]',
+    dot: 'bg-[oklch(72%_.17_280)]',
+  },
+  third_party_review: {
+    label: '三方审核中',
+    cls: 'border-[oklch(45%_.14_70_/.5)] bg-[oklch(28%_.1_70_/.35)] text-[oklch(82%_.15_70)]',
+    dot: 'bg-[oklch(78%_.15_70)]',
+  },
+  internal_review: {
+    label: '内部审核中',
+    cls: 'border-[oklch(45%_.14_40_/.5)] bg-[oklch(28%_.1_40_/.35)] text-[oklch(82%_.15_40)]',
+    dot: 'bg-[oklch(78%_.15_40)]',
   },
   published: {
     label: '已发布',
     cls: 'border-[oklch(40%_.06_165_/.5)] bg-[oklch(26%_.06_165_/.35)] text-[oklch(82%_.15_165)]',
     dot: 'bg-[oklch(72%_.17_165)]',
   },
-  offline: {
-    label: '已下架',
-    cls: 'border-border bg-secondary text-muted-foreground',
-    dot: 'bg-muted-foreground',
-  },
-  archived: {
-    label: '已下架',
-    cls: 'border-border bg-secondary text-muted-foreground',
-    dot: 'bg-muted-foreground',
-  },
-  under_review: {
-    label: '审核中',
-    cls: 'border-[oklch(70%_.15_200_/.3)] bg-[oklch(70%_.15_200_/.1)] text-primary',
-    dot: 'bg-primary',
-  },
-  approved: {
-    label: '已通过',
-    cls: 'border-sky-500/30 bg-sky-500/10 text-sky-200',
-    dot: 'bg-sky-300',
-  },
 };
 
 const flowStatusCls: Record<PipelineStage, string> = {
   requirement_submitted: 'text-[oklch(78%_.15_70)]',
   doctor_distributing: 'text-[oklch(82%_.16_300)]',
-  doctor_creating: 'text-[oklch(72%_.17_195)]',
-  external_review: 'text-[oklch(80%_.15_260)]',
+  doctor_producing: 'text-[oklch(72%_.17_195)]',
+  third_party_review: 'text-[oklch(80%_.15_260)]',
   internal_review: 'text-[oklch(82%_.16_195)]',
   published: 'text-[oklch(82%_.15_165)]',
 };
@@ -346,8 +350,8 @@ function stageAccent(stage: PipelineStage): string {
   return {
     requirement_submitted: 'oklch(78% .15 70)',
     doctor_distributing: 'oklch(82% .16 300)',
-    doctor_creating: 'oklch(72% .17 195)',
-    external_review: 'oklch(80% .15 260)',
+    doctor_producing: 'oklch(72% .17 195)',
+    third_party_review: 'oklch(80% .15 260)',
     internal_review: 'oklch(82% .16 195)',
     published: 'oklch(82% .15 165)',
   }[stage];
@@ -378,10 +382,11 @@ function Th({ children, align = 'left', className }: { children?: ReactNode; ali
 }
 
 function ContentRow({ item }: { item: Content }): JSX.Element {
-  const meta = statusMeta[item.status] ?? statusMeta.draft!;
-  const interactions = (item.likeCount ?? 0) + (item.bookmarkCount ?? 0) + (item.shareCount ?? 0);
+  const meta = statusMeta[item.status] ?? statusMeta.requirement_submitted!;
+  // PM 确认：互动数（正向）= 点赞 + 收藏，不含 dislikes/shares
+  const interactions = (item.likeCount ?? 0) + (item.bookmarkCount ?? 0);
   const flowLabel = PIPELINE_STAGE_MAP[item.pipelineStage]?.label ?? '—';
-  const isDraft = item.status === 'draft' || item.status === 'under_review' || item.status === 'approved';
+  const isPrePublish = item.status !== 'published';
 
   return (
     <tr className="row-hover group border-b border-[oklch(30%_.02_260_/.45)] transition-colors hover:bg-[oklch(24%_.02_260_/.2)]">
@@ -427,8 +432,8 @@ function ContentRow({ item }: { item: Content }): JSX.Element {
           <span className={clsx('h-1.5 w-1.5 rounded-full', meta.dot)} /> {meta.label}
         </span>
       </td>
-      <td className="px-3 text-right tabular text-muted-foreground">{isDraft ? '—' : formatNumber(item.readCount)}</td>
-      <td className="px-3 text-right tabular text-muted-foreground">{isDraft ? '—' : formatNumber(interactions)}</td>
+      <td className="px-3 text-right tabular text-muted-foreground">{isPrePublish ? '—' : formatNumber(item.readCount)}</td>
+      <td className="px-3 text-right tabular text-muted-foreground">{isPrePublish ? '—' : formatNumber(interactions)}</td>
       <td className="py-3.5 pl-3 pr-4 text-right">
         <Link to={`/content/${item.id}`} className="inline-flex items-center gap-0.5 text-[12px] text-primary opacity-0 transition-opacity group-hover:opacity-100">
           详情 <ChevronRight className="h-3.5 w-3.5" />

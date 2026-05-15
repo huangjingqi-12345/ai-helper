@@ -28,13 +28,17 @@ export const PAGE_DESCRIPTIONS: Record<string, string> = {
   'finance-invoicing': '价值交付与开票：交付报告自动转开票指令。',
 };
 
+/**
+ * PM 确认的 6 态内容状态映射（2026-05-15 产品确定）
+ * 替代旧的 CONTENT_STATUS_MAP（draft/under_review/approved/published/archived/offline）
+ */
 export const CONTENT_STATUS_MAP = {
-  draft: { label: '草稿', color: 'gray' },
-  under_review: { label: '审核中', color: 'yellow' },
-  approved: { label: '已通过', color: 'blue' },
+  requirement_submitted: { label: '需求已提交', color: 'gray' },
+  doctor_distributing: { label: '医生分发中', color: 'blue' },
+  doctor_producing: { label: '医生制作中', color: 'purple' },
+  third_party_review: { label: '三方审核中', color: 'yellow' },
+  internal_review: { label: '内部审核中', color: 'orange' },
   published: { label: '已发布', color: 'green' },
-  archived: { label: '已下架', color: 'gray' },
-  offline: { label: '已下架', color: 'gray' },
 } as const;
 
 export const STRATEGY_STATUS_MAP = {
@@ -50,11 +54,15 @@ export const ROLE_MAP = {
   viewer: { label: '查看者', color: 'gray' },
 } as const;
 
+/**
+ * PM 确认的 6 态流水线映射（2026-05-15 产品确定）
+ * 与 CONTENT_STATUS_MAP 保持一致（6 桶即独立存储状态）
+ */
 export const PIPELINE_STAGE_MAP = {
   requirement_submitted: { label: '需求已提交', color: 'gray', order: 1 },
   doctor_distributing: { label: '医生分发中', color: 'blue', order: 2 },
-  doctor_creating: { label: '医生制作中', color: 'purple', order: 3 },
-  external_review: { label: '三方审核中', color: 'yellow', order: 4 },
+  doctor_producing: { label: '医生制作中', color: 'purple', order: 3 },
+  third_party_review: { label: '三方审核中', color: 'yellow', order: 4 },
   internal_review: { label: '内部审核中', color: 'orange', order: 5 },
   published: { label: '已发布', color: 'green', order: 6 },
 } as const;

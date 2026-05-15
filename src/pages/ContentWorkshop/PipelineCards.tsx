@@ -11,8 +11,8 @@ interface PipelineCardsProps {
 const stageOrder: PipelineStage[] = [
   'requirement_submitted',
   'doctor_distributing',
-  'doctor_creating',
-  'external_review',
+  'doctor_producing',
+  'third_party_review',
   'internal_review',
   'published',
 ];
