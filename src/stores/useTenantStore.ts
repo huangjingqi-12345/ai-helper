@@ -12,6 +12,7 @@ export interface TenantOption {
   type: TenantType;
 }
 
+// DEMO FALLBACK: 生产环境应仅从 API 获取租户列表，此 fallback 仅用于 API 不可用时的 demo 展示
 export const TENANTS: TenantOption[] = [
   { id: 'T-PX', shortName: 'Px Ops', name: 'Px 自营运营组', type: 'ops' },
   { id: 'T-NV', shortName: '诺华', name: '诺华制药（中国）', type: 'pharma' },

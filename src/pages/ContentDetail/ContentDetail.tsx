@@ -44,7 +44,8 @@ export function ContentDetail(): JSX.Element {
   }
 
   const item = selectedItem;
-  const interactions = item.likeCount + (item.dislikeCount ?? 0) + item.bookmarkCount;
+  // PM 确认：互动数（正向）= 点赞 + 收藏，不含 dislikes
+  const interactions = item.likeCount + item.bookmarkCount;
 
   return (
     <div className="space-y-6">

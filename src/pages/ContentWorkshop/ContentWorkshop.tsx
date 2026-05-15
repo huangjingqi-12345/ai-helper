@@ -34,6 +34,7 @@ const PIPELINE_STAGE_OPTIONS: PipelineStage[] = [
   'published',
 ];
 
+// DEMO FALLBACK: 生产应从 API content.projectBrief 获取，此处仅为 seed 数据补充展示
 const CONTENT_PROJECT_BRIEFS: Record<string, string> = {
   'CNT-101': '项目 · 赫赛汀 · HER2+ 术后辅助随访计划 · 诉求 · 12 周随访节点提醒',
   'CNT-102': '项目 · 优赫得 · HER2 ADC 重点随访 · 诉求 · 首输 6 周内安全信号识别',

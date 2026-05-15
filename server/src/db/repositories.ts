@@ -761,7 +761,7 @@ export async function getBehaviorSummary(scope?: QueryScope) {
     totalReads: asNumber(stats.readCount),
     totalInteractions: asNumber(audienceInteractionRow?.total),
     contentCount: asNumber(contentCountRow?.cnt),
-    avgReadDuration: asNumber(avgSetting?.value, 148),
+    avgReadDuration: asNumber(avgSetting?.value, 148), // TODO CLEAN-014: extract 148s default to platform_settings or constant
     readTrend,
     interactionTrend,
     topContent: topRows.map((row) => ({
@@ -929,36 +929,120 @@ export async function updateStrategy(id: string, data: Record<string, unknown>, 
   return getStrategyById(id, scope);
 }
 
+// PM 确认 (2026-05-15): projects = distribution_projects (同一实体)
+// 优先从 projects 表查询，fallback 到 distribution_projects 保持向后兼容
 export async function getDistributionProjects(filters: { status?: string; priority?: string; search?: string; page: number; pageSize: number; scope?: QueryScope }) {
   const conditions: string[] = [];
   const params: unknown[] = [];
-  const tenant = tenantCondition('distribution_projects', filters.scope);
+
+  // 先尝试从 projects 表查询（统一实体）
+  const tenant = tenantCondition('p', filters.scope);
   if (tenant.sql) { conditions.push(tenant.sql); params.push(...tenant.params); }
-  if (filters.status) { conditions.push('status = ?'); params.push(filters.status); }
-  if (filters.priority) { conditions.push('priority = ?'); params.push(filters.priority); }
+  if (filters.status) { conditions.push('p.status = ?'); params.push(filters.status); }
+  if (filters.priority) { conditions.push('p.priority = ?'); params.push(filters.priority); }
   if (filters.search) {
-    conditions.push('(LOWER(title) LIKE ? OR LOWER(disease) LIKE ? OR LOWER(brand) LIKE ?)');
+    conditions.push('(LOWER(p.name) LIKE ? OR LOWER(p.disease) LIKE ? OR LOWER(COALESCE(b.name, \'\')) LIKE ?)');
     const query = `%${filters.search.toLowerCase()}%`;
     params.push(query, query, query);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const totalRow = await dbGet<{ cnt: number | string }>(`SELECT COUNT(*) as cnt FROM distribution_projects ${where}`, params);
+
+  // 尝试从 projects 查询
+  const totalRow = await dbGet<{ cnt: number | string }>(`
+    SELECT COUNT(*) as cnt FROM projects p
+    LEFT JOIN brands b ON b.id = p.brand_id
+    ${where}
+  `, params);
   const total = Number(totalRow?.cnt ?? 0);
-  const offset = (filters.page - 1) * filters.pageSize;
-  const rows = await dbAll<Record<string, unknown>>(`SELECT * FROM distribution_projects ${where} ORDER BY id ASC LIMIT ? OFFSET ?`, [...params, filters.pageSize, offset]);
+
+  if (total > 0) {
+    const offset = (filters.page - 1) * filters.pageSize;
+    const rows = await dbAll<Record<string, unknown>>(`
+      SELECT p.*, COALESCE(b.name, '—') as brand, COALESCE(u.name, 'PX 运营组') as owner
+      FROM projects p
+      LEFT JOIN brands b ON b.id = p.brand_id
+      LEFT JOIN users u ON u.id = p.owner_user_id
+      ${where}
+      ORDER BY p.id ASC LIMIT ? OFFSET ?
+    `, [...params, filters.pageSize, offset]);
+    return {
+      data: rows.map(mapProjectAsDistributionRow),
+      total,
+      totalPages: Math.ceil(total / filters.pageSize),
+    };
+  }
+
+  // Fallback: 从 distribution_projects 查询（向后兼容）
+  const dpConditions: string[] = [];
+  const dpParams: unknown[] = [];
+  const dpTenant = tenantCondition('distribution_projects', filters.scope);
+  if (dpTenant.sql) { dpConditions.push(dpTenant.sql); dpParams.push(...dpTenant.params); }
+  if (filters.status) { dpConditions.push('status = ?'); dpParams.push(filters.status); }
+  if (filters.priority) { dpConditions.push('priority = ?'); dpParams.push(filters.priority); }
+  if (filters.search) {
+    dpConditions.push('(LOWER(title) LIKE ? OR LOWER(disease) LIKE ? OR LOWER(brand) LIKE ?)');
+    const query = `%${filters.search.toLowerCase()}%`;
+    dpParams.push(query, query, query);
+  }
+  const dpWhere = dpConditions.length ? `WHERE ${dpConditions.join(' AND ')}` : '';
+  const dpTotalRow = await dbGet<{ cnt: number | string }>(`SELECT COUNT(*) as cnt FROM distribution_projects ${dpWhere}`, dpParams);
+  const dpTotal = Number(dpTotalRow?.cnt ?? 0);
+  const dpOffset = (filters.page - 1) * filters.pageSize;
+  const dpRows = await dbAll<Record<string, unknown>>(`SELECT * FROM distribution_projects ${dpWhere} ORDER BY id ASC LIMIT ? OFFSET ?`, [...dpParams, filters.pageSize, dpOffset]);
   return {
-    data: rows.map(mapDistributionProjectRow),
-    total,
-    totalPages: Math.ceil(total / filters.pageSize),
+    data: dpRows.map(mapDistributionProjectRow),
+    total: dpTotal,
+    totalPages: Math.ceil(dpTotal / filters.pageSize),
   };
 }
 
 export async function getDistributionProjectById(id: string, scope?: QueryScope) {
-  const tenant = tenantCondition('distribution_projects', scope);
-  const row = await dbGet<Record<string, unknown>>(`SELECT * FROM distribution_projects WHERE id = ? ${tenant.sql ? `AND ${tenant.sql}` : ''}`, [id, ...tenant.params]);
+  // 先尝试 projects 表
+  const tenant = tenantCondition('p', scope);
+  const projectRow = await dbGet<Record<string, unknown>>(`
+    SELECT p.*, COALESCE(b.name, '—') as brand, COALESCE(u.name, 'PX 运营组') as owner
+    FROM projects p
+    LEFT JOIN brands b ON b.id = p.brand_id
+    LEFT JOIN users u ON u.id = p.owner_user_id
+    WHERE p.id = ? ${tenant.sql ? `AND ${tenant.sql}` : ''}
+  `, [id, ...tenant.params]);
+  if (projectRow) return mapProjectAsDistributionRow(projectRow);
+
+  // Fallback: distribution_projects
+  const dpTenant = tenantCondition('distribution_projects', scope);
+  const row = await dbGet<Record<string, unknown>>(`SELECT * FROM distribution_projects WHERE id = ? ${dpTenant.sql ? `AND ${dpTenant.sql}` : ''}`, [id, ...dpTenant.params]);
   return row ? mapDistributionProjectRow(row) : null;
 }
 
+/** Map projects table row to DistributionProject response shape */
+function mapProjectAsDistributionRow(row: Record<string, unknown>) {
+  const project = toCamel(row);
+  return {
+    id: project.id,
+    title: project.name || project.title,
+    priority: project.priority,
+    status: project.status,
+    brand: project.brand ?? '—',
+    disease: project.disease,
+    owner: project.owner ?? 'PX 运营组',
+    tenantId: project.tenantId,
+    expectedDate: project.expectedDate,
+    totalPieces: asNumber(project.totalPieces),
+    cadence: project.cadence,
+    patientCap: asNumber(project.patientCap),
+    topics: parseJson<string[]>(project.topics, []),
+    formats: project.formats ?? '',
+    approvalFlow: project.approvalFlowId ?? '',
+    progress: asNumber(project.progressPercent),
+    currentNode: project.currentNode ?? '未提交',
+    contentCount: asNumber(project.contentCount),
+    publishedCount: asNumber(project.publishedCount),
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+  };
+}
+
+/** @deprecated — maps legacy distribution_projects rows. Use mapProjectAsDistributionRow for projects table. */
 function mapDistributionProjectRow(row: Record<string, unknown>) {
   const project = toCamel(row);
   project.topics = parseJson<string[]>(project.topics, []);
@@ -1503,7 +1587,8 @@ export async function ingestAggregateMetrics(rows: AggregateMetricInput[], scope
   let inserted = 0;
 
   for (const row of rows) {
-    const interactionCount = asNumber(row.likeCount) + asNumber(row.dislikeCount) + asNumber(row.bookmarkCount) + asNumber(row.shareCount);
+    // PM 确认：互动数（正向）= 点赞 + 收藏，不含 dislikes/shares
+    const interactionCount = asNumber(row.likeCount) + asNumber(row.bookmarkCount);
     await dbRun(`
       DELETE FROM behavior_daily_metrics
       WHERE tenant_id = ? AND metric_date = ? AND COALESCE(project_id, '') = COALESCE(?, '') AND COALESCE(content_id, '') = COALESCE(?, '')

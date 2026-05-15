@@ -1,6 +1,6 @@
 # Px Lite 工作流草案
 
-最后更新时间：2026-05-14  
+最后更新时间：2026-05-15  
 状态：基于当前代码与 PM demo 整理，等待产品确认。  
 重要声明：工作流中的 demo-only 节点不代表生产最终状态机。
 
@@ -22,7 +22,7 @@
 
 内容主表 `content` 中与生命周期相关的字段包括：
 
-- `status`：内容业务状态，例如 `draft`、`under_review`、`approved`、`published`、`archived`、`offline`。
+- `status：PM 确认 6 态模型（requirement_submitted→doctor_distributing→doctor_producing→third_party_review→internal_review→published）`。
 - `workflow_state`：工作流状态。
 - `pipeline_stage`：流程阶段，例如需求提交、医生制作、审核、发布等。
 - `published_at`：发布时间。

@@ -110,9 +110,9 @@ const sqliteSchema = `
     project_id TEXT NOT NULL,
     title TEXT NOT NULL,
     type TEXT NOT NULL CHECK(type IN ('article','video','infographic','quiz','qa','checklist','poster')),
-    status TEXT DEFAULT 'draft' CHECK(status IN ('draft','under_review','approved','published','archived','offline')),
-    workflow_state TEXT DEFAULT 'draft',
-    pipeline_stage TEXT DEFAULT 'requirement_submitted' CHECK(pipeline_stage IN ('requirement_submitted','doctor_distributing','doctor_creating','external_review','internal_review','published')),
+    status TEXT DEFAULT 'requirement_submitted' CHECK(status IN ('requirement_submitted','doctor_distributing','doctor_producing','third_party_review','internal_review','published','draft','offline')),
+    workflow_state TEXT DEFAULT 'requirement_submitted',
+    pipeline_stage TEXT DEFAULT 'requirement_submitted' CHECK(pipeline_stage IN ('requirement_submitted','doctor_distributing','doctor_producing','third_party_review','internal_review','published')),
     priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2')),
     author TEXT NOT NULL,
     author_user_id TEXT,
@@ -692,9 +692,9 @@ const postgresSchema = `
     project_id TEXT NOT NULL REFERENCES projects(id),
     title TEXT NOT NULL,
     type TEXT NOT NULL CHECK(type IN ('article','video','infographic','quiz','qa','checklist','poster')),
-    status TEXT DEFAULT 'draft' CHECK(status IN ('draft','under_review','approved','published','archived','offline')),
-    workflow_state TEXT DEFAULT 'draft',
-    pipeline_stage TEXT DEFAULT 'requirement_submitted' CHECK(pipeline_stage IN ('requirement_submitted','doctor_distributing','doctor_creating','external_review','internal_review','published')),
+    status TEXT DEFAULT 'requirement_submitted' CHECK(status IN ('requirement_submitted','doctor_distributing','doctor_producing','third_party_review','internal_review','published','draft','offline')),
+    workflow_state TEXT DEFAULT 'requirement_submitted',
+    pipeline_stage TEXT DEFAULT 'requirement_submitted' CHECK(pipeline_stage IN ('requirement_submitted','doctor_distributing','doctor_producing','third_party_review','internal_review','published')),
     priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2')),
     author TEXT NOT NULL,
     author_user_id TEXT,
@@ -866,7 +866,7 @@ async function resetLegacySqliteSchemaIfNeeded(): Promise<void> {
   const contentTable = await dbGet<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'content'");
   const usersTable = await dbGet<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'");
   const isLegacy = Boolean(
-    contentTable?.sql && (!contentTable.sql.includes("'poster'") || !contentTable.sql.includes('pipeline_stage'))
+    contentTable?.sql && (!contentTable.sql.includes("'poster'") || !contentTable.sql.includes('pipeline_stage') || contentTable.sql.includes('doctor_creating') || contentTable.sql.includes('external_review'))
   ) || Boolean(
     usersTable?.sql && (!usersTable.sql.includes("'frozen'") || !usersTable.sql.includes('role_labels'))
   ) || Boolean(
@@ -947,6 +947,9 @@ const sqliteColumnSpecs: SqliteColumnSpec[] = [
   { table: 'projects', name: 'current_approval_node_id', definition: 'TEXT' },
   { table: 'projects', name: 'progress_percent', definition: 'INTEGER DEFAULT 0' },
   { table: 'projects', name: 'description', definition: "TEXT DEFAULT ''" },
+  { table: 'projects', name: 'topics', definition: "TEXT DEFAULT '[]'" },
+  { table: 'projects', name: 'formats', definition: "TEXT DEFAULT ''" },
+  { table: 'projects', name: 'current_node', definition: "TEXT DEFAULT '未提交'" },
   { table: 'content', name: 'tenant_id', definition: "TEXT DEFAULT 'T-PX'" },
   { table: 'content', name: 'workflow_state', definition: "TEXT DEFAULT 'draft'" },
   { table: 'content', name: 'pipeline_stage', definition: "TEXT DEFAULT 'requirement_submitted'" },

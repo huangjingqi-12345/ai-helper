@@ -1,6 +1,6 @@
 # Px Lite 产品规格草案
 
-最后更新时间：2026-05-14  
+最后更新时间：2026-05-15  
 状态：评审草案，等待 Leader / PM / CEO 确认。  
 重要声明：本文档把当前 PM demo 作为展示基线，但不把 demo-only 行为自动认定为生产规则。
 
@@ -57,7 +57,7 @@ Px Lite 是面向中国医药场景的患者教育内容运营与聚合行为洞
 - KPI 是否全部从明细表实时聚合。
 - 是否保留 `overview_stats` 作为缓存/快照。
 - 已发布内容展示为 `x/y` 的业务含义。
-- 互动数是否包含 dislike。
+- ✅ 已确认：互动数不包含 dislike，正向互动=点赞+收藏。
 - 项目状态与总览计数之间的关系。
 
 ### 4.2 内容工坊
@@ -94,7 +94,7 @@ Px Lite 是面向中国医药场景的患者教育内容运营与聚合行为洞
 
 **当前实现规则**
 
-- 聚合导入时计算 `interaction_count = like_count + dislike_count + bookmark_count + share_count`。
+- 聚合导入时计算 `interaction_count = like_count + bookmark_count (PM确认2026-05-15: 正向互动=点赞+收藏，不含dislike/share)`。
 - 药企视角使用租户范围内的 `behavior_daily_metrics` 聚合。
 - Px demo 视角可以展示 seed 的趋势、Top 内容和疾病聚合。
 
