@@ -805,6 +805,26 @@ const postgresSchema = `
   CREATE TABLE IF NOT EXISTS doctor_tags (id BIGSERIAL PRIMARY KEY, doctor_id TEXT NOT NULL REFERENCES doctors(id), tag TEXT NOT NULL, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS distribution_candidates (id BIGSERIAL PRIMARY KEY, strategy_id TEXT NOT NULL REFERENCES distribution_strategies(id), doctor_id TEXT NOT NULL REFERENCES doctors(id), match_score REAL DEFAULT 0, match_reason TEXT, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS distribution_records (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), project_id TEXT NOT NULL, content_id TEXT NOT NULL, strategy_id TEXT, target_type TEXT NOT NULL CHECK(target_type IN ('doctor','patient_segment')), target_label TEXT NOT NULL, channel TEXT, planned_count INTEGER DEFAULT 0, actual_count INTEGER DEFAULT 0, gray_percent INTEGER DEFAULT 0, operator_user_id TEXT, distributed_at TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL);
+
+  CREATE TABLE IF NOT EXISTS content_requests (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    content_id TEXT REFERENCES content(id),
+    request_name TEXT NOT NULL,
+    title TEXT NOT NULL,
+    priority TEXT DEFAULT 'P1' CHECK(priority IN ('P0','P1','P2')),
+    expected_date TEXT,
+    theme_format_matrix JSONB DEFAULT '{}'::jsonb,
+    total_count INTEGER DEFAULT 0,
+    note TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','accepted','rejected','converted')),
+    submitted_by TEXT,
+    submitted_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS request_distribution_configs (
     request_id TEXT PRIMARY KEY REFERENCES content_requests(id),
     assignment_mode TEXT DEFAULT 'mixed' CHECK(assignment_mode IN ('mixed','whitelist','strategy')),

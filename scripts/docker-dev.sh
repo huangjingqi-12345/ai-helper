@@ -21,24 +21,24 @@ if [ ! -f "$ENV_FILE" ]; then
   fi
 fi
 
-BACKEND_HOST_PORT="$(grep -E '^[[:space:]]*BACKEND_HOST_PORT=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- | tr -d '\r')"
-BACKEND_HOST_PORT="${BACKEND_HOST_PORT:-3002}"
+FRONTEND_HOST_PORT="$(grep -E '^[[:space:]]*FRONTEND_HOST_PORT=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- | tr -d '\r')"
+FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-9973}"
+COMPOSE=(docker compose --env-file "$ENV_FILE")
 
 echo "🐳 Px Lite — Local Docker Development"
 echo "========================================"
 echo "  Env file:  $ENV_FILE"
 echo "  Database:  SQLite"
-echo "  Frontend:  http://localhost:9973"
-echo "  Backend:   http://localhost:${BACKEND_HOST_PORT}"
-echo "  Ready:     http://localhost:${BACKEND_HOST_PORT}/api/ready"
+echo "  Frontend:  http://localhost:${FRONTEND_HOST_PORT}"
+echo "  Backend:   internal only (Docker service: backend:3001)"
 echo ""
 
-docker compose --env-file "$ENV_FILE" up -d --build
+"${COMPOSE[@]}" up -d --build
 
 echo ""
 echo "⏳ Waiting for backend readiness..."
 for i in $(seq 1 30); do
-  if curl -s "http://localhost:${BACKEND_HOST_PORT}/api/ready" > /dev/null 2>&1; then
+  if "${COMPOSE[@]}" exec -T backend wget -qO- "http://127.0.0.1:3001/api/ready" > /dev/null 2>&1; then
     echo "✅ Local Docker stack is ready"
     echo ""
     echo "Useful commands:"

@@ -1,11 +1,18 @@
 # ============================================
-# Px Lite — Production Docker Compose override
+# Px Lite — Release Docker Compose override
 #
 # Usage:
+#   cp .env.compose.dev.example .env.compose.dev.local
+#   ./scripts/deploy.sh dev
+#
+#   cp .env.compose.sit.example .env.compose.sit.local
+#   ./scripts/deploy.sh sit
+#
+#   cp .env.compose.uat.example .env.compose.uat.local
+#   ./scripts/deploy.sh uat
+#
 #   cp .env.compose.production.example .env.compose.production.local
-#   # edit .env.compose.production.local with real secret values
-#   docker compose --env-file .env.compose.production.local \
-#     -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#   ./scripts/deploy.sh production
 # ============================================
 
 services:

@@ -7,9 +7,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    container_name: pxlite-frontend
+    container_name: pxlite-${DEPLOY_ENV:-local}-frontend
     ports:
-      - "9973:80"
+      # Override FRONTEND_HOST_PORT per deployment environment.
+      # Defaults:
+      #   local/development: 9973
+      #   dev: 31002, sit: 31003, uat: 31004 (set by scripts/deploy.sh/env files)
+      - "${FRONTEND_HOST_PORT:-9973}:80"
     depends_on:
       backend:
         condition: service_healthy
@@ -21,11 +25,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: pxlite-backend
-    ports:
-      # Keep the backend reachable from the host without colliding with a local dev server on 3001.
-      # The frontend container still reaches it internally as http://backend:3001.
-      - "${BACKEND_HOST_PORT:-3002}:3001"
+    container_name: pxlite-${DEPLOY_ENV:-local}-backend
+    # Do not publish the backend port to the host.
+    # Frontend nginx reaches it through the Docker network as http://backend:3001.
+    # Health checks/scripts use `docker compose exec backend ...` instead of host ports.
     environment:
       - NODE_ENV=production
       - PORT=3001

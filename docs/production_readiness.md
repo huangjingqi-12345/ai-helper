@@ -41,10 +41,10 @@
 | 前端入口 | 浏览器访问 nginx 前端容器，默认 `http://localhost:9973` |
 | API 代理 | 生产前端构建使用 `VITE_API_BASE_URL=/api`，nginx 将 `/api/*` 代理到 backend |
 | 后端容器 | 容器内监听 `3001` |
-| 本地主机后端端口 | 默认映射 `BACKEND_HOST_PORT=3002`，避免与本地 dev server `3001` 冲突 |
+| 本地主机后端端口 | 不暴露；仅 Docker 网络内部通过 `http://backend:3001` 访问 |
 | 本地 demo DB | SQLite，`DB_CLIENT=sqlite`，DB 文件挂载到 Docker volume |
 | 生产 DB | PostgreSQL，通过 `docker-compose.prod.yml` 和 `DATABASE_URL` 启用 |
-| ready check | `GET /api/ready` 执行 `SELECT 1 AS ok` 并返回数据库 driver |
+| ready check | 在 backend 容器内请求 `GET /api/ready`，执行 `SELECT 1 AS ok` 并返回数据库 driver |
 
 生产启动示例：
 
