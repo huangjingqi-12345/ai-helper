@@ -304,9 +304,9 @@ function ToggleSwitch({ checked, disabled, onChange, label }: { checked: boolean
       aria-label={label}
       disabled={disabled}
       onClick={onChange}
-      className={`relative h-5 w-9 rounded-full border transition-colors ${checked ? 'border-cyan-400/40 bg-cyan-400/90' : 'border-border bg-secondary'} ${disabled ? 'cursor-not-allowed opacity-55' : 'hover:ring-2 hover:ring-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400'}`}
+      className={`relative h-5 w-8 shrink-0 rounded-full border transition-colors ${checked ? 'border-cyan-400/30 bg-cyan-400/90' : 'border-border bg-secondary'} ${disabled ? 'cursor-not-allowed opacity-55' : 'hover:ring-2 hover:ring-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400'}`}
     >
-      <span className={`absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full transition-transform ${checked ? 'translate-x-[17px] bg-slate-950' : 'translate-x-1 bg-muted-foreground'}`} />
+      <span className={`absolute left-0.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full transition-transform ${checked ? 'translate-x-3 bg-slate-950' : 'translate-x-0 bg-slate-300'}`} />
     </button>
   );
 }
