@@ -43,7 +43,9 @@ const sqliteSchema = `
     disease TEXT NOT NULL,
     disease_id TEXT,
     brand_id TEXT,
+    brand_name TEXT,
     owner_user_id TEXT,
+    owner_name TEXT,
     priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2')),
     content_count INTEGER DEFAULT 0,
     published_count INTEGER DEFAULT 0,
@@ -642,7 +644,9 @@ const postgresSchema = `
     disease TEXT NOT NULL,
     disease_id TEXT,
     brand_id TEXT,
+    brand_name TEXT,
     owner_user_id TEXT,
+    owner_name TEXT,
     priority TEXT DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2')),
     content_count INTEGER DEFAULT 0,
     published_count INTEGER DEFAULT 0,
@@ -956,7 +960,9 @@ const sqliteColumnSpecs: SqliteColumnSpec[] = [
   { table: 'projects', name: 'title', definition: 'TEXT' },
   { table: 'projects', name: 'disease_id', definition: 'TEXT' },
   { table: 'projects', name: 'brand_id', definition: 'TEXT' },
+  { table: 'projects', name: 'brand_name', definition: 'TEXT' },
   { table: 'projects', name: 'owner_user_id', definition: 'TEXT' },
+  { table: 'projects', name: 'owner_name', definition: 'TEXT' },
   { table: 'projects', name: 'priority', definition: "TEXT DEFAULT 'P2'" },
   { table: 'projects', name: 'read_users', definition: 'INTEGER DEFAULT 0' },
   { table: 'projects', name: 'expected_date', definition: 'TEXT' },
@@ -1023,6 +1029,8 @@ async function ensurePostgresColumns(): Promise<void> {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS note TEXT DEFAULT '';
     ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS password_salt TEXT;
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS brand_name TEXT;
+    ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_name TEXT;
   `);
 }
 

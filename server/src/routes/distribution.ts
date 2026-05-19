@@ -5,6 +5,7 @@ import {
   updateStrategy,
   getDistributionProjects,
   getDistributionProjectById,
+  createDistributionProject,
   getDoctorCandidates,
   getContentRequestById,
   updateContentRequestStatus,
@@ -18,10 +19,23 @@ import { logger } from '../utils/logger.js';
 import { asyncRoute } from './asyncRoute.js';
 import { requirePermission } from '../middleware/auth.js';
 import { appendAuditLog } from '../utils/audit.js';
+import { asObject, optionalString, requiredString } from '../utils/validation.js';
 
 const router = Router();
 
 router.use(requirePermission('distribution:read'));
+
+function validateCreateProject(body: unknown): Record<string, unknown> {
+  const data = asObject(body);
+  return {
+    tenantId: requiredString(data.tenantId, 'tenantId', 80),
+    name: requiredString(data.name, 'name', 200),
+    brand: optionalString(data.brand, 'brand', 120) ?? '',
+    disease: requiredString(data.disease, 'disease', 120),
+    owner: requiredString(data.owner, 'owner', 120),
+    note: optionalString(data.note, 'note', 1000) ?? '',
+  };
+}
 
 router.get('/projects', asyncRoute(async (req, res) => {
   logger.info({ query: req.query }, 'GET /api/distribution/projects');
@@ -46,6 +60,18 @@ router.get('/projects', asyncRoute(async (req, res) => {
     },
     timestamp: new Date().toISOString(),
   });
+}));
+
+router.post('/projects', requirePermission('distribution:write'), asyncRoute(async (req, res) => {
+  logger.info({ body: req.body }, 'POST /api/distribution/projects');
+  const project = await createDistributionProject(validateCreateProject(req.body), req.user!);
+  await appendAuditLog(req, {
+    action: 'project.create',
+    resourceType: 'project',
+    resourceId: String((project as Record<string, unknown> | null)?.id ?? ''),
+    after: project,
+  });
+  res.status(201).json({ success: true, data: project, timestamp: new Date().toISOString() });
 }));
 
 router.get('/projects/:id', asyncRoute(async (req, res) => {

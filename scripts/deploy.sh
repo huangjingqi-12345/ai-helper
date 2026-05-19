@@ -281,14 +281,25 @@ echo ""
 echo "🛑 Step 3: Stopping existing containers..."
 "${COMPOSE[@]}" down 2>/dev/null || true
 
-# Step 4: Start new containers
+# Step 4: Run database migrations
 echo ""
-echo "🚀 Step 4: Starting containers..."
+echo "🗄️  Step 4: Running database migrations..."
+if "${COMPOSE[@]}" run --rm --no-deps backend node dist/scripts/migrate.js; then
+  echo "✅ Database migrations completed"
+else
+  echo "❌ Database migrations failed! Aborting deployment."
+  echo "   Check logs: $COMPOSE_DISPLAY logs backend"
+  exit 1
+fi
+
+# Step 5: Start new containers
+echo ""
+echo "🚀 Step 5: Starting containers..."
 "${COMPOSE[@]}" up -d
 
-# Step 5: Health check
+# Step 6: Health check
 echo ""
-echo "🏥 Step 5: Running health checks..."
+echo "🏥 Step 6: Running health checks..."
 RETRIES=30
 for i in $(seq 1 $RETRIES); do
   if "${COMPOSE[@]}" exec -T backend wget -qO- "http://127.0.0.1:3001/api/ready" > /dev/null 2>&1; then

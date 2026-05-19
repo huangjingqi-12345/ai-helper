@@ -836,17 +836,52 @@ async function seedAccountsAndLogs(now: string): Promise<void> {
   `, [json({ contentWorkshop: true, behaviorInsights: true, distributionStrategy: true, approvalCenter: true }), now, now]);
 }
 
+async function seedPlatformBase(now: string): Promise<void> {
+  const settings: Record<string, unknown> = {
+    siteName: 'Px Lite · 药企患教内容运营与行为洞察平台',
+    version: 'V1.0 · LOCAL',
+    region: '中国',
+    database: DB_DRIVER,
+    behaviorAvgReadDuration: behaviorSummary.avgReadDuration,
+    features: {
+      contentWorkshop: true,
+      behaviorInsights: true,
+      distributionStrategy: true,
+      approvalCenter: true,
+    },
+  };
+
+  for (const [key, val] of Object.entries(settings)) {
+    await run('INSERT INTO platform_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [
+      key,
+      typeof val === 'string' ? val : JSON.stringify(val),
+    ]);
+  }
+
+  await run(`
+    INSERT INTO team_settings (id, tenant_id, site_name, default_region, feature_flags, created_at, updated_at)
+    VALUES ('team-T-PX', 'T-PX', 'Px Lite · 药企患教内容运营与行为洞察平台', '华东区域', ?${jsonCast}, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      site_name = excluded.site_name,
+      default_region = excluded.default_region,
+      feature_flags = excluded.feature_flags,
+      updated_at = excluded.updated_at
+  `, [json({ contentWorkshop: true, behaviorInsights: true, distributionStrategy: true, approvalCenter: true }), now, now]);
+}
+
 export async function seedDatabase(): Promise<void> {
   await initializeSchema();
   await runMigrations();
+  const now = new Date().toISOString();
+  await seedTenants(now);
+  await seedPlatformBase(now);
+
   if (process.env.NODE_ENV === 'production' && process.env.RUN_DEMO_SEED !== 'true') {
-    logger.info({ driver: DB_DRIVER }, 'Production mode: schema initialized; demo seed data skipped.');
+    logger.info({ driver: DB_DRIVER }, 'Production mode: base data initialized; demo seed data skipped.');
     return;
   }
-  const now = new Date().toISOString();
 
   logger.info({ driver: DB_DRIVER, demoResetEnabled }, 'Seeding fake demo data...');
-  await seedTenants(now);
   await seedOverviewContentAndBehavior(now);
   await seedDistributionProjects(now);
   await seedStrategies(now);

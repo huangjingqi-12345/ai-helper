@@ -32,6 +32,18 @@ export async function getDistributionProjects(params?: { status?: string; priori
   return response.data;
 }
 
+export async function createDistributionProject(data: {
+  tenantId: string;
+  name: string;
+  brand?: string;
+  disease: string;
+  owner: string;
+  note?: string;
+}): Promise<ApiResponse<DistributionProject>> {
+  const response = await apiClient.post<ApiResponse<DistributionProject>>('/distribution/projects', data);
+  return response.data;
+}
+
 export async function getDistributionProjectById(id: string): Promise<ApiResponse<DistributionProject>> {
   const response = await apiClient.get<ApiResponse<DistributionProject>>(`/distribution/projects/${id}`);
   return response.data;

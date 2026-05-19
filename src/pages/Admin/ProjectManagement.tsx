@@ -8,7 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { SideSheet } from '@/components/ui/SideSheet';
 import { Select } from '@/components/ui/Select';
 import { showToast } from '@/components/ui/Toast';
-import { getDistributionProjects } from '@/api/endpoints/distribution';
+import { createDistributionProject, getDistributionProjects } from '@/api/endpoints/distribution';
 import type { DistributionProject, DistributionProjectStatus } from '@/types/distribution';
 import { formatNumber } from '@/utils/formatters';
 
@@ -109,33 +109,24 @@ export function ProjectManagement(): JSX.Element {
   const completed = projects.filter((project) => project.status === 'completed').length;
   const totalPieces = projects.reduce((sum, project) => sum + project.totalPieces, 0);
 
-  const addProject = (draft: ProjectDraft): void => {
-    const expectedDate = todayPlus(60);
-    const newProject: DistributionProject = {
-      id: `PRJ-${Date.now().toString().slice(-4)}`,
-      title: draft.name.trim(),
-      priority: 'P1',
-      status: 'intake',
-      brand: draft.brand || '—',
-      disease: draft.disease,
-      owner: draft.owner.trim(),
-      tenantId: draft.tenantId,
-      expectedDate,
-      totalPieces: 0,
-      cadence: '0 主题 · 0 形式',
-      patientCap: 5000,
-      topics: [],
-      formats: '待配置形式',
-      approvalFlow: 'PX 默认审批流',
-      progress: 0,
-      currentNode: '未提交',
-      contentCount: 0,
-      publishedCount: 0,
-      createdAt: new Date().toISOString(),
-    };
-    setProjects((current) => [newProject, ...current]);
-    setCreateOpen(false);
-    showToast(`项目「${newProject.title}」已创建`, 'success');
+  const addProject = async (draft: ProjectDraft): Promise<void> => {
+    try {
+      const res = await createDistributionProject({
+        tenantId: draft.tenantId,
+        name: draft.name.trim(),
+        brand: draft.brand,
+        disease: draft.disease,
+        owner: draft.owner.trim(),
+        note: draft.note,
+      });
+      setProjects((current) => [res.data, ...current.filter((project) => project.id !== res.data.id)]);
+      setCreateOpen(false);
+      showToast(`项目「${res.data.title}」已创建`, 'success');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '创建项目失败';
+      showToast(message, 'error');
+      throw err;
+    }
   };
 
   return (
@@ -279,13 +270,7 @@ const BRAND_OPTIONS: Record<string, Array<{ name: string; cls: string }>> = {
   阿尔茨海默病: [{ name: '仑卡奈单抗', cls: 'Aβ 单抗' }],
 };
 
-function todayPlus(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (draft: ProjectDraft) => void }): JSX.Element {
+function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (draft: ProjectDraft) => Promise<void> }): JSX.Element {
   const [draft, setDraft] = useState<ProjectDraft>({
     tenantId: 'T-NV',
     name: '',
@@ -294,10 +279,12 @@ function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClos
     owner: 'PX 运营组',
     note: '',
   });
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (open) {
       setDraft({ tenantId: 'T-NV', name: '', brand: '', disease: '乳腺癌', owner: 'PX 运营组', note: '' });
+      setSubmitting(false);
     }
   }, [open]);
 
@@ -305,7 +292,8 @@ function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClos
   const drugOptions = BRAND_OPTIONS[draft.disease] ?? [];
   const tenant = TENANT_OPTIONS.find((item) => item.value === draft.tenantId);
 
-  const submit = (): void => {
+  const submit = async (): Promise<void> => {
+    if (submitting) return;
     if (!draft.name.trim()) {
       showToast('请填写项目名称', 'error');
       return;
@@ -314,7 +302,12 @@ function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClos
       showToast('请补充病种与项目负责人', 'error');
       return;
     }
-    onCreate(draft);
+    setSubmitting(true);
+    try {
+      await onCreate(draft);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -374,8 +367,8 @@ function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClos
           <div className="text-[11.5px] text-muted-foreground">提交后项目立即可见，并可在「患教内容工坊」内被诉求关联</div>
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="rounded-md border border-border bg-secondary/40 px-4 py-2 text-[12.5px] text-muted-foreground hover:bg-secondary/60 hover:text-foreground">取消</button>
-            <button onClick={submit} className="inline-flex items-center gap-1.5 rounded-md bg-[oklch(58%_.16_195)] px-4 py-2 text-[12.5px] font-medium text-background hover:bg-[oklch(63%_.17_195)]">
-              <Send className="h-3.5 w-3.5" />创建项目
+            <button onClick={() => void submit()} disabled={submitting} className="inline-flex items-center gap-1.5 rounded-md bg-[oklch(58%_.16_195)] px-4 py-2 text-[12.5px] font-medium text-background hover:bg-[oklch(63%_.17_195)] disabled:cursor-not-allowed disabled:opacity-60">
+              <Send className="h-3.5 w-3.5" />{submitting ? '创建中...' : '创建项目'}
             </button>
           </div>
         </div>

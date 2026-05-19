@@ -143,6 +143,80 @@ describe('Backend API Integration Tests', () => {
   });
 
   describe('GET /api/distribution', () => {
+    it('allows ops users to create persistent distribution projects', async () => {
+      const projectName = `API 持久化项目 ${Date.now()}`;
+      const createRes = await fetch(`${BASE_URL}/distribution/projects`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer dev-px-admin',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tenantId: 'T-NV',
+          name: projectName,
+          brand: '未入库品牌',
+          disease: '乳腺癌',
+          owner: '临时负责人',
+          note: 'Project persistence API test.',
+        }),
+      });
+
+      expect(createRes.status).toBe(201);
+      const createBody = await createRes.json();
+      expect(createBody.success).toBe(true);
+      expect(createBody.data.id).toMatch(/^PRJ-/);
+      expect(createBody.data.title).toBe(projectName);
+      expect(createBody.data.brand).toBe('未入库品牌');
+      expect(createBody.data.owner).toBe('临时负责人');
+
+      const listRes = await fetch(`${BASE_URL}/distribution/projects?search=${encodeURIComponent(projectName)}`, {
+        headers: { Authorization: 'Bearer dev-px-admin' },
+      });
+      expect(listRes.status).toBe(200);
+      const listBody = await listRes.json();
+      expect(listBody.data.some((project: { id: string }) => project.id === createBody.data.id)).toBe(true);
+
+      const requestProjectsRes = await fetch(`${BASE_URL}/content/request-projects`, {
+        headers: { Authorization: 'Bearer dev-pharma-admin' },
+      });
+      expect(requestProjectsRes.status).toBe(200);
+      const requestProjectsBody = await requestProjectsRes.json();
+      expect(requestProjectsBody.data.some((project: { id: string }) => project.id === createBody.data.id)).toBe(true);
+    });
+
+    it('rejects project creation without distribution write permission', async () => {
+      const res = await fetch(`${BASE_URL}/distribution/projects`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer dev-pharma-admin',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tenantId: 'T-NV',
+          name: '无权限项目',
+          disease: '乳腺癌',
+          owner: '林筱',
+        }),
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('validates required project creation fields', async () => {
+      const res = await fetch(`${BASE_URL}/distribution/projects`, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer dev-px-admin',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tenantId: 'T-NV',
+          disease: '乳腺癌',
+          owner: 'PX 运营组',
+        }),
+      });
+      expect(res.status).toBe(400);
+    });
+
     it('returns distribution strategies', async () => {
       const res = await fetch(`${BASE_URL}/distribution`);
       expect(res.status).toBe(200);

@@ -274,8 +274,8 @@ export async function getContentRequestProjects(scope?: QueryScope) {
       p.published_count,
       p.created_at,
       p.updated_at,
-      COALESCE(b.name, '') as brand,
-      COALESCE(u.name, 'PX 运营组') as owner
+      COALESCE(NULLIF(b.name, ''), NULLIF(p.brand_name, ''), '') as brand,
+      COALESCE(NULLIF(u.name, ''), NULLIF(p.owner_name, ''), 'PX 运营组') as owner
     FROM projects p
     LEFT JOIN brands b ON b.id = p.brand_id
     LEFT JOIN users u ON u.id = p.owner_user_id
@@ -300,7 +300,7 @@ export async function getContentRequestProjects(scope?: QueryScope) {
     params.push(...diseases);
   }
   if (!brands.includes('*') && brands.length > 0) {
-    conditions.push(`(b.name IS NULL OR b.name = '' OR b.name IN (${brands.map(() => '?').join(', ')}))`);
+    conditions.push(`(COALESCE(NULLIF(b.name, ''), NULLIF(p.brand_name, ''), '') = '' OR COALESCE(NULLIF(b.name, ''), NULLIF(p.brand_name, ''), '') IN (${brands.map(() => '?').join(', ')}))`);
     params.push(...brands);
   }
 
@@ -418,8 +418,8 @@ const contentRequestSelect = `
     p.patient_cap AS project_patient_cap,
     p.content_count AS project_content_count,
     p.published_count AS project_published_count,
-    COALESCE(b.name, '') AS project_brand,
-    COALESCE(u.name, 'PX 运营组') AS project_owner
+    COALESCE(NULLIF(b.name, ''), NULLIF(p.brand_name, ''), '') AS project_brand,
+    COALESCE(NULLIF(u.name, ''), NULLIF(p.owner_name, ''), 'PX 运营组') AS project_owner
   FROM content_requests cr
   LEFT JOIN projects p ON p.id = cr.project_id
   LEFT JOIN brands b ON b.id = p.brand_id
@@ -932,6 +932,63 @@ export async function updateStrategy(id: string, data: Record<string, unknown>, 
   return getStrategyById(id, scope);
 }
 
+function projectExpectedDate(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+async function nextProjectId(): Promise<string> {
+  const rows = await dbAll<{ id: string }>("SELECT id FROM projects WHERE id LIKE 'PRJ-%'");
+  const next = Math.max(1000, ...rows.map((row) => Number(String(row.id).replace(/\D/g, '')) || 1000)) + 1;
+  return `PRJ-${next}`;
+}
+
+export async function createDistributionProject(data: Record<string, unknown>, scope?: QueryScope) {
+  const now = new Date().toISOString();
+  const tenantId = isPxAdmin(scope) && typeof data.tenantId === 'string' && data.tenantId.trim()
+    ? data.tenantId.trim()
+    : scope?.tenantId ?? 'T-PX';
+  const name = String(data.name).trim();
+  const disease = String(data.disease).trim();
+  const brandName = typeof data.brand === 'string' && data.brand.trim() ? data.brand.trim() : null;
+  const ownerName = String(data.owner).trim();
+  const note = typeof data.note === 'string' ? data.note.trim() : '';
+
+  const [brand, owner] = await Promise.all([
+    brandName
+      ? dbGet<{ id: string }>('SELECT id FROM brands WHERE tenant_id = ? AND name = ? ORDER BY id ASC LIMIT 1', [tenantId, brandName])
+      : Promise.resolve(undefined),
+    dbGet<{ id: string }>('SELECT id FROM users WHERE tenant_id = ? AND name = ? ORDER BY id ASC LIMIT 1', [tenantId, ownerName]),
+  ]);
+
+  const id = await nextProjectId();
+  await dbRun(`
+    INSERT INTO projects (
+      id, tenant_id, name, title, disease, brand_id, brand_name, owner_user_id, owner_name,
+      priority, status, expected_date, total_pieces, cadence, patient_cap,
+      content_count, published_count, progress_percent, description, created_at, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'P1', 'intake', ?, 0, '0 主题 · 0 形式', 5000, 0, 0, 0, ?, ?, ?)
+  `, [
+    id,
+    tenantId,
+    name,
+    name,
+    disease,
+    brand?.id ?? null,
+    brandName,
+    owner?.id ?? null,
+    ownerName,
+    projectExpectedDate(60),
+    note,
+    now,
+    now,
+  ]);
+
+  return getDistributionProjectById(id, scope);
+}
+
 // PM 确认 (2026-05-15): projects = distribution_projects (同一实体)
 // 优先从 projects 表查询，fallback 到 distribution_projects 保持向后兼容
 export async function getDistributionProjects(filters: { status?: string; priority?: string; search?: string; page: number; pageSize: number; scope?: QueryScope }) {
@@ -944,7 +1001,7 @@ export async function getDistributionProjects(filters: { status?: string; priori
   if (filters.status) { conditions.push('p.status = ?'); params.push(filters.status); }
   if (filters.priority) { conditions.push('p.priority = ?'); params.push(filters.priority); }
   if (filters.search) {
-    conditions.push('(LOWER(p.name) LIKE ? OR LOWER(p.disease) LIKE ? OR LOWER(COALESCE(b.name, \'\')) LIKE ?)');
+    conditions.push('(LOWER(p.name) LIKE ? OR LOWER(p.disease) LIKE ? OR LOWER(COALESCE(NULLIF(b.name, \'\'), NULLIF(p.brand_name, \'\'), \'\')) LIKE ?)');
     const query = `%${filters.search.toLowerCase()}%`;
     params.push(query, query, query);
   }
@@ -961,7 +1018,7 @@ export async function getDistributionProjects(filters: { status?: string; priori
   if (total > 0) {
     const offset = (filters.page - 1) * filters.pageSize;
     const rows = await dbAll<Record<string, unknown>>(`
-      SELECT p.*, COALESCE(b.name, '—') as brand, COALESCE(u.name, 'PX 运营组') as owner
+      SELECT p.*, COALESCE(NULLIF(b.name, ''), NULLIF(p.brand_name, ''), '—') as brand, COALESCE(NULLIF(u.name, ''), NULLIF(p.owner_name, ''), 'PX 运营组') as owner
       FROM projects p
       LEFT JOIN brands b ON b.id = p.brand_id
       LEFT JOIN users u ON u.id = p.owner_user_id
@@ -1003,7 +1060,7 @@ export async function getDistributionProjectById(id: string, scope?: QueryScope)
   // 先尝试 projects 表
   const tenant = tenantCondition('p', scope);
   const projectRow = await dbGet<Record<string, unknown>>(`
-    SELECT p.*, COALESCE(b.name, '—') as brand, COALESCE(u.name, 'PX 运营组') as owner
+    SELECT p.*, COALESCE(NULLIF(b.name, ''), NULLIF(p.brand_name, ''), '—') as brand, COALESCE(NULLIF(u.name, ''), NULLIF(p.owner_name, ''), 'PX 运营组') as owner
     FROM projects p
     LEFT JOIN brands b ON b.id = p.brand_id
     LEFT JOIN users u ON u.id = p.owner_user_id
