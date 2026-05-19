@@ -10,6 +10,7 @@ import { validationErrorHandler } from './utils/validation.js';
 import { rateLimit, securityHeaders } from './middleware/security.js';
 import { scheduleCxStatsSync } from './jobs/syncCxStats.js';
 import { isCxStatsConfigured } from './integrations/cxStats.js';
+import { isDxContentSyncConfigured, syncDxPosterIds } from './integrations/dxContentSync.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -40,6 +41,19 @@ try {
 app.listen(PORT, () => {
   logger.info(`🚀 Px Lite API server running at http://localhost:${PORT}`);
   logger.info(`📋 Health check: http://localhost:${PORT}/api/health`);
+
+  // DX Content Sync: map poster_ids from DX to local content (runs once at startup)
+  if (isDxContentSyncConfigured()) {
+    syncDxPosterIds()
+      .then(({ updated, notMatched }) => {
+        logger.info({ updated, notMatched }, '🔗 DX poster_id sync completed');
+      })
+      .catch((err) => {
+        logger.warn({ err }, '🔗 DX poster_id sync failed (non-fatal, will retry next restart)');
+      });
+  } else {
+    logger.info('🔗 DX Content Sync not configured (set DX_API_BASE_URL + DOCTOR_SERVER_TOKEN to enable)');
+  }
 
   // Schedule CX stats daily sync (if configured)
   if (isCxStatsConfigured()) {
