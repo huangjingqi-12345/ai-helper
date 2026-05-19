@@ -8,6 +8,8 @@ import { seedDatabase } from './db/seed.js';
 import { DB_DRIVER } from './db/connection.js';
 import { validationErrorHandler } from './utils/validation.js';
 import { rateLimit, securityHeaders } from './middleware/security.js';
+import { scheduleCxStatsSync } from './jobs/syncCxStats.js';
+import { isCxStatsConfigured } from './integrations/cxStats.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -38,6 +40,14 @@ try {
 app.listen(PORT, () => {
   logger.info(`🚀 Px Lite API server running at http://localhost:${PORT}`);
   logger.info(`📋 Health check: http://localhost:${PORT}/api/health`);
+
+  // Schedule CX stats daily sync (if configured)
+  if (isCxStatsConfigured()) {
+    scheduleCxStatsSync();
+    logger.info('📊 CX Stats daily sync job scheduled');
+  } else {
+    logger.info('📊 CX Stats sync not configured (set CX_API_BASE_URL + CX_PHARMA_ACCESS_TOKEN to enable)');
+  }
 });
 
 export { app };

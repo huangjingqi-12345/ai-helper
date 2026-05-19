@@ -43,6 +43,29 @@ const migrations = [
     `,
   },
   {
+    id: '20260519-cx-stats-integration',
+    sql: `
+      ALTER TABLE content ADD COLUMN dx_poster_id INTEGER;
+      CREATE INDEX IF NOT EXISTS idx_content_dx_poster_id ON content(dx_poster_id);
+
+      CREATE TABLE IF NOT EXISTS cx_stats_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        dx_poster_id INTEGER NOT NULL,
+        content_id TEXT,
+        snapshot_date TEXT NOT NULL,
+        pv_count INTEGER DEFAULT 0,
+        uv_count INTEGER DEFAULT 0,
+        like_count INTEGER DEFAULT 0,
+        dislike_count INTEGER DEFAULT 0,
+        favorite_count INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cx_snapshot_poster_date 
+        ON cx_stats_snapshots(dx_poster_id, snapshot_date);
+    `,
+  },
+  {
     id: '20260514-request-distribution-configs',
     sql: `
       CREATE TABLE IF NOT EXISTS request_distribution_configs (
