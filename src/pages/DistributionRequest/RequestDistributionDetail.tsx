@@ -70,28 +70,6 @@ const STATUS_LABELS: Record<DistributionRequestStatus, { label: string; color: '
 const EMPTY_DOCTORS: DoctorCandidate[] = [];
 const EMPTY_BATCHES: DistributionRequestWorkbench['batches'] = [];
 
-const DOCTOR_SCORE: Record<string, number> = {
-  doc_1001: 1820,
-  doc_1002: 1560,
-  doc_1003: 1440,
-  doc_1008: 1340,
-  doc_1004: 1280,
-  doc_1006: 1180,
-  doc_1007: 980,
-  doc_1005: 760,
-};
-
-const DOCTOR_PENDING: Record<string, number> = {
-  doc_1001: 1,
-  doc_1002: 0,
-  doc_1003: 0,
-  doc_1004: 0,
-  doc_1005: 1,
-  doc_1006: 0,
-  doc_1007: 0,
-  doc_1008: 0,
-};
-
 const REQUEST_PROJECT_OVERRIDES: Record<string, { projectId: string; projectName: string; disease: string; brand: string; pharma: string }> = {
   'REQ-2030': {
     projectId: 'PRJ-1001',
@@ -132,16 +110,27 @@ function matrixCells(matrix: RequestDistributionMatrix | undefined): string[] {
   return cells;
 }
 
-function doctorScore(doctor: DoctorCandidate): number {
-  return DOCTOR_SCORE[doctor.id] ?? 0;
+function titleMatches(doctorTitle: string, selectedTitles: string[]): boolean {
+  if (selectedTitles.length === 0) return true;
+  const title = doctorTitle.trim();
+  if (!title || title === '未填写职称') return false;
+  return selectedTitles.some((selected) => title.includes(selected) || selected.includes(title));
 }
 
-function doctorPending(doctor: DoctorCandidate): number {
-  return DOCTOR_PENDING[doctor.id] ?? 0;
+function doctorExperience(doctor: DoctorCandidate): number {
+  return doctor.publishedCount;
 }
 
-function sortByInteractionDesc(doctors: DoctorCandidate[]): DoctorCandidate[] {
-  return [...doctors].sort((a, b) => doctorScore(b) - doctorScore(a));
+function doctorWorkload(doctor: DoctorCandidate): number {
+  return doctor.inProgressCount;
+}
+
+function sortByWorkloadAsc(doctors: DoctorCandidate[]): DoctorCandidate[] {
+  return [...doctors].sort((a, b) => {
+    const workloadDelta = doctorWorkload(a) - doctorWorkload(b);
+    if (workloadDelta !== 0) return workloadDelta;
+    return doctorExperience(b) - doctorExperience(a);
+  });
 }
 
 function allocateStrategy(candidates: DoctorCandidate[], contentCount: number): DoctorAssignment[] {
@@ -165,11 +154,34 @@ function defaultDoctorDistributionConfig(config: RequestDistributionConfig): Req
     whitelistEnabled: false,
     strategyEnabled: true,
     departmentFilters: [],
-    titleFilters: TITLE_OPTIONS,
+    titleFilters: [],
     regionFilters: [],
     tagFilters: [],
     whitelistDoctorIds: [],
     whitelistDoctorQuota: {},
+  };
+}
+
+function normalizeDoctorConfig(config: RequestDistributionConfig, doctors: DoctorCandidate[]): RequestDistributionConfig {
+  const validDoctorIds = new Set(doctors.map((doctor) => doctor.id));
+  const hasRemoteDoctors = doctors.some((doctor) => doctor.phone || doctor.doctorId > 0);
+  const hasLegacyDemoDoctorIds = config.whitelistDoctorIds.some((id) => id.startsWith('doc_'));
+  const legacyDemoTitleDefaults = config.titleFilters.length === 2
+    && config.titleFilters.includes('主任医师')
+    && config.titleFilters.includes('副主任医师');
+  const whitelistDoctorIds = config.whitelistDoctorIds.filter((id) => validDoctorIds.has(id));
+  const whitelistDoctorQuota = Object.fromEntries(
+    Object.entries(config.whitelistDoctorQuota).filter(([id]) => whitelistDoctorIds.includes(id))
+  );
+  const clearLegacyDefaults = hasRemoteDoctors && hasLegacyDemoDoctorIds && legacyDemoTitleDefaults;
+  const whitelistEnabled = clearLegacyDefaults ? false : config.whitelistEnabled && whitelistDoctorIds.length > 0;
+  return {
+    ...config,
+    assignmentMode: whitelistEnabled && config.strategyEnabled ? 'mixed' : whitelistEnabled ? 'whitelist' : 'strategy',
+    whitelistEnabled,
+    titleFilters: clearLegacyDefaults ? [] : config.titleFilters,
+    whitelistDoctorIds,
+    whitelistDoctorQuota,
   };
 }
 
@@ -190,7 +202,7 @@ export function RequestDistributionDetail(): JSX.Element {
     try {
       const res = await getDistributionRequestWorkbench(ticketId);
       setWorkbench(res.data);
-      setConfig(res.data.config);
+      setConfig(normalizeDoctorConfig(res.data.config, res.data.doctors));
       setBatchMatrix(cloneMatrix(res.data.request.themeFormatMatrix));
     } catch {
       setError('诉求分发详情加载失败，请检查后端服务或工单编号。');
@@ -510,11 +522,14 @@ function DoctorPolicyEditor({
   const stEnabled = config.strategyEnabled;
   const wlIds = config.whitelistDoctorIds;
   const wlQuota = config.whitelistDoctorQuota;
-  const selectedTitles = config.titleFilters.length ? config.titleFilters : TITLE_OPTIONS;
+  const selectedTitles = config.titleFilters;
 
-  const whitelistCandidates = useMemo(() => sortByInteractionDesc(doctors.filter((doctor) => selectedTitles.includes(doctor.title))), [doctors, selectedTitles]);
+  const whitelistCandidates = useMemo(
+    () => sortByWorkloadAsc(doctors.filter((doctor) => doctor.available && titleMatches(doctor.title, selectedTitles))),
+    [doctors, selectedTitles]
+  );
   const strategyCandidates = useMemo(
-    () => sortByInteractionDesc(doctors.filter((doctor) => selectedTitles.includes(doctor.title) && doctorPending(doctor) === 0 && !wlIds.includes(doctor.id))),
+    () => sortByWorkloadAsc(doctors.filter((doctor) => doctor.available && titleMatches(doctor.title, selectedTitles) && !wlIds.includes(doctor.id))),
     [doctors, selectedTitles, wlIds]
   );
   const selectedDoctors = useMemo(() => wlIds.map((id) => doctors.find((doctor) => doctor.id === id)).filter(Boolean) as DoctorCandidate[], [doctors, wlIds]);
@@ -616,8 +631,8 @@ function DoctorPolicyEditor({
         <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
           产品规则：先用<strong className="mx-0.5 text-foreground">指定分发</strong>给勾选医生派指定篇数；
           剩余 <span className="tabular-nums text-foreground">{strategyRemaining}</span> 篇由
-          <strong className="mx-0.5 text-foreground">策略分发</strong>按医生<strong className="text-foreground"> 互动数（点赞 + 收藏） </strong>
-          desc 自动派发。
+          <strong className="mx-0.5 text-foreground">策略分发</strong>按医生<strong className="text-foreground"> 当前工作负载 </strong>
+          升序自动派发，工作负载相同时优先给历史已发布数更高的医生。
         </p>
 
         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -632,18 +647,18 @@ function DoctorPolicyEditor({
             active={stEnabled}
             onClick={() => toggleMode('strategy')}
             title="策略分发"
-            desc="按互动数（点赞 + 收藏）desc 排序，自动平均派发剩余篇数"
+            desc="按进行中任务 asc、历史已发布 desc 排序，自动平均派发剩余篇数"
             icon={<Activity className="h-4 w-4" />}
           />
         </div>
 
         {stEnabled && (
           <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11.5px] leading-relaxed text-emerald-200">
-            <div className="mb-0.5 font-semibold text-emerald-100">策略分发 · 互动派发逻辑</div>
+            <div className="mb-0.5 font-semibold text-emerald-100">策略分发 · 负载均衡逻辑</div>
             <div>
-              <span className="font-medium text-emerald-100">互动分</span> = 该医生历史内容的<strong className="mx-0.5">点赞数</strong>+<strong className="mx-0.5">收藏数</strong>之和。
-              系统对候选池按<strong className="mx-0.5">互动分 desc</strong>排序后，将剩余篇数<strong className="mx-0.5">平均派发</strong>给前 N 位医生；
-              当出现余数时优先补给互动分更高的医生。已被指定分发选中的医生<strong className="mx-0.5">不再参与</strong>策略分发，避免重复。
+              系统对候选池按<strong className="mx-0.5">进行中任务数 asc</strong>排序，工作负载相同时按
+              <strong className="mx-0.5">历史已发布数 desc</strong>排序，将剩余篇数<strong className="mx-0.5">平均派发</strong>给前 N 位医生；
+              当出现余数时优先补给当前负载更低、历史经验更高的医生。已被指定分发选中的医生<strong className="mx-0.5">不再参与</strong>策略分发，避免重复。
             </div>
           </div>
         )}
@@ -652,6 +667,17 @@ function DoctorPolicyEditor({
         <div>
           <div className="mb-1.5 text-[11.5px] text-muted-foreground">职称（必选）</div>
           <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => patch({ titleFilters: [] })}
+              className={`rounded border px-2 py-0.5 text-[11.5px] transition ${
+                config.titleFilters.length === 0
+                  ? 'border-primary/50 bg-primary/15 text-primary'
+                  : 'border-border bg-muted/30 text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              全部职称
+            </button>
             {TITLE_OPTIONS.map((title) => {
               const active = config.titleFilters.includes(title);
               return (
@@ -698,10 +724,11 @@ function DoctorPolicyEditor({
                       <button type="button" onClick={() => toggleWhitelistDoctor(doctor.id)} className={`grid h-5 w-5 place-items-center rounded border text-[11px] ${selected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40 bg-background text-muted-foreground'}`}>{selected ? '✓' : ''}</button>
                       <button type="button" onClick={() => toggleWhitelistDoctor(doctor.id)} className="flex flex-1 items-center gap-2 text-left">
                         <span className="text-[12.5px] font-medium text-foreground">{doctor.name}</span>
-                        <span className="text-[11px] text-muted-foreground">· {doctor.dept} · {doctor.title} · {doctor.region}</span>
+                        <span className="text-[11px] text-muted-foreground">· {doctor.department} · {doctor.title} · {doctor.hospital}</span>
                         <span className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                          <span>互动 {doctorScore(doctor)}</span>
-                          <span className={doctorPending(doctor) === 0 ? 'text-emerald-400' : 'text-amber-400'}>· 待写 {doctorPending(doctor)}</span>
+                          <span>已发布 {doctorExperience(doctor)}</span>
+                          <span className={doctorWorkload(doctor) === 0 ? 'text-emerald-400' : 'text-amber-400'}>· 进行中 {doctorWorkload(doctor)}</span>
+                          {doctor.phone && <span>· {doctor.phone}</span>}
                         </span>
                       </button>
                       <div className={`flex items-center gap-1 transition ${selected ? 'opacity-100' : 'pointer-events-none opacity-30'}`}>
@@ -741,10 +768,10 @@ function DoctorPolicyEditor({
         </div>
         <p className="mt-1 text-[12px] text-muted-foreground">
           {wlEnabled && stEnabled
-            ? '上半区为指定医生及其篇数；下半区为剩余篇数按互动数 desc 的策略分发预估。'
+            ? '上半区为指定医生及其篇数；下半区为剩余篇数按工作负载升序的策略分发预估。'
             : wlEnabled
               ? '仅启用指定分发：仅按已勾选医生派发对应篇数。'
-              : '仅启用策略分发：按候选医生互动数 desc 平均派发。'}
+              : '仅启用策略分发：按候选医生工作负载 asc、历史已发布 desc 平均派发。'}
         </p>
 
         {wlEnabled && (
@@ -819,10 +846,11 @@ function DoctorRow({ doctor, rank, assigned }: { doctor: DoctorCandidate; rank: 
           <span className="text-[11px] text-muted-foreground">· {doctor.title}</span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-          <span>{doctor.dept}</span>
+          <span>{doctor.department}</span>
           <span>·</span>
-          <span className="inline-flex items-center gap-0.5 rounded bg-emerald-500/15 px-1.5 py-0.5 font-medium text-emerald-300">互动 {doctorScore(doctor)}</span>
-          <span className={doctorPending(doctor) === 0 ? 'text-emerald-400' : 'text-amber-400'}>· 待写 {doctorPending(doctor)}</span>
+          <span className="inline-flex items-center gap-0.5 rounded bg-emerald-500/15 px-1.5 py-0.5 font-medium text-emerald-300">已发布 {doctorExperience(doctor)}</span>
+          <span className={doctorWorkload(doctor) === 0 ? 'text-emerald-400' : 'text-amber-400'}>· 进行中 {doctorWorkload(doctor)}</span>
+          <span>· {doctor.doctorLevel}</span>
         </div>
       </div>
       {assigned > 0 && <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary">{assigned} 篇</span>}

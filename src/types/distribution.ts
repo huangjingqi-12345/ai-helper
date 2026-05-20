@@ -85,14 +85,16 @@ export interface DistributionProject {
 
 export interface DoctorCandidate {
   id: string;
+  doctorId: number;
+  phone: string;
   name: string;
   title: string;
-  dept: string;
-  region: string;
-  hospital?: string;
-  specialties: string;
-  specialtyList?: string[];
-  tags: string[];
+  department: string;
+  hospital: string;
+  doctorLevel: string;
+  inProgressCount: number;
+  publishedCount: number;
+  available: boolean;
 }
 
 export type DistributionRequestStatus = 'pending' | 'accepted' | 'rejected' | 'converted';

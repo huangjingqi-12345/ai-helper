@@ -2,6 +2,8 @@ import { dbAll, dbGet, dbRun, DB_DRIVER } from './connection.js';
 import { createHash, randomUUID } from 'crypto';
 import type { AuthUser } from '../middleware/auth.js';
 import { fetchDxContentAttachment, isDxContentApiConfigured, type DxContentAttachment } from '../integrations/dxContent.js';
+import { fetchDxDoctorCandidates, isDxDoctorsApiConfigured } from '../integrations/dxDoctors.js';
+import { logger } from '../utils/logger.js';
 
 const jsonCast = DB_DRIVER === 'postgres' ? '::jsonb' : '';
 const boolValue = (value: boolean): boolean | number => (DB_DRIVER === 'postgres' ? value : value ? 1 : 0);
@@ -485,15 +487,15 @@ export async function updateContentRequestStatus(id: string, status: string, not
 export function defaultRequestDistributionConfig(requestId: string, patientCap = 5000) {
   return {
     requestId,
-    assignmentMode: 'mixed',
-    whitelistEnabled: true,
+    assignmentMode: 'strategy',
+    whitelistEnabled: false,
     strategyEnabled: true,
-    departmentFilters: ['乳腺外科', '肿瘤内科'],
-    titleFilters: ['主任医师', '副主任医师'],
-    regionFilters: ['华东', '华南'],
-    tagFilters: ['KOL', '患教经验丰富'],
-    whitelistDoctorIds: ['doc_1001', 'doc_1002'],
-    whitelistDoctorQuota: { doc_1001: 1, doc_1002: 1 },
+    departmentFilters: [],
+    titleFilters: ['主任医师', '副主任医师', '主治医师', '住院医师'],
+    regionFilters: [],
+    tagFilters: [],
+    whitelistDoctorIds: [],
+    whitelistDoctorQuota: {},
     patientChannels: ['微信公众号', '短信'],
     patientRegions: ['华东', '华南'],
     patientTags: ['术后随访', 'HER2 靶向'],
@@ -1132,23 +1134,29 @@ function mapDistributionProjectRow(row: Record<string, unknown>) {
 }
 
 export async function getDoctorCandidates() {
+  if (isDxDoctorsApiConfigured()) {
+    try {
+      return await fetchDxDoctorCandidates();
+    } catch (error) {
+      logger.warn({ err: error }, 'Falling back to local doctor candidates');
+    }
+  }
+
   const doctors = await dbAll<Record<string, unknown>>('SELECT * FROM doctors ORDER BY name ASC');
-  const specialties = await dbAll<Record<string, unknown>>('SELECT doctor_id, disease_id FROM doctor_specialties ORDER BY id ASC');
-  const tags = await dbAll<Record<string, unknown>>('SELECT doctor_id, tag FROM doctor_tags ORDER BY id ASC');
   return doctors.map((doctor) => {
     const id = String(doctor.id);
-    const doctorSpecialties = specialties.filter((item) => item.doctor_id === id).map((item) => String(item.disease_id));
-    const doctorTags = tags.filter((item) => item.doctor_id === id).map((item) => String(item.tag));
     return {
       id,
+      doctorId: Number(String(id).replace(/\D/g, '')) || 0,
+      phone: '',
       name: doctor.name,
-      title: doctor.title,
-      dept: doctor.department,
-      region: doctor.region,
-      hospital: doctor.hospital,
-      specialties: doctorSpecialties.join(' / '),
-      specialtyList: doctorSpecialties,
-      tags: doctorTags,
+      title: doctor.title || '未填写职称',
+      department: doctor.department || '未填写科室',
+      hospital: doctor.hospital || '未填写医院',
+      doctorLevel: '初级',
+      inProgressCount: 0,
+      publishedCount: 0,
+      available: doctor.status !== 'inactive',
     };
   });
 }

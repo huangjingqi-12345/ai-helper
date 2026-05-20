@@ -34,7 +34,9 @@ services:
       ALLOW_DEMO_AUTH: ${ALLOW_DEMO_AUTH:-false}
 
       # Required for approval attachments: PX backend calls DX content detail API.
+      # Required for doctor candidates: PX backend calls DX doctor list API.
       DX_API_BASE_URL: ${DX_API_BASE_URL:?DX_API_BASE_URL is required for approval attachments}
+      DX_DOCTORS_PATH: ${DX_DOCTORS_PATH:-/api/px/doctors}
       DX_CONTENT_DETAIL_PATH_TEMPLATE: ${DX_CONTENT_DETAIL_PATH_TEMPLATE:-/content/{contentId}}
       DX_API_TOKEN: ${DX_API_TOKEN:-}
       DX_API_KEY: ${DX_API_KEY:-}

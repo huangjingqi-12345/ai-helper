@@ -41,7 +41,9 @@ services:
       - ALLOW_DEMO_AUTH=true
       # Approval attachments are loaded by backend through the DX content-detail API.
       # Local demo can fall back to the SQLite content cache when DX is not configured.
+      # Doctor candidates are loaded from DX via DX_DOCTORS_PATH when DX_API_BASE_URL is set.
       - DX_API_BASE_URL=${DX_API_BASE_URL:-}
+      - DX_DOCTORS_PATH=${DX_DOCTORS_PATH:-/api/px/doctors}
       - DX_CONTENT_DETAIL_PATH_TEMPLATE=${DX_CONTENT_DETAIL_PATH_TEMPLATE:-/content/{contentId}}
       - DX_API_TOKEN=${DX_API_TOKEN:-}
       - DX_API_KEY=${DX_API_KEY:-}
