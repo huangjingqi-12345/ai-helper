@@ -6,6 +6,7 @@ import type {
   ContentRequestRecord,
   ContentRequestProject,
   CreateContentDTO,
+  DxTaskStatusDetail,
   SubmitContentRequestDTO,
   SubmitContentRequestResult,
   UpdateContentDTO,
@@ -18,6 +19,11 @@ export async function getContentList(params?: ContentFilter): Promise<PaginatedR
 
 export async function getContentById(id: string): Promise<ApiResponse<Content>> {
   const response = await apiClient.get<ApiResponse<Content>>(`/content/${id}`);
+  return response.data;
+}
+
+export async function getContentDxTaskStatus(id: string): Promise<ApiResponse<DxTaskStatusDetail>> {
+  const response = await apiClient.get<ApiResponse<DxTaskStatusDetail>>(`/content/${id}/dx-task-status`);
   return response.data;
 }
 

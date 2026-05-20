@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getContentList, getContentById, createContent, updateContent, deleteContent, getContentRequestProjects, getContentRequests, getContentRequestById, submitContentRequest } from '../db/repositories.js';
+import { getContentList, getContentById, createContent, updateContent, deleteContent, getContentRequestProjects, getContentRequests, getContentRequestById, getDxTaskStatusForContent, submitContentRequest } from '../db/repositories.js';
 import { logger } from '../utils/logger.js';
 import { asyncRoute } from './asyncRoute.js';
 import { requirePermission } from '../middleware/auth.js';
@@ -180,6 +180,20 @@ router.get('/:id', asyncRoute(async (req, res) => {
       success: false,
       data: null,
       message: 'Content not found',
+      timestamp: new Date().toISOString(),
+    });
+  }
+  res.json({ success: true, data: item, timestamp: new Date().toISOString() });
+}));
+
+router.get('/:id/dx-task-status', asyncRoute(async (req, res) => {
+  logger.info({ id: req.params.id }, 'GET /api/content/:id/dx-task-status');
+  const item = await getDxTaskStatusForContent(String(req.params.id), req.user!);
+  if (!item) {
+    return res.status(404).json({
+      success: false,
+      data: null,
+      message: 'DX task not found for content',
       timestamp: new Date().toISOString(),
     });
   }

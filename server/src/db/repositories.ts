@@ -4,7 +4,7 @@ import type { AuthUser } from '../middleware/auth.js';
 import { fetchDxContentAttachment, isDxContentApiConfigured, type DxContentAttachment } from '../integrations/dxContent.js';
 import { fetchDxDoctorCandidates, isDxDoctorsApiConfigured } from '../integrations/dxDoctors.js';
 import { dispatchDxTask, type DxTaskDispatchRequest, type DxTaskPriority } from '../integrations/dxTaskDispatch.js';
-import { fetchDxTaskStatuses, type DxTaskStatusItem } from '../integrations/dxTaskStatus.js';
+import { fetchDxTaskStatus, fetchDxTaskStatuses, type DxTaskStatusItem } from '../integrations/dxTaskStatus.js';
 import { logger } from '../utils/logger.js';
 
 const jsonCast = DB_DRIVER === 'postgres' ? '::jsonb' : '';
@@ -753,6 +753,32 @@ async function applyDxTaskStatus(item: DxTaskStatusItem, task: Record<string, un
 
   const advancedContent = await maybeAdvanceContentFromDxStatus(task, String(item.status), now);
   return { changed, advancedContent };
+}
+
+export async function getDxTaskStatusForContent(contentId: string, scope?: QueryScope) {
+  const contentTenant = tenantCondition('content', scope);
+  const content = await dbGet<Record<string, unknown>>(
+    `SELECT id, status, pipeline_stage FROM content WHERE LOWER(id) = LOWER(?) ${contentTenant.sql ? `AND ${contentTenant.sql}` : ''}`,
+    [contentId, ...contentTenant.params]
+  );
+  if (!content) return null;
+
+  const taskTenant = tenantCondition('dt', scope);
+  const task = await dbGet<Record<string, unknown>>(`
+    SELECT dt.*
+    FROM doctor_tasks dt
+    INNER JOIN content_requests cr ON LOWER(cr.id) = LOWER(dt.request_id)
+    WHERE LOWER(cr.content_id) = LOWER(?)
+      ${taskTenant.sql ? `AND ${taskTenant.sql}` : ''}
+    ORDER BY COALESCE(dt.dx_updated_at, dt.updated_at, dt.created_at) DESC, dt.px_task_id ASC
+    LIMIT 1
+  `, [contentId, ...taskTenant.params]);
+  if (!task) return null;
+
+  const localTask = mapDoctorTask(task);
+  const item = await fetchDxTaskStatus(asText(localTask.pxTaskId));
+  await applyDxTaskStatus(item, localTask, new Date().toISOString());
+  return item;
 }
 
 export async function syncDxTaskStatuses(scope?: QueryScope) {

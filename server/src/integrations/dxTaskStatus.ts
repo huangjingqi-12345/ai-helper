@@ -55,6 +55,17 @@ function buildDxTasksUrl(params: { since?: string; status?: string; limit?: numb
   return url.toString();
 }
 
+function buildDxTaskUrl(pxTaskId: string): string {
+  const baseUrl = cleanBaseUrl(process.env.DX_API_BASE_URL?.trim() || DEFAULT_DX_API_BASE_URL);
+  const path = process.env.DX_TASKS_PATH?.trim() || '/api/px/tasks';
+  const rawUrl = /^https?:\/\//i.test(path)
+    ? path
+    : baseUrl.endsWith('/api') && path.startsWith('/api/')
+      ? `${baseUrl}${path.slice('/api'.length)}`
+      : `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
+  return `${rawUrl.replace(/\/+$/, '')}/${encodeURIComponent(pxTaskId)}`;
+}
+
 function headersForDxTasks(): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -146,6 +157,36 @@ export async function fetchDxTaskStatuses(params: { since?: string; status?: str
     };
   } catch (error) {
     logger.warn({ err: error, url }, 'Failed to fetch DX task statuses');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function fetchDxTaskStatus(pxTaskId: string): Promise<DxTaskStatusItem> {
+  if (!isDxTaskStatusApiConfigured()) {
+    throw new Error('DX task status API is not configured');
+  }
+
+  const timeoutMs = Number(process.env.DX_API_TIMEOUT_MS ?? 5000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Number.isFinite(timeoutMs) ? timeoutMs : 5000);
+  const url = buildDxTaskUrl(pxTaskId);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: headersForDxTasks(),
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`DX task status API returned ${response.status}: ${text.slice(0, 200)}`);
+
+    const item = normalizeItem(JSON.parse(text || '{}'));
+    if (!item) throw new Error('DX task status API returned invalid task payload');
+    return item;
+  } catch (error) {
+    logger.warn({ err: error, url, pxTaskId }, 'Failed to fetch DX task status');
     throw error;
   } finally {
     clearTimeout(timeout);

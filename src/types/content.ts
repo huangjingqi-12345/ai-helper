@@ -128,3 +128,36 @@ export interface SubmitContentRequestResult {
   request: ContentRequestRecord;
   content: Content;
 }
+
+export interface DxTaskStatusDetail {
+  px_task_id: string;
+  dx_task_id: string;
+  title?: string;
+  drug?: string;
+  brief?: string;
+  task_type?: string;
+  content_format?: string;
+  priority?: string;
+  count?: number;
+  unit_price?: number;
+  status: string;
+  deadline?: string | null;
+  assigned_at?: string | null;
+  submitted_at?: string | null;
+  reviewed_at?: string | null;
+  updated_at: string;
+  doctor_id?: number | null;
+  latest_submission?: {
+    submission_id?: number;
+    doctor_id?: number;
+    conversation_id?: number;
+    submitted_at?: string;
+  } | null;
+  latest_review?: {
+    verdict?: string;
+    suggestion?: string;
+    reviewer_type?: string;
+    reviewer_node?: number;
+    created_at?: string;
+  } | null;
+}
