@@ -4,6 +4,7 @@ import type { AuthUser } from '../middleware/auth.js';
 import { fetchDxContentAttachment, isDxContentApiConfigured, type DxContentAttachment } from '../integrations/dxContent.js';
 import { fetchDxDoctorCandidates, isDxDoctorsApiConfigured } from '../integrations/dxDoctors.js';
 import { dispatchDxTask, type DxTaskDispatchRequest, type DxTaskPriority } from '../integrations/dxTaskDispatch.js';
+import { reviewDxTask, type DxTaskReviewNode, type DxTaskReviewVerdict } from '../integrations/dxTaskReview.js';
 import { fetchDxTaskStatus, fetchDxTaskStatuses, type DxTaskStatusItem } from '../integrations/dxTaskStatus.js';
 import { logger } from '../utils/logger.js';
 
@@ -1728,12 +1729,13 @@ function canAccessApprovalTask(task: Record<string, unknown>, scope?: QueryScope
   return reviewerType === 'pharma_med' || reviewerType === 'pharma_mkt';
 }
 
-function canHandleApprovalTask(task: Record<string, unknown>, scope?: QueryScope): boolean {
+export function canHandleApprovalTask(task: Record<string, unknown>, scope?: QueryScope): boolean {
   if (!canAccessApprovalTask(task, scope)) return false;
   if (String(task.status ?? '') !== 'pending') return false;
   const reviewerType = String(task.reviewer_type ?? task.reviewerType ?? '');
   if (scope?.tenantType === 'ops') return reviewerType === 'px_ops';
-  return true;
+  if (scope?.tenantType === 'pharma') return reviewerType === 'pharma_med' || reviewerType === 'pharma_mkt';
+  return false;
 }
 
 function progressForNode(node?: ApprovalNodeRow): string {
@@ -2149,6 +2151,75 @@ export async function getApprovalTaskAttachment(id: string, scope?: QueryScope):
   return buildLocalApprovalAttachment(row, dxError);
 }
 
+function reviewerNodeForDx(reviewerType: string): DxTaskReviewNode | null {
+  if (reviewerType === 'px_ops') return 2;
+  if (reviewerType === 'pharma_med' || reviewerType === 'pharma_mkt') return 3;
+  return null;
+}
+
+function reviewerTypeForDx(node: DxTaskReviewNode): '运营' | '药企' {
+  return node === 2 ? '运营' : '药企';
+}
+
+function latestSubmissionId(task: Record<string, unknown>): number | undefined {
+  const submission = parseJson<Record<string, unknown>>(task.latest_submission ?? task.latestSubmission, {});
+  const raw = submission.submission_id ?? submission.submissionId ?? submission.id;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+async function getDoctorTasksForContent(contentId: string): Promise<Record<string, unknown>[]> {
+  const rows = await dbAll<Record<string, unknown>>(`
+    SELECT dt.*
+    FROM doctor_tasks dt
+    INNER JOIN content_requests cr ON LOWER(cr.id) = LOWER(dt.request_id)
+    WHERE LOWER(cr.content_id) = LOWER(?)
+    ORDER BY COALESCE(dt.dx_updated_at, dt.updated_at, dt.created_at) DESC, dt.px_task_id ASC
+  `, [contentId]);
+  return rows;
+}
+
+async function writeApprovalResultToDx(existing: Record<string, unknown>, verdict: DxTaskReviewVerdict, suggestion: string | undefined, reviewedAt: string, user?: QueryScope): Promise<void> {
+  const reviewerType = String(existing.reviewer_type ?? existing.reviewerType ?? '');
+  const reviewerNode = reviewerNodeForDx(reviewerType);
+  if (!reviewerNode) return;
+
+  const doctorTasks = await getDoctorTasksForContent(String(existing.content_id ?? existing.contentId ?? ''));
+  if (doctorTasks.length === 0) {
+    throw new Error(`No DX doctor task found for content ${String(existing.content_id ?? existing.contentId ?? '')}`);
+  }
+
+  await Promise.all(doctorTasks.map(async (task) => {
+    const pxTaskId = String(task.px_task_id ?? task.pxTaskId);
+    const payload = {
+      reviewer_node: reviewerNode,
+      reviewer_type: reviewerTypeForDx(reviewerNode),
+      reviewer_label: `${String(existing.node_name ?? existing.nodeName ?? reviewerType)}-${user?.name || '管理员'}`.slice(0, 100),
+      verdict,
+      suggestion,
+      reviewed_at: reviewedAt,
+      submission_id: latestSubmissionId(task),
+    };
+    const response = await reviewDxTask(pxTaskId, payload);
+    await dbRun(`
+      UPDATE doctor_tasks
+      SET dx_status = COALESCE(NULLIF(?, ''), dx_status),
+          reviewed_at = ?,
+          dx_updated_at = ?,
+          latest_review = ?${jsonCast},
+          updated_at = ?
+      WHERE px_task_id = ?
+    `, [
+      response.new_status,
+      reviewedAt,
+      reviewedAt,
+      JSON.stringify(payload),
+      reviewedAt,
+      pxTaskId,
+    ]);
+  }));
+}
+
 export async function handleApprovalTask(id: string, action: 'approve' | 'reject', comments?: string, rejectReason?: string, user?: QueryScope) {
   const existing = await dbGet<Record<string, unknown>>(
     `SELECT t.*, n.reviewer_type, n.sort_order, n.node_name, n.sla_hours
@@ -2170,6 +2241,11 @@ export async function handleApprovalTask(id: string, action: 'approve' | 'reject
       ? 'published'
       : (nextNode?.reviewer_type === 'pharma_med' || nextNode?.reviewer_type === 'pharma_mkt' ? 'internal_review' : 'third_party_review');
   const nextWorkflowState = action === 'reject' ? 'rejected' : isFinalApprove ? 'approved_locked' : nextContentStatus;
+  if (action === 'reject') {
+    await writeApprovalResultToDx(existing, 'reject', rejectReason || comments || '医学编辑修改', now, user);
+  } else if (isFinalApprove) {
+    await writeApprovalResultToDx(existing, 'pass', comments || '审批通过', now, user);
+  }
   await dbRun(`
     UPDATE approval_tasks
     SET status = ?, current_node_id = ?, progress_text = ?, sla_due_at = ?, completed_at = ?, updated_at = ?

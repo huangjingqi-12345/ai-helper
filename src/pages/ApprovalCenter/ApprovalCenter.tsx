@@ -80,7 +80,8 @@ function reviewerTypeForTask(task: ApprovalTask): string {
 function canHandleTask(task: ApprovalTask, user: AuthUser | null): boolean {
   if (task.status !== 'pending') return false;
   if (user?.tenantType === 'ops') return reviewerTypeForTask(task) === 'px_ops';
-  return true;
+  if (user?.tenantType === 'pharma') return ['pharma_med', 'pharma_mkt'].includes(reviewerTypeForTask(task));
+  return false;
 }
 
 function displaySla(task: ApprovalTask): string {
@@ -167,7 +168,7 @@ export function ApprovalCenter(): JSX.Element {
     const selectedTasks = tasks.filter((task) => selectedTaskIds.includes(task.id));
     const actionableTasks = selectedTasks.filter((task) => canHandleTask(task, user));
     if (actionableTasks.length === 0) {
-      showToast('当前选中的任务不在运营可处理节点', 'info');
+      showToast('当前选中的任务不在本账号可处理节点', 'info');
       return;
     }
     setSaving(true);
@@ -187,7 +188,7 @@ export function ApprovalCenter(): JSX.Element {
   const submitActiveTask = async (): Promise<void> => {
     if (!activeTask) return;
     if (!canHandleTask(activeTask, user)) {
-      showToast('当前节点需由对应审核方处理，运营端不可提交', 'info');
+      showToast('当前节点需由对应审核方处理，本账号不可提交', 'info');
       return;
     }
     setSaving(true);
@@ -470,7 +471,7 @@ function ApprovalDrawer({
   const requirement = requirementByContent[task.contentId];
   const historyActor = requirement?.historyActor ?? task.author ?? '作者';
   const historyDate = requirement?.historyDate ?? '2026-04-10';
-  const blockedReason = canSubmit ? '' : '当前节点需由对应审核方处理，运营端不可提交审核。';
+  const blockedReason = canSubmit ? '' : '当前节点需由对应审核方处理，本账号不可提交审核。';
 
   return (
     <aside className="fixed inset-y-0 right-0 z-50 w-full max-w-[544px] overflow-y-auto border-l border-border bg-[oklch(18%_.02_260)] p-5 shadow-[-24px_0_60px_rgba(0,0,0,0.35)]">
