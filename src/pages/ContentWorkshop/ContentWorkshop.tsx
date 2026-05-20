@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { Spinner } from '@/components/ui/Spinner';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { SubmitRequestModal } from './SubmitRequestModal';
+import { syncDxTaskStatuses } from '@/api/endpoints/distribution';
 import { useContentStore } from '@/stores/useContentStore';
 import { useTenantStore } from '@/stores/useTenantStore';
 import { useLogger } from '@/hooks/useLogger';
@@ -105,7 +106,11 @@ export function ContentWorkshop(): JSX.Element {
 
   useEffect(() => {
     log.nav('Content Workshop page loaded');
-    fetchList();
+    void syncDxTaskStatuses().catch((error) => {
+      log.error('DX task status sync failed', error);
+    }).finally(() => {
+      void fetchList();
+    });
   }, [fetchList, log]);
 
   const domainFilter = new URLSearchParams(location.search).get('domain');

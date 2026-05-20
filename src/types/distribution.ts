@@ -98,7 +98,7 @@ export interface DoctorCandidate {
 }
 
 export type DistributionRequestStatus = 'pending' | 'accepted' | 'rejected' | 'converted';
-export type RequestDistributionAssignmentMode = 'mixed' | 'whitelist' | 'strategy';
+export type RequestDistributionAssignmentMode = 'whitelist' | 'strategy';
 export type RequestDistributionMatrix = Record<string, Partial<Record<'article' | 'poster' | 'checklist' | 'longtext' | 'manual', number>>>;
 
 export interface DistributionRequestProject {
@@ -163,9 +163,41 @@ export interface RequestDistributionBatch {
   totalCount: number;
   whitelistTotal: number;
   strategyTotal: number;
+  dispatchSuccessCount: number;
+  dispatchFailedCount: number;
+  dispatchStatus: 'pending' | 'assigned' | 'partial_failed' | 'dispatch_failed';
+  tasks?: DoctorTaskDispatchRecord[];
   operator?: string;
   submittedAt: string;
   createdAt: string;
+}
+
+export interface DoctorTaskDispatchRecord {
+  pxTaskId: string;
+  batchId: string;
+  requestId: string;
+  projectId: string;
+  tenantId: string;
+  doctorId?: string;
+  doctorPhone?: string;
+  title: string;
+  contentFormat?: string;
+  theme?: string;
+  status: 'pending_dispatch' | 'assigned' | 'dispatch_failed';
+  dxTaskId?: string;
+  dxStatus?: string;
+  assignedAt?: string;
+  submittedAt?: string;
+  reviewedAt?: string;
+  dxUpdatedAt?: string;
+  dxLastSyncedAt?: string;
+  latestSubmission?: Record<string, unknown>;
+  latestReview?: Record<string, unknown>;
+  dxIdempotent?: boolean;
+  dispatchError?: string;
+  retryCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface DistributionRequestWorkbench {

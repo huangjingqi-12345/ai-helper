@@ -3,6 +3,8 @@ import { createHash, randomUUID } from 'crypto';
 import type { AuthUser } from '../middleware/auth.js';
 import { fetchDxContentAttachment, isDxContentApiConfigured, type DxContentAttachment } from '../integrations/dxContent.js';
 import { fetchDxDoctorCandidates, isDxDoctorsApiConfigured } from '../integrations/dxDoctors.js';
+import { dispatchDxTask, type DxTaskDispatchRequest, type DxTaskPriority } from '../integrations/dxTaskDispatch.js';
+import { fetchDxTaskStatuses, type DxTaskStatusItem } from '../integrations/dxTaskStatus.js';
 import { logger } from '../utils/logger.js';
 
 const jsonCast = DB_DRIVER === 'postgres' ? '::jsonb' : '';
@@ -64,6 +66,12 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function asBool(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function asText(value: unknown, fallback = ''): string {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return fallback;
 }
 
 
@@ -548,9 +556,9 @@ export async function upsertRequestDistributionConfig(requestId: string, data: R
   if (!request) return null;
   const now = new Date().toISOString();
   const defaultConfig = defaultRequestDistributionConfig(requestId, asNumber((request.project as Record<string, unknown> | undefined)?.patientCap, 5000));
-  const assignmentMode = ['mixed', 'whitelist', 'strategy'].includes(String(data.assignmentMode)) ? String(data.assignmentMode) : defaultConfig.assignmentMode;
-  const whitelistEnabled = data.whitelistEnabled !== undefined ? asBool(data.whitelistEnabled) : defaultConfig.whitelistEnabled;
-  const strategyEnabled = data.strategyEnabled !== undefined ? asBool(data.strategyEnabled) : defaultConfig.strategyEnabled;
+  const assignmentMode = String(data.assignmentMode) === 'whitelist' ? 'whitelist' : String(data.assignmentMode) === 'strategy' ? 'strategy' : defaultConfig.assignmentMode;
+  const whitelistEnabled = assignmentMode === 'whitelist';
+  const strategyEnabled = assignmentMode === 'strategy';
   const patientGrayPercent = Math.max(0, Math.min(100, asNumber(data.patientGrayPercent, defaultConfig.patientGrayPercent)));
   const patientCap = Math.max(0, asNumber(data.patientCap, defaultConfig.patientCap));
   const note = typeof data.note === 'string' ? data.note.slice(0, 1000) : defaultConfig.note;
@@ -613,6 +621,9 @@ function mapRequestDistributionBatch(row: Record<string, unknown>) {
     totalCount: asNumber(batch.totalCount),
     whitelistTotal: asNumber(batch.whitelistTotal),
     strategyTotal: asNumber(batch.strategyTotal),
+    dispatchSuccessCount: asNumber(batch.dispatchSuccessCount),
+    dispatchFailedCount: asNumber(batch.dispatchFailedCount),
+    dispatchStatus: asText(batch.dispatchStatus, 'pending'),
   };
 }
 
@@ -621,7 +632,449 @@ export async function getRequestDistributionBatches(requestId: string) {
     'SELECT * FROM request_distribution_batches WHERE LOWER(request_id) = LOWER(?) ORDER BY submitted_at ASC, created_at ASC',
     [requestId]
   );
-  return rows.map(mapRequestDistributionBatch);
+  return Promise.all(rows.map(async (row) => {
+    const batch = mapRequestDistributionBatch(row);
+    return {
+      ...batch,
+      tasks: await getDoctorTasksForBatch(String((batch as Record<string, unknown>).id)),
+    };
+  }));
+}
+
+function mapDoctorTask(row: Record<string, unknown>) {
+  const task = toCamel(row);
+  parseJsonObjectFields(task, ['latestSubmission', 'latestReview']);
+  return {
+    ...task,
+    retryCount: asNumber(task.retryCount),
+    dxIdempotent: asBool(task.dxIdempotent),
+  } as Record<string, unknown>;
+}
+
+export async function getDoctorTasksForBatch(batchId: string) {
+  const rows = await dbAll<Record<string, unknown>>(
+    'SELECT * FROM doctor_tasks WHERE LOWER(batch_id) = LOWER(?) ORDER BY created_at ASC, px_task_id ASC',
+    [batchId]
+  );
+  return rows.map(mapDoctorTask);
+}
+
+const DX_TASK_STATUS_CURSOR_KEY = 'dxTaskStatusLastSyncedAt';
+const DX_TASK_STATUS_INITIAL_CURSOR = '1970-01-01T00:00:00.000Z';
+const DX_TASK_TERMINAL_STATUSES = new Set(['published']);
+const DX_TASK_REVIEW_STATUSES = new Set(['dx_review', 'draft_finalized']);
+
+async function getPlatformSettingString(key: string): Promise<string | undefined> {
+  const row = await dbGet<{ value: string }>('SELECT value FROM platform_settings WHERE key = ?', [key]);
+  if (!row?.value) return undefined;
+  try {
+    const parsed = JSON.parse(row.value) as unknown;
+    return typeof parsed === 'string' ? parsed : String(parsed);
+  } catch {
+    return row.value;
+  }
+}
+
+async function setPlatformSettingString(key: string, value: string): Promise<void> {
+  await dbRun(
+    'INSERT INTO platform_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    [key, JSON.stringify(value)]
+  );
+}
+
+function latestIso(values: Array<string | undefined>): string | undefined {
+  const sorted = values.filter(Boolean).sort();
+  return sorted[sorted.length - 1];
+}
+
+async function getLocalDxSyncTasks(scope?: QueryScope): Promise<Record<string, unknown>[]> {
+  const tenant = tenantCondition('doctor_tasks', scope);
+  const rows = await dbAll<Record<string, unknown>>(
+    `SELECT * FROM doctor_tasks
+     WHERE status = 'assigned'
+       AND COALESCE(dx_status, '') NOT IN ('published')
+       ${tenant.sql ? `AND ${tenant.sql}` : ''}`,
+    tenant.params
+  );
+  return rows.map(mapDoctorTask);
+}
+
+async function maybeAdvanceContentFromDxStatus(task: Record<string, unknown>, dxStatus: string, now: string): Promise<boolean> {
+  if (!DX_TASK_REVIEW_STATUSES.has(dxStatus)) return false;
+  const request = await dbGet<Record<string, unknown>>('SELECT content_id FROM content_requests WHERE LOWER(id) = LOWER(?)', [task.requestId]);
+  const contentId = asText(request?.content_id);
+  if (!contentId) return false;
+  const result = await dbRun(`
+    UPDATE content
+    SET status = 'third_party_review',
+        pipeline_stage = 'third_party_review',
+        workflow_state = 'third_party_review',
+        updated_at = ?
+    WHERE LOWER(id) = LOWER(?)
+      AND status = 'doctor_producing'
+      AND pipeline_stage = 'doctor_producing'
+  `, [now, contentId]);
+  return result.changes > 0;
+}
+
+async function applyDxTaskStatus(item: DxTaskStatusItem, task: Record<string, unknown>, now: string): Promise<{ changed: boolean; advancedContent: boolean }> {
+  const previousDxStatus = asText(task.dxStatus);
+  const changed = previousDxStatus !== item.status
+    || asText(task.dxUpdatedAt) !== item.updated_at
+    || asText(task.submittedAt) !== asText(item.submitted_at)
+    || asText(task.reviewedAt) !== asText(item.reviewed_at);
+
+  await dbRun(`
+    UPDATE doctor_tasks
+    SET dx_task_id = COALESCE(NULLIF(?, ''), dx_task_id),
+        dx_status = ?,
+        assigned_at = COALESCE(?, assigned_at),
+        submitted_at = ?,
+        reviewed_at = ?,
+        dx_updated_at = ?,
+        dx_last_synced_at = ?,
+        latest_submission = ?${jsonCast},
+        latest_review = ?${jsonCast},
+        updated_at = ?
+    WHERE px_task_id = ?
+  `, [
+    item.dx_task_id,
+    item.status,
+    item.assigned_at,
+    item.submitted_at,
+    item.reviewed_at,
+    item.updated_at,
+    now,
+    JSON.stringify(item.latest_submission ?? {}),
+    JSON.stringify(item.latest_review ?? {}),
+    now,
+    item.px_task_id,
+  ]);
+
+  const advancedContent = await maybeAdvanceContentFromDxStatus(task, String(item.status), now);
+  return { changed, advancedContent };
+}
+
+export async function syncDxTaskStatuses(scope?: QueryScope) {
+  const localTasks = await getLocalDxSyncTasks(scope);
+  if (localTasks.length === 0) {
+    return { fetched: 0, matched: 0, updated: 0, contentAdvanced: 0, cursor: await getPlatformSettingString(DX_TASK_STATUS_CURSOR_KEY) ?? null };
+  }
+
+  const localByPxTaskId = new Map(localTasks.map((task) => [asText(task.pxTaskId), task]));
+  let since = await getPlatformSettingString(DX_TASK_STATUS_CURSOR_KEY) ?? DX_TASK_STATUS_INITIAL_CURSOR;
+  const seen = new Set<string>();
+  const matched = new Map<string, DxTaskStatusItem>();
+  let fetched = 0;
+  let newestUpdatedAt = since;
+
+  for (let page = 0; page < 10; page++) {
+    const response = await fetchDxTaskStatuses({ since, limit: 200 });
+    fetched += response.items.length;
+    let oldestUpdatedAt: string | undefined;
+    let newPageItemCount = 0;
+
+    for (const item of response.items) {
+      const dedupeKey = `${item.px_task_id}:${item.updated_at}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      newPageItemCount++;
+      newestUpdatedAt = latestIso([newestUpdatedAt, item.updated_at]) ?? newestUpdatedAt;
+      oldestUpdatedAt = oldestUpdatedAt && oldestUpdatedAt < item.updated_at ? oldestUpdatedAt : item.updated_at;
+      if (localByPxTaskId.has(item.px_task_id) && !DX_TASK_TERMINAL_STATUSES.has(String(item.status))) {
+        matched.set(item.px_task_id, item);
+      } else if (localByPxTaskId.has(item.px_task_id)) {
+        matched.set(item.px_task_id, item);
+      }
+    }
+
+    if (!response.has_more || !oldestUpdatedAt || oldestUpdatedAt === since || newPageItemCount === 0) break;
+    since = oldestUpdatedAt;
+  }
+
+  const now = new Date().toISOString();
+  let updated = 0;
+  let contentAdvanced = 0;
+  for (const item of matched.values()) {
+    const task = localByPxTaskId.get(item.px_task_id);
+    if (!task) continue;
+    const result = await applyDxTaskStatus(item, task, now);
+    if (result.changed) updated++;
+    if (result.advancedContent) contentAdvanced++;
+  }
+
+  await setPlatformSettingString(DX_TASK_STATUS_CURSOR_KEY, newestUpdatedAt);
+  return { fetched, matched: matched.size, updated, contentAdvanced, cursor: newestUpdatedAt };
+}
+
+type DistributionMatrix = Record<string, Record<string, number>>;
+type DoctorCandidateRow = Awaited<ReturnType<typeof getDoctorCandidates>>[number];
+
+interface TaskSlot {
+  theme: string;
+  format: string;
+}
+
+interface DoctorAssignmentPlan {
+  doctor: DoctorCandidateRow;
+  count: number;
+  mode: 'whitelist' | 'strategy';
+}
+
+function titleMatches(doctorTitle: string, selectedTitles: string[]): boolean {
+  if (selectedTitles.length === 0) return true;
+  const title = doctorTitle.trim();
+  return selectedTitles.some((selected) => selected && title.includes(selected));
+}
+
+function sortDoctorsByWorkload(doctors: DoctorCandidateRow[]): DoctorCandidateRow[] {
+  return [...doctors].sort((a, b) => {
+    const workloadDelta = asNumber(a.inProgressCount) - asNumber(b.inProgressCount);
+    if (workloadDelta !== 0) return workloadDelta;
+    return asNumber(b.publishedCount) - asNumber(a.publishedCount);
+  });
+}
+
+function allocateStrategyDoctors(doctors: DoctorCandidateRow[], contentCount: number): DoctorAssignmentPlan[] {
+  if (contentCount <= 0 || doctors.length === 0) return [];
+  if (contentCount >= doctors.length) {
+    const base = Math.floor(contentCount / doctors.length);
+    let remainder = contentCount - base * doctors.length;
+    return doctors.map((doctor) => {
+      const extra = remainder > 0 ? 1 : 0;
+      if (extra) remainder -= 1;
+      return { doctor, count: base + extra, mode: 'strategy' as const };
+    }).filter((assignment) => assignment.count > 0);
+  }
+  return doctors.slice(0, contentCount).map((doctor) => ({ doctor, count: 1, mode: 'strategy' as const }));
+}
+
+function flattenMatrix(matrix: DistributionMatrix): TaskSlot[] {
+  const slots: TaskSlot[] = [];
+  for (const [theme, formats] of Object.entries(matrix)) {
+    for (const [format, count] of Object.entries(formats ?? {})) {
+      const safeCount = Math.max(0, Math.floor(Number(count) || 0));
+      for (let index = 0; index < safeCount; index++) {
+        slots.push({ theme, format });
+      }
+    }
+  }
+  return slots;
+}
+
+function formatLabel(format: string): string {
+  const labels: Record<string, string> = {
+    article: '图文',
+    longtext: '图文',
+    poster: '海报',
+    checklist: '手册',
+    manual: '手册',
+  };
+  return labels[format] ?? format;
+}
+
+function priorityToDx(priority: unknown): DxTaskPriority {
+  if (priority === 'P0') return 'high';
+  if (priority === 'P2') return 'low';
+  return 'mid';
+}
+
+function deadlineToIso(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const raw = value.trim();
+  if (/T/.test(raw)) return raw;
+  return `${raw}T18:00:00+08:00`;
+}
+
+function dispatchStatus(successCount: number, failedCount: number): string {
+  if (failedCount === 0 && successCount > 0) return 'assigned';
+  if (successCount > 0 && failedCount > 0) return 'partial_failed';
+  if (failedCount > 0) return 'dispatch_failed';
+  return 'pending';
+}
+
+function buildTaskTitle(request: Record<string, unknown>, slot: TaskSlot): string {
+  const base = asText(request.title, asText(request.requestName, asText(request.id, '患教任务')));
+  return `${base} · ${slot.theme} · ${formatLabel(slot.format)}`.slice(0, 200);
+}
+
+function buildTaskBrief(request: Record<string, unknown>, slot: TaskSlot): string {
+  const project = request.project && typeof request.project === 'object' ? request.project as Record<string, unknown> : {};
+  const pieces = [
+    asText(request.note),
+    asText(project.disease) ? `病种：${asText(project.disease)}` : '',
+    asText(project.brand) ? `药品：${asText(project.brand)}` : '',
+    `主题：${slot.theme}`,
+    `形式：${formatLabel(slot.format)}`,
+  ].filter(Boolean);
+  return pieces.join('；').slice(0, 2000);
+}
+
+function buildDxPayload(task: Record<string, unknown>, request: Record<string, unknown>): DxTaskDispatchRequest {
+  const project = request.project && typeof request.project === 'object' ? request.project as Record<string, unknown> : {};
+  const doctorId = asNumber(task.doctorId, 0);
+  const doctorPhone = asText(task.doctorPhone);
+  const doctor_assignment: DxTaskDispatchRequest['doctor_assignment'] = {};
+  if (doctorId > 0) doctor_assignment.doctor_id = doctorId;
+  if (doctorPhone) doctor_assignment.doctor_phone = doctorPhone;
+
+  return {
+    px_task_id: asText(task.pxTaskId),
+    title: asText(task.title).slice(0, 200),
+    drug: asText(project.brand).slice(0, 200),
+    brief: buildTaskBrief(request, { theme: asText(task.theme), format: asText(task.contentFormat) }),
+    task_type: '患教内容创作',
+    content_format: formatLabel(asText(task.contentFormat)).slice(0, 20),
+    priority: priorityToDx(request.priority),
+    count: 1,
+    unit_price: 0,
+    deadline: deadlineToIso(request.expectedDate),
+    doctor_assignment,
+  };
+}
+
+async function createDoctorTaskRows(input: {
+  batchId: string;
+  request: Record<string, unknown>;
+  matrix: DistributionMatrix;
+  assignments: DoctorAssignmentPlan[];
+  now: string;
+}) {
+  const slots = flattenMatrix(input.matrix);
+  const tasks: Record<string, unknown>[] = [];
+  let slotIndex = 0;
+  let sequence = 1;
+  for (const assignment of input.assignments) {
+    for (let item = 0; item < assignment.count && slotIndex < slots.length; item++) {
+      const slot = slots[slotIndex++];
+      const pxTaskId = `PX-${asText(input.request.id)}-${input.batchId}-${String(sequence).padStart(3, '0')}`;
+      const title = buildTaskTitle(input.request, slot);
+      const doctorId = asNumber(assignment.doctor.doctorId, 0) || asNumber(String(assignment.doctor.id).replace(/\D/g, ''), 0);
+      const doctorPhone = asText(assignment.doctor.phone);
+      const task = {
+        pxTaskId,
+        batchId: input.batchId,
+        requestId: asText(input.request.id),
+        projectId: asText(input.request.projectId),
+        tenantId: asText(input.request.tenantId),
+        doctorId: doctorId > 0 ? String(doctorId) : asText(assignment.doctor.id),
+        doctorPhone,
+        title,
+        contentFormat: slot.format,
+        theme: slot.theme,
+        status: 'pending_dispatch',
+        createdAt: input.now,
+        updatedAt: input.now,
+      };
+      await dbRun(`
+        INSERT INTO doctor_tasks (
+          px_task_id, batch_id, request_id, project_id, tenant_id,
+          doctor_id, doctor_phone, title, content_format, theme,
+          status, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(px_task_id) DO UPDATE SET
+          doctor_id = excluded.doctor_id,
+          doctor_phone = excluded.doctor_phone,
+          title = excluded.title,
+          content_format = excluded.content_format,
+          theme = excluded.theme,
+          updated_at = excluded.updated_at
+      `, [
+        task.pxTaskId,
+        task.batchId,
+        task.requestId,
+        task.projectId,
+        task.tenantId,
+        task.doctorId,
+        task.doctorPhone,
+        task.title,
+        task.contentFormat,
+        task.theme,
+        task.status,
+        task.createdAt,
+        task.updatedAt,
+      ]);
+      tasks.push(task);
+      sequence++;
+    }
+  }
+  return tasks;
+}
+
+async function dispatchDoctorTasks(tasks: Record<string, unknown>[], request: Record<string, unknown>) {
+  let successCount = 0;
+  let failedCount = 0;
+  for (const task of tasks) {
+    const now = new Date().toISOString();
+    try {
+      const response = await dispatchDxTask(buildDxPayload(task, request));
+      await dbRun(`
+        UPDATE doctor_tasks
+        SET status = 'assigned',
+            dx_task_id = ?,
+            dx_status = ?,
+            assigned_at = ?,
+            dx_idempotent = ?,
+            dispatch_error = NULL,
+            retry_count = retry_count + 1,
+            updated_at = ?
+        WHERE px_task_id = ?
+      `, [
+        response.dx_task_id,
+        response.status,
+        response.assigned_at,
+        boolValue(response.idempotent),
+        now,
+        task.pxTaskId,
+      ]);
+      successCount++;
+    } catch (error) {
+      await dbRun(`
+        UPDATE doctor_tasks
+        SET status = 'dispatch_failed',
+            dispatch_error = ?,
+            retry_count = retry_count + 1,
+            updated_at = ?
+        WHERE px_task_id = ?
+      `, [
+        error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
+        now,
+        task.pxTaskId,
+      ]);
+      failedCount++;
+    }
+  }
+  return { successCount, failedCount };
+}
+
+async function buildDoctorAssignments(requestId: string, totalCount: number, scope?: QueryScope): Promise<DoctorAssignmentPlan[]> {
+  if (totalCount <= 0) return [];
+  const request = await getContentRequestById(requestId, scope);
+  const patientCap = asNumber((request as Record<string, unknown> | null)?.project && ((request as Record<string, unknown>).project as Record<string, unknown>).patientCap, 5000);
+  const config = (await getRequestDistributionConfig(requestId) ?? defaultRequestDistributionConfig(requestId, patientCap)) as Record<string, unknown> & {
+    whitelistEnabled: boolean;
+    strategyEnabled: boolean;
+  };
+  const doctors = await getDoctorCandidates();
+  const titleFilters = Array.isArray(config.titleFilters) ? config.titleFilters.map(String) : [];
+  const availableDoctors = doctors.filter((doctor) => doctor.available && titleMatches(String(doctor.title ?? ''), titleFilters));
+  const mode = config.whitelistEnabled ? 'whitelist' : 'strategy';
+
+  const whitelistIds = new Set(Array.isArray(config.whitelistDoctorIds) ? config.whitelistDoctorIds.map(String) : []);
+  const quota = numberMap(config.whitelistDoctorQuota);
+  const whitelistAssignments: DoctorAssignmentPlan[] = [];
+  if (mode === 'whitelist') {
+    for (const doctor of availableDoctors) {
+      if (!whitelistIds.has(String(doctor.id))) continue;
+      const count = Math.max(0, Math.floor(quota[String(doctor.id)] ?? 0));
+      if (count > 0) whitelistAssignments.push({ doctor, count, mode: 'whitelist' });
+    }
+    return whitelistAssignments;
+  }
+
+  const strategyPool = sortDoctorsByWorkload(availableDoctors);
+  return allocateStrategyDoctors(strategyPool, totalCount);
 }
 
 export async function createRequestDistributionBatch(requestId: string, data: Record<string, unknown>, scope?: QueryScope) {
@@ -635,12 +1088,27 @@ export async function createRequestDistributionBatch(requestId: string, data: Re
   if (totalCount <= 0) return null;
   const now = new Date().toISOString();
   const id = `BATCH-${requestId}-${Date.now().toString(36).toUpperCase()}`;
-  const whitelistTotal = Math.max(0, asNumber(data.whitelistTotal, 0));
-  const strategyTotal = Math.max(0, asNumber(data.strategyTotal, Math.max(0, totalCount - whitelistTotal)));
+  const patientCap = asNumber(requestRecord.project && (requestRecord.project as Record<string, unknown>).patientCap, 5000);
+  const config = (await getRequestDistributionConfig(requestId) ?? defaultRequestDistributionConfig(requestId, patientCap)) as Record<string, unknown> & {
+    whitelistEnabled: boolean;
+    strategyEnabled: boolean;
+  };
+  const configuredWhitelistTotal = config.whitelistEnabled
+    ? Object.entries(numberMap(config.whitelistDoctorQuota))
+      .filter(([doctorId]) => Array.isArray(config.whitelistDoctorIds) && config.whitelistDoctorIds.map(String).includes(doctorId))
+      .reduce((sum, [, count]) => sum + count, 0)
+    : 0;
+  if (config.whitelistEnabled && configuredWhitelistTotal !== totalCount) return null;
+  const whitelistTotal = config.whitelistEnabled ? totalCount : 0;
+  const strategyTotal = config.strategyEnabled ? totalCount : 0;
 
   await dbRun(`
-    INSERT INTO request_distribution_batches (id, request_id, batch_matrix, total_count, whitelist_total, strategy_total, operator, submitted_at, created_at)
-    VALUES (?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?)
+    INSERT INTO request_distribution_batches (
+      id, request_id, batch_matrix, total_count, whitelist_total, strategy_total,
+      dispatch_success_count, dispatch_failed_count, dispatch_status,
+      operator, submitted_at, created_at
+    )
+    VALUES (?, ?, ?${jsonCast}, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id,
     requestId,
@@ -648,15 +1116,70 @@ export async function createRequestDistributionBatch(requestId: string, data: Re
     totalCount,
     whitelistTotal,
     strategyTotal,
+    0,
+    0,
+    'pending',
     scope?.name || String(data.operator || 'PX 运营组'),
     now,
     now,
   ]);
+  const assignments = await buildDoctorAssignments(requestId, totalCount, scope);
+  const tasks = await createDoctorTaskRows({ batchId: id, request: requestRecord, matrix, assignments, now });
+  const dispatched = await dispatchDoctorTasks(tasks, requestRecord);
+  const missingAssignmentCount = Math.max(0, totalCount - tasks.length);
+  const successCount = dispatched.successCount;
+  const failedCount = dispatched.failedCount + missingAssignmentCount;
+  await dbRun(`
+    UPDATE request_distribution_batches
+    SET dispatch_success_count = ?,
+        dispatch_failed_count = ?,
+        dispatch_status = ?
+    WHERE id = ?
+  `, [successCount, failedCount, dispatchStatus(successCount, failedCount), id]);
   if (String(requestRecord.status) === 'pending') {
     await updateContentRequestStatus(requestId, 'accepted', typeof requestRecord.note === 'string' ? requestRecord.note : '', scope);
   }
+  if (successCount > 0 && requestRecord.contentId) {
+    const contentTenant = tenantCondition('content', scope);
+    await dbRun(
+      `UPDATE content SET status = 'doctor_producing', pipeline_stage = 'doctor_producing', workflow_state = 'doctor_producing', updated_at = ? WHERE id = ? ${contentTenant.sql ? `AND ${contentTenant.sql}` : ''}`,
+      [now, requestRecord.contentId, ...contentTenant.params]
+    );
+  }
   const row = await dbGet<Record<string, unknown>>('SELECT * FROM request_distribution_batches WHERE id = ?', [id]);
-  return row ? mapRequestDistributionBatch(row) : null;
+  if (!row) return null;
+  const batch = mapRequestDistributionBatch(row);
+  return { ...batch, tasks: await getDoctorTasksForBatch(id) };
+}
+
+export async function retryFailedDoctorTasksForBatch(requestId: string, batchId: string, scope?: QueryScope) {
+  const request = await getContentRequestById(requestId, scope);
+  if (!request) return null;
+  const batchRow = await dbGet<Record<string, unknown>>(
+    'SELECT * FROM request_distribution_batches WHERE LOWER(id) = LOWER(?) AND LOWER(request_id) = LOWER(?)',
+    [batchId, requestId]
+  );
+  if (!batchRow) return null;
+
+  const tasks = await getDoctorTasksForBatch(batchId);
+  const failedTasks = tasks.filter((task) => String(task.status) === 'dispatch_failed') as Record<string, unknown>[];
+  await dispatchDoctorTasks(failedTasks, request as Record<string, unknown>);
+
+  const updatedTasks = await getDoctorTasksForBatch(batchId);
+  const successCount = updatedTasks.filter((task) => String(task.status) === 'assigned').length;
+  const failedCount = updatedTasks.filter((task) => String(task.status) === 'dispatch_failed').length;
+  await dbRun(`
+    UPDATE request_distribution_batches
+    SET dispatch_success_count = ?,
+        dispatch_failed_count = ?,
+        dispatch_status = ?
+    WHERE id = ?
+  `, [successCount, failedCount, dispatchStatus(successCount, failedCount), batchId]);
+
+  const row = await dbGet<Record<string, unknown>>('SELECT * FROM request_distribution_batches WHERE id = ?', [batchId]);
+  if (!row) return null;
+  const batch = mapRequestDistributionBatch(row);
+  return { ...batch, tasks: await getDoctorTasksForBatch(batchId) };
 }
 
 export async function updateContent(id: string, data: Record<string, unknown>, scope?: QueryScope) {

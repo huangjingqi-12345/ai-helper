@@ -14,6 +14,8 @@ import {
   upsertRequestDistributionConfig,
   getRequestDistributionBatches,
   createRequestDistributionBatch,
+  retryFailedDoctorTasksForBatch,
+  syncDxTaskStatuses,
 } from '../db/repositories.js';
 import { logger } from '../utils/logger.js';
 import { asyncRoute } from './asyncRoute.js';
@@ -22,6 +24,12 @@ import { appendAuditLog } from '../utils/audit.js';
 import { asObject, optionalString, requiredString } from '../utils/validation.js';
 
 const router = Router();
+
+router.post('/dx-tasks/sync', requirePermission('content:read'), asyncRoute(async (req, res) => {
+  logger.info('POST /api/distribution/dx-tasks/sync');
+  const result = await syncDxTaskStatuses(req.user!);
+  res.json({ success: true, data: result, timestamp: new Date().toISOString() });
+}));
 
 router.use(requirePermission('distribution:read'));
 
@@ -134,10 +142,20 @@ router.post('/requests/:id/batches', requirePermission('distribution:write'), as
   logger.info({ id: String(req.params.id), body: req.body }, 'POST /api/distribution/requests/:id/batches');
   const batch = await createRequestDistributionBatch(String(req.params.id), req.body as Record<string, unknown>, req.user!);
   if (!batch) {
-    return res.status(400).json({ success: false, data: null, message: 'Request not found or batch is empty', timestamp: new Date().toISOString() });
+    return res.status(400).json({ success: false, data: null, message: 'Request not found, batch is empty, or doctor assignment total is invalid', timestamp: new Date().toISOString() });
   }
   await appendAuditLog(req, { action: 'distribution.request.batch.submit', resourceType: 'content_request', resourceId: String(req.params.id), after: batch });
   res.status(201).json({ success: true, data: batch, timestamp: new Date().toISOString() });
+}));
+
+router.post('/requests/:id/batches/:batchId/retry', requirePermission('distribution:write'), asyncRoute(async (req, res) => {
+  logger.info({ id: String(req.params.id), batchId: String(req.params.batchId) }, 'POST /api/distribution/requests/:id/batches/:batchId/retry');
+  const batch = await retryFailedDoctorTasksForBatch(String(req.params.id), String(req.params.batchId), req.user!);
+  if (!batch) {
+    return res.status(404).json({ success: false, data: null, message: 'Distribution batch not found', timestamp: new Date().toISOString() });
+  }
+  await appendAuditLog(req, { action: 'distribution.request.batch.retry', resourceType: 'request_distribution_batch', resourceId: String(req.params.batchId), after: batch });
+  res.json({ success: true, data: batch, timestamp: new Date().toISOString() });
 }));
 
 router.get('/', asyncRoute(async (req, res) => {

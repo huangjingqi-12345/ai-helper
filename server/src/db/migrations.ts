@@ -96,6 +96,12 @@ const migrations = [
       SELECT 1;
     `,
   },
+  {
+    id: '20260520-dx-task-dispatch',
+    sql: `
+      SELECT 1;
+    `,
+  },
 ];
 
 export async function runMigrations(): Promise<void> {
@@ -115,6 +121,9 @@ export async function runMigrations(): Promise<void> {
     if (migration.id === '20260519-project-display-names') {
       await ensureProjectDisplayNameColumns();
     }
+    if (migration.id === '20260520-dx-task-dispatch') {
+      await ensureDxTaskDispatchSchema();
+    }
     await dbExec(migration.sql);
     await dbRun('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?) ON CONFLICT(id) DO NOTHING', [
       migration.id,
@@ -123,6 +132,118 @@ export async function runMigrations(): Promise<void> {
   }
 
   logger.info({ count: migrations.length }, 'Database migrations checked');
+}
+
+async function ensureDxTaskDispatchSchema(): Promise<void> {
+  if (DB_DRIVER === 'postgres') {
+    await dbExec(`
+      ALTER TABLE request_distribution_batches ADD COLUMN IF NOT EXISTS dispatch_success_count INTEGER DEFAULT 0;
+      ALTER TABLE request_distribution_batches ADD COLUMN IF NOT EXISTS dispatch_failed_count INTEGER DEFAULT 0;
+      ALTER TABLE request_distribution_batches ADD COLUMN IF NOT EXISTS dispatch_status TEXT DEFAULT 'pending';
+
+      CREATE TABLE IF NOT EXISTS doctor_tasks (
+        px_task_id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL REFERENCES request_distribution_batches(id),
+        request_id TEXT NOT NULL REFERENCES content_requests(id),
+        project_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        doctor_id TEXT,
+        doctor_phone TEXT,
+        title TEXT NOT NULL,
+        content_format TEXT,
+        theme TEXT,
+        status TEXT DEFAULT 'pending_dispatch' CHECK(status IN ('pending_dispatch','assigned','dispatch_failed')),
+        dx_task_id TEXT,
+        dx_status TEXT,
+        assigned_at TEXT,
+        submitted_at TEXT,
+        reviewed_at TEXT,
+        dx_updated_at TEXT,
+        dx_last_synced_at TEXT,
+        latest_submission JSONB DEFAULT '{}'::jsonb,
+        latest_review JSONB DEFAULT '{}'::jsonb,
+        dx_idempotent BOOLEAN DEFAULT FALSE,
+        dispatch_error TEXT,
+        retry_count INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_doctor_tasks_batch ON doctor_tasks(batch_id);
+      CREATE INDEX IF NOT EXISTS idx_doctor_tasks_request ON doctor_tasks(request_id);
+      ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS dx_idempotent BOOLEAN DEFAULT FALSE;
+      ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS submitted_at TEXT;
+      ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS reviewed_at TEXT;
+      ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS dx_updated_at TEXT;
+      ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS dx_last_synced_at TEXT;
+      ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS latest_submission JSONB DEFAULT '{}'::jsonb;
+      ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS latest_review JSONB DEFAULT '{}'::jsonb;
+    `);
+    return;
+  }
+
+  const batchColumns = await dbAll<{ name: string }>('PRAGMA table_info(request_distribution_batches)');
+  if (!batchColumns.some((row) => row.name === 'dispatch_success_count')) {
+    await dbRun('ALTER TABLE request_distribution_batches ADD COLUMN dispatch_success_count INTEGER DEFAULT 0');
+  }
+  if (!batchColumns.some((row) => row.name === 'dispatch_failed_count')) {
+    await dbRun('ALTER TABLE request_distribution_batches ADD COLUMN dispatch_failed_count INTEGER DEFAULT 0');
+  }
+  if (!batchColumns.some((row) => row.name === 'dispatch_status')) {
+    await dbRun("ALTER TABLE request_distribution_batches ADD COLUMN dispatch_status TEXT DEFAULT 'pending'");
+  }
+
+  await dbExec(`
+    CREATE TABLE IF NOT EXISTS doctor_tasks (
+      px_task_id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      doctor_id TEXT,
+      doctor_phone TEXT,
+      title TEXT NOT NULL,
+      content_format TEXT,
+      theme TEXT,
+      status TEXT DEFAULT 'pending_dispatch' CHECK(status IN ('pending_dispatch','assigned','dispatch_failed')),
+      dx_task_id TEXT,
+      dx_status TEXT,
+      assigned_at TEXT,
+      submitted_at TEXT,
+      reviewed_at TEXT,
+      dx_updated_at TEXT,
+      dx_last_synced_at TEXT,
+      latest_submission TEXT DEFAULT '{}',
+      latest_review TEXT DEFAULT '{}',
+      dx_idempotent INTEGER DEFAULT 0,
+      dispatch_error TEXT,
+      retry_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (batch_id) REFERENCES request_distribution_batches(id),
+      FOREIGN KEY (request_id) REFERENCES content_requests(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_doctor_tasks_batch ON doctor_tasks(batch_id);
+    CREATE INDEX IF NOT EXISTS idx_doctor_tasks_request ON doctor_tasks(request_id);
+  `);
+
+  const taskColumns = await dbAll<{ name: string }>('PRAGMA table_info(doctor_tasks)');
+  if (taskColumns.length > 0 && !taskColumns.some((row) => row.name === 'dx_idempotent')) {
+    await dbRun('ALTER TABLE doctor_tasks ADD COLUMN dx_idempotent INTEGER DEFAULT 0');
+  }
+  for (const column of [
+    ['submitted_at', 'TEXT'],
+    ['reviewed_at', 'TEXT'],
+    ['dx_updated_at', 'TEXT'],
+    ['dx_last_synced_at', 'TEXT'],
+    ['latest_submission', "TEXT DEFAULT '{}'"],
+    ['latest_review', "TEXT DEFAULT '{}'"],
+  ] as const) {
+    if (taskColumns.length > 0 && !taskColumns.some((row) => row.name === column[0])) {
+      await dbRun(`ALTER TABLE doctor_tasks ADD COLUMN ${column[0]} ${column[1]}`);
+    }
+  }
 }
 
 async function ensureCxStatsIntegration(): Promise<void> {

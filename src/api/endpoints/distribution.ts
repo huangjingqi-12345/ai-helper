@@ -76,3 +76,25 @@ export async function submitRequestDistributionBatch(
   const response = await apiClient.post<ApiResponse<RequestDistributionBatch>>(`/distribution/requests/${id}/batches`, data);
   return response.data;
 }
+
+export async function retryRequestDistributionBatch(id: string, batchId: string): Promise<ApiResponse<RequestDistributionBatch>> {
+  const response = await apiClient.post<ApiResponse<RequestDistributionBatch>>(`/distribution/requests/${id}/batches/${batchId}/retry`);
+  return response.data;
+}
+
+export async function syncDxTaskStatuses(): Promise<ApiResponse<{
+  fetched: number;
+  matched: number;
+  updated: number;
+  contentAdvanced: number;
+  cursor: string | null;
+}>> {
+  const response = await apiClient.post<ApiResponse<{
+    fetched: number;
+    matched: number;
+    updated: number;
+    contentAdvanced: number;
+    cursor: string | null;
+  }>>('/distribution/dx-tasks/sync');
+  return response.data;
+}

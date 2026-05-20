@@ -90,6 +90,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     'content_tags',
     'content_versions',
     'content_assets',
+    'doctor_tasks',
     'request_distribution_batches',
     'request_distribution_configs',
     'content_requests',
@@ -180,7 +181,11 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
   const activeDistributionProjectIds = distributionProjects.map((project) => project.id);
   if (activeDistributionProjectIds.length > 0) {
     await run(
-      `DELETE FROM projects WHERE id LIKE 'PRJ-%' AND id NOT IN (${activeDistributionProjectIds.map(() => '?').join(', ')})`,
+      `DELETE FROM projects
+       WHERE id LIKE 'PRJ-%'
+         AND id NOT IN (${activeDistributionProjectIds.map(() => '?').join(', ')})
+         AND id NOT IN (SELECT project_id FROM content WHERE project_id IS NOT NULL)
+         AND id NOT IN (SELECT project_id FROM content_requests WHERE project_id IS NOT NULL)`,
       activeDistributionProjectIds,
     );
   }
