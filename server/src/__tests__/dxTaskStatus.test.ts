@@ -21,6 +21,7 @@ describe('DX task status integration', () => {
           px_task_id: 'PX-REQ-1-BATCH-1-001',
           dx_task_id: 'tk_1',
           status: 'dx_review',
+          dx_editor_reviewed: true,
           updated_at: '2026-05-20T14:00:00+08:00',
           latest_submission: { submission_id: 451 },
         }],
@@ -33,7 +34,7 @@ describe('DX task status integration', () => {
     const result = await fetchDxTaskStatuses({ since: '2026-05-20T13:00:00+08:00', limit: 200 });
 
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]).toMatchObject({ px_task_id: 'PX-REQ-1-BATCH-1-001', status: 'dx_review' });
+    expect(result.items[0]).toMatchObject({ px_task_id: 'PX-REQ-1-BATCH-1-001', status: 'dx_review', dx_editor_reviewed: true });
     expect(fetchMock).toHaveBeenCalledWith(
       'https://dx.example.com/api/px/tasks?since=2026-05-20T13%3A00%3A00%2B08%3A00&limit=200',
       expect.objectContaining({

@@ -1,7 +1,8 @@
 import { dbAll, dbGet, dbRun, DB_DRIVER } from './connection.js';
 import { createHash, randomUUID } from 'crypto';
 import type { AuthUser } from '../middleware/auth.js';
-import { fetchDxContentAttachment, isDxContentApiConfigured, type DxContentAttachment } from '../integrations/dxContent.js';
+import { type DxContentAttachment } from '../integrations/dxContent.js';
+import { fetchDxContentDetail, fetchDxContentList, type DxContentDetail, type DxContentItem } from '../integrations/dxContentSync.js';
 import { fetchDxDoctorCandidates, isDxDoctorsApiConfigured } from '../integrations/dxDoctors.js';
 import { dispatchDxTask, type DxTaskDispatchRequest, type DxTaskPriority } from '../integrations/dxTaskDispatch.js';
 import { reviewDxTask, type DxTaskReviewNode, type DxTaskReviewVerdict } from '../integrations/dxTaskReview.js';
@@ -96,6 +97,94 @@ function mapContentRow(row: Record<string, unknown>) {
   };
 }
 
+function dxBodyFromDetail(detail: DxContentDetail): string {
+  if (detail.body_text?.trim()) return detail.body_text.trim();
+  const content = detail.content;
+  if (!content) return '';
+  const lines: string[] = [];
+  if (content.subtitle?.trim()) lines.push(content.subtitle.trim());
+  for (const section of content.sections ?? []) {
+    const parts = (section.bullets ?? []).map((bullet) => bullet.text).filter(Boolean);
+    if (section.markdown_body?.trim()) {
+      lines.push([section.title, section.markdown_body].filter(Boolean).join('\n'));
+    } else if (section.title || parts.length > 0) {
+      lines.push(`${section.title ?? ''}${parts.length > 0 ? `：${parts.join('；')}` : ''}`.trim());
+    }
+  }
+  return lines.filter(Boolean).join('\n\n');
+}
+
+function dxPreviewFromDetail(detail: DxContentDetail): string | undefined {
+  if (detail.preview_text?.trim()) return detail.preview_text.trim();
+  const body = dxBodyFromDetail(detail);
+  return body ? body.slice(0, 160) : undefined;
+}
+
+function dxPosterIdFromContent(content: Record<string, unknown>): number | null {
+  const parsed = Number(content.dxPosterId ?? content.dx_poster_id);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function resolveDxPosterForContent(contentId: string, content: Record<string, unknown>): Promise<DxContentItem | null> {
+  const existingPosterId = dxPosterIdFromContent(content);
+  if (existingPosterId) {
+    return {
+      poster_id: existingPosterId,
+      task_id: asText(content.dxTaskId),
+      version: 1,
+      title: asText(content.title),
+    };
+  }
+
+  const tasks = await dbAll<{ dx_task_id?: string }>(`
+    SELECT dt.dx_task_id
+    FROM doctor_tasks dt
+    INNER JOIN content_requests cr ON LOWER(cr.id) = LOWER(dt.request_id)
+    WHERE LOWER(cr.content_id) = LOWER(?)
+      AND dt.dx_task_id IS NOT NULL
+    ORDER BY COALESCE(dt.dx_updated_at, dt.updated_at, dt.created_at) DESC, dt.px_task_id ASC
+  `, [contentId]);
+  const dxTaskIds = new Set(tasks.map((task) => asText(task.dx_task_id)).filter(Boolean));
+  if (dxTaskIds.size === 0) return null;
+
+  const items = await fetchDxContentList();
+  const matched = items.find((item) => dxTaskIds.has(item.task_id)) ?? null;
+  if (matched) {
+    await dbRun('UPDATE content SET dx_poster_id = ?, updated_at = ? WHERE LOWER(id) = LOWER(?)', [matched.poster_id, new Date().toISOString(), contentId]);
+  }
+  return matched;
+}
+
+async function enrichContentWithDxDetail(content: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const contentId = asText(content.id);
+  if (!contentId) return content;
+  const matched = await resolveDxPosterForContent(contentId, content);
+  if (!matched) return content;
+
+  const detail = await fetchDxContentDetail(matched.poster_id);
+  if (!detail) return { ...content, dxPosterId: matched.poster_id, dxTaskId: matched.task_id };
+
+  const body = dxBodyFromDetail(detail);
+  return {
+    ...content,
+    content: body || content.content,
+    excerpt: dxPreviewFromDetail(detail) ?? content.excerpt,
+    publishedAt: detail.published_at ?? content.publishedAt,
+    dxPosterId: detail.poster_id,
+    dxTaskId: detail.task_id,
+    dxVersion: detail.version,
+    dxContent: detail.content,
+    coverImageUrl: detail.cover_image_url,
+    bodyText: detail.body_text,
+    previewText: detail.preview_text,
+    drug: detail.drug,
+    contentFormat: detail.content_format,
+    taskType: detail.task_type,
+    doctor: detail.doctor,
+    tags: detail.tags && detail.tags.length > 0 ? detail.tags : content.tags,
+  };
+}
+
 // === Overview ===
 export async function getOverviewStats(scope?: QueryScope) {
   if (!isPxAdmin(scope)) {
@@ -177,7 +266,7 @@ export async function getContentById(id: string, scope?: QueryScope) {
     WHERE LOWER(c.id) = LOWER(?)
     ${tenantSql}
   `, [id, ...tenant.params]);
-  return row ? mapContentRow(row) : null;
+  return row ? enrichContentWithDxDetail(mapContentRow(row)) : null;
 }
 
 async function createContentVersion(contentId: string, data: Record<string, unknown>, user?: QueryScope, changeNote = 'content saved') {
@@ -700,8 +789,13 @@ async function getLocalDxSyncTasks(scope?: QueryScope): Promise<Record<string, u
   return rows.map(mapDoctorTask);
 }
 
-async function maybeAdvanceContentFromDxStatus(task: Record<string, unknown>, dxStatus: string, now: string): Promise<boolean> {
-  if (!DX_TASK_REVIEW_STATUSES.has(dxStatus)) return false;
+function isDxTaskReadyForPxReview(item: DxTaskStatusItem): boolean {
+  if (typeof item.dx_editor_reviewed === 'boolean') return item.dx_editor_reviewed;
+  return DX_TASK_REVIEW_STATUSES.has(String(item.status));
+}
+
+async function maybeAdvanceContentFromDxStatus(task: Record<string, unknown>, item: DxTaskStatusItem, now: string): Promise<boolean> {
+  if (!isDxTaskReadyForPxReview(item)) return false;
   const request = await dbGet<Record<string, unknown>>('SELECT content_id FROM content_requests WHERE LOWER(id) = LOWER(?)', [task.requestId]);
   const contentId = asText(request?.content_id);
   if (!contentId) return false;
@@ -752,7 +846,7 @@ async function applyDxTaskStatus(item: DxTaskStatusItem, task: Record<string, un
     item.px_task_id,
   ]);
 
-  const advancedContent = await maybeAdvanceContentFromDxStatus(task, String(item.status), now);
+  const advancedContent = await maybeAdvanceContentFromDxStatus(task, item, now);
   return { changed, advancedContent };
 }
 
@@ -2085,6 +2179,27 @@ function mergeDxAttachment(row: Record<string, unknown>, dx: DxContentAttachment
   };
 }
 
+function buildDxApprovalAttachment(row: Record<string, unknown>, detail: DxContentDetail): DxContentAttachment {
+  const local = buildLocalApprovalAttachment(row);
+  return {
+    ...local,
+    contentId: local.contentId,
+    title: detail.title || local.title,
+    contentType: detail.content_format || local.contentType,
+    excerpt: dxPreviewFromDetail(detail) ?? local.excerpt,
+    body: dxBodyFromDetail(detail) || local.body,
+    tags: detail.tags && detail.tags.length > 0 ? detail.tags : local.tags,
+    author: detail.doctor?.name || local.author,
+    updatedAt: detail.published_at ?? local.updatedAt,
+    versionNo: detail.version || local.versionNo,
+    source: 'dx_api',
+    sourceLabel: 'DX API',
+    status: 'ready',
+    retrievedAt: new Date().toISOString(),
+    error: undefined,
+  };
+}
+
 export async function getApprovalTaskAttachment(id: string, scope?: QueryScope): Promise<DxContentAttachment | null> {
   await ensureApprovalTasksForReviewContent();
   const row = await dbGet<Record<string, unknown>>(`
@@ -2093,6 +2208,7 @@ export async function getApprovalTaskAttachment(id: string, scope?: QueryScope):
       c.title,
       c.author,
       c.type AS content_type,
+      c.dx_poster_id AS dx_poster_id,
       c.excerpt AS content_excerpt,
       c.content AS content_body,
       c.tags AS content_tags,
@@ -2120,25 +2236,17 @@ export async function getApprovalTaskAttachment(id: string, scope?: QueryScope):
   const contentId = String(task.contentId ?? '');
   let dxError: string | undefined;
 
-  if (isDxContentApiConfigured()) {
-    try {
-      const dxAttachment = await fetchDxContentAttachment(contentId, {
-        taskId: String(task.id ?? id),
-        tenantId: String(task.tenantId ?? scope?.tenantId ?? ''),
-      });
-      if (dxAttachment) return mergeDxAttachment(row, dxAttachment);
-    } catch (error) {
-      dxError = error instanceof Error ? error.message : 'DX API 调用失败';
-      if (!localDxFallbackAllowed()) {
-        return {
-          ...buildApprovalAttachmentStub(task),
-          status: 'unavailable',
-          error: dxError,
-        };
-      }
+  try {
+    const matched = await resolveDxPosterForContent(contentId, task);
+    if (matched) {
+      const detail = await fetchDxContentDetail(matched.poster_id);
+      if (detail) return buildDxApprovalAttachment(row, detail);
+      dxError = `DX content detail not found for poster_id ${matched.poster_id}`;
+    } else {
+      dxError = 'DX 内容列表中未找到匹配的 task_id';
     }
-  } else {
-    dxError = 'DX API 未配置（缺少 DX_API_BASE_URL）';
+  } catch (error) {
+    dxError = error instanceof Error ? error.message : 'DX API 调用失败';
     if (!localDxFallbackAllowed()) {
       return {
         ...buildApprovalAttachmentStub(task),

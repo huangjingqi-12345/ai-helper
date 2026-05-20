@@ -16,6 +16,7 @@ export interface DxTaskStatusItem {
   count?: number;
   unit_price?: number;
   status: DxTaskLifecycleStatus | string;
+  dx_editor_reviewed?: boolean;
   deadline?: string | null;
   assigned_at?: string | null;
   submitted_at?: string | null;
@@ -97,6 +98,10 @@ function asBool(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
+function optionalBool(value: unknown): boolean | undefined {
+  return value === undefined || value === null ? undefined : asBool(value);
+}
+
 function asNullableRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
@@ -118,6 +123,7 @@ function normalizeItem(value: unknown): DxTaskStatusItem | null {
     count: asNumber(item.count),
     unit_price: asNumber(item.unit_price),
     status: asString(item.status, 'assigned'),
+    dx_editor_reviewed: optionalBool(item.dx_editor_reviewed),
     deadline: asString(item.deadline) || null,
     assigned_at: asString(item.assigned_at) || null,
     submitted_at: asString(item.submitted_at) || null,

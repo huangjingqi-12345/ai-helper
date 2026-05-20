@@ -593,9 +593,13 @@ function AttachmentPanel({ attachments, loading = false, error }: { attachments:
               </Link>
             )}
           </div>
-          {attachment.excerpt && <p className="mt-3 rounded-md border border-border/70 bg-background/40 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground">{attachment.excerpt}</p>}
+          {attachment.excerpt && (
+            <p className="mt-3 rounded-md border border-border/70 bg-background/40 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground">
+              <InlineMarkdown text={attachment.excerpt} />
+            </p>
+          )}
           <div className="mt-3 max-h-40 overflow-y-auto rounded-md border border-border/70 bg-background/50 px-3 py-2 text-[12px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
-            {attachment.body || '暂无正文内容。'}
+            {attachment.body ? <InlineMarkdown text={attachment.body} /> : '暂无正文内容。'}
           </div>
           {(attachment.tags?.length ?? 0) > 0 && (
             <div className="mt-3 flex flex-wrap gap-1">
@@ -607,6 +611,19 @@ function AttachmentPanel({ attachments, loading = false, error }: { attachments:
         <div className="rounded-lg border border-dashed border-border bg-secondary/40 px-3 py-4 text-center text-[12px] text-muted-foreground">暂无可审核附件。</div>
       )}
     </section>
+  );
+}
+
+function InlineMarkdown({ text }: { text: string }): JSX.Element {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  return (
+    <>
+      {parts.map((part, index) => (
+        part.startsWith('**') && part.endsWith('**')
+          ? <strong key={`${part}-${index}`} className="font-semibold text-foreground">{part.slice(2, -2)}</strong>
+          : <span key={`${part}-${index}`}>{part}</span>
+      ))}
+    </>
   );
 }
 

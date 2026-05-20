@@ -18,7 +18,7 @@ import { getContentDxTaskStatus } from '@/api/endpoints/content';
 import { useContentStore } from '@/stores/useContentStore';
 import { CONTENT_TYPE_LABELS } from '@/utils/constants';
 import { formatDateOnly, formatNumber } from '@/utils/formatters';
-import type { DxTaskStatusDetail } from '@/types/content';
+import type { Content, DxTaskStatusDetail } from '@/types/content';
 
 const DX_STATUS_LABELS: Record<string, string> = {
   assigned: '医生制作中',
@@ -100,9 +100,11 @@ export function ContentDetail(): JSX.Element {
         meta={
           <>
             <Tag>{CONTENT_TYPE_LABELS[item.type] || item.type}</Tag>
+            {item.contentFormat && <Tag>{item.contentFormat}</Tag>}
+            {item.drug && <Tag>{item.drug}</Tag>}
             <Tag>{item.projectName}</Tag>
             <Tag>发布于 {item.publishedAt ? formatDateOnly(item.publishedAt) : '—'}</Tag>
-            <Tag>作者 {item.author}</Tag>
+            <Tag>作者 {item.doctor?.name || item.author}</Tag>
           </>
         }
       />
@@ -111,7 +113,7 @@ export function ContentDetail(): JSX.Element {
         <DxTaskStatusPanel task={dxTask} loading={dxTaskLoading} error={dxTaskError} />
       )}
 
-      <ContentBody content={item.content} />
+      <ContentBody item={item} />
 
       <div className="grid grid-cols-4 gap-4">
         <KpiCard label="推送人数" value={formatNumber(item.pushCount ?? 0)} unit="人" icon={Eye} delta={{ value: 4.5 }} hint="推送的总计患者数" />
@@ -156,24 +158,70 @@ export function ContentDetail(): JSX.Element {
   );
 }
 
-function ContentBody({ content }: { content: string }): JSX.Element {
+function ContentBody({ item }: { item: Content }): JSX.Element {
+  const content = item.bodyText || item.content;
   const blocks = content.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  const sections = item.dxContent?.sections ?? [];
+  const hasDxSections = sections.length > 0;
 
   return (
     <article className="rounded-xl border border-border bg-card px-5 py-4">
       <div className="border-b border-border/70 pb-3">
-        <div className="text-[14px] font-semibold text-foreground">内容正文</div>
-        <div className="mt-0.5 text-[11.5px] text-muted-foreground">当前内容稿件</div>
+        <div className="text-[14px] font-semibold text-foreground">{item.dxContent?.title || '内容正文'}</div>
+        <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+          {item.dxPosterId ? `DX 海报 #${item.dxPosterId}${item.dxVersion ? ` · v${item.dxVersion}` : ''}` : '当前内容稿件'}
+        </div>
       </div>
-      <div className="mt-4 space-y-3 text-[13px] leading-6 text-foreground">
+      {item.dxContent?.subtitle && (
+        <p className="mt-4 rounded-lg border border-primary/20 bg-primary/10 px-4 py-3 text-[13px] leading-6 text-foreground">
+          <InlineMarkdown text={item.dxContent.subtitle} />
+        </p>
+      )}
+      {hasDxSections && (
+        <div className="mt-4 space-y-4">
+          {sections.map((section, index) => (
+            <section key={`${section.title ?? 'section'}-${index}`} className="rounded-lg border border-border/70 bg-background/35 p-4">
+              <div className="text-[14px] font-semibold text-foreground">{section.title || `段落 ${index + 1}`}</div>
+              {(section.bullets?.length ?? 0) > 0 && (
+                <ul className="mt-3 space-y-2">
+                  {section.bullets?.map((bullet, bulletIndex) => (
+                    <li key={`${bullet.text ?? 'bullet'}-${bulletIndex}`} className="flex gap-2 text-[12.5px] leading-6 text-muted-foreground">
+                      <span className="mt-0.5 shrink-0 text-[13px]">{bullet.icon || '•'}</span>
+                      <span className={bullet.highlight ? 'text-foreground' : undefined}><InlineMarkdown text={bullet.text ?? ''} /></span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {section.markdown_body && <p className="mt-3 whitespace-pre-wrap text-[12.5px] leading-6 text-muted-foreground"><InlineMarkdown text={section.markdown_body} /></p>}
+              {section.illustration_url && (
+                <img src={section.illustration_url} alt={section.title || '患教插图'} className="mt-3 max-h-[220px] rounded-md border border-border/60 object-cover" />
+              )}
+            </section>
+          ))}
+        </div>
+      )}
+      {!hasDxSections && <div className="mt-4 space-y-3 text-[13px] leading-6 text-foreground">
         {blocks.length > 0 ? blocks.map((block, index) => {
           if (block.startsWith('# ')) {
             return <h2 key={index} className="text-[17px] font-semibold leading-7">{block.replace(/^#\s*/, '')}</h2>;
           }
-          return <p key={index} className="whitespace-pre-wrap text-muted-foreground">{block}</p>;
+          return <p key={index} className="whitespace-pre-wrap text-muted-foreground"><InlineMarkdown text={block} /></p>;
         }) : <p className="text-muted-foreground">暂无正文内容</p>}
-      </div>
+      </div>}
     </article>
+  );
+}
+
+function InlineMarkdown({ text }: { text: string }): JSX.Element {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  return (
+    <>
+      {parts.map((part, index) => (
+        part.startsWith('**') && part.endsWith('**')
+          ? <strong key={`${part}-${index}`} className="font-semibold text-foreground">{part.slice(2, -2)}</strong>
+          : <span key={`${part}-${index}`}>{part}</span>
+      ))}
+    </>
   );
 }
 

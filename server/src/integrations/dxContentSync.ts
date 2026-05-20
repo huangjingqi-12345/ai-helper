@@ -51,6 +51,8 @@ export interface DxContentItem {
   tags?: string[];
 }
 
+export type DxContentDetail = DxContentItem;
+
 interface DxContentListResponse {
   items: DxContentItem[];
   next_cursor: number | null;
@@ -58,7 +60,7 @@ interface DxContentListResponse {
 
 function getConfig() {
   const baseUrl = (process.env.DX_API_BASE_URL || DEFAULT_DX_API_BASE_URL).replace(/\/+$/, '');
-  const token = process.env.DOCTOR_SERVER_TOKEN || '';
+  const token = process.env.DOCTOR_SERVER_TOKEN || process.env.DX_API_TOKEN || '';
   const timeoutMs = Number(process.env.DX_API_TIMEOUT_MS || 10000);
   return { baseUrl, token, timeoutMs };
 }
@@ -132,6 +134,52 @@ export async function fetchDxContentList(doctorId?: string): Promise<DxContentIt
   }
 
   return allItems;
+}
+
+/**
+ * Fetch a single DX poster detail.
+ *
+ * DX API: GET /api/cx-access/contents/{poster_id}
+ */
+export async function fetchDxContentDetail(posterId: number): Promise<DxContentDetail | null> {
+  const { baseUrl, token, timeoutMs } = getConfig();
+
+  if (!baseUrl || !token) {
+    logger.warn('DX Content detail not configured (missing DX_API_BASE_URL or DOCTOR_SERVER_TOKEN/DX_API_TOKEN)');
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const url = `${baseUrl}/api/cx-access/contents/${encodeURIComponent(String(posterId))}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`DX content detail API returned ${response.status}: ${text.slice(0, 200)}`);
+    }
+
+    return (await response.json()) as DxContentDetail;
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') {
+      logger.error({ posterId, timeout: timeoutMs }, 'DX content detail API timed out');
+    } else {
+      logger.error({ err: error, posterId }, 'Failed to fetch DX content detail');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**

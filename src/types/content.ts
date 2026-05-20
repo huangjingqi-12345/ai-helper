@@ -33,6 +33,33 @@ export interface Content {
   excerpt?: string;
   projectBrief?: string;
   content: string;
+  dxContent?: {
+    title?: string;
+    subtitle?: string;
+    sections?: Array<{
+      title?: string;
+      bullets?: Array<{ text?: string; icon?: string; highlight?: boolean }>;
+      markdown_body?: string;
+      illustration_url?: string;
+    }>;
+  };
+  coverImageUrl?: string;
+  bodyText?: string;
+  previewText?: string;
+  dxPosterId?: number;
+  dxTaskId?: string;
+  dxVersion?: number;
+  drug?: string;
+  contentFormat?: string;
+  taskType?: string;
+  doctor?: {
+    doctor_id?: string;
+    name?: string;
+    title?: string;
+    hospital?: string;
+    department?: string;
+    avatar_url?: string;
+  };
   tags: string[];
   pushCount?: number;
   readUsers?: number;

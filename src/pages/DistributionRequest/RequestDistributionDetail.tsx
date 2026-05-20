@@ -12,6 +12,7 @@ import {
   PackagePlus,
   Plus,
   Save,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
@@ -116,6 +117,12 @@ function titleMatches(doctorTitle: string, selectedTitles: string[]): boolean {
   const title = doctorTitle.trim();
   if (!title || title === '未填写职称') return false;
   return selectedTitles.some((selected) => title.includes(selected) || selected.includes(title));
+}
+
+function phoneMatches(doctorPhone: string, keyword: string): boolean {
+  const normalizedKeyword = keyword.replace(/\D/g, '');
+  if (!normalizedKeyword) return true;
+  return doctorPhone.replace(/\D/g, '').includes(normalizedKeyword);
 }
 
 function doctorExperience(doctor: DoctorCandidate): number {
@@ -530,10 +537,11 @@ function DoctorPolicyEditor({
   const wlIds = config.whitelistDoctorIds;
   const wlQuota = config.whitelistDoctorQuota;
   const selectedTitles = config.titleFilters;
+  const [doctorPhoneKeyword, setDoctorPhoneKeyword] = useState('');
 
   const whitelistCandidates = useMemo(
-    () => sortByWorkloadAsc(doctors.filter((doctor) => doctor.available && titleMatches(doctor.title, selectedTitles))),
-    [doctors, selectedTitles]
+    () => sortByWorkloadAsc(doctors.filter((doctor) => doctor.available && titleMatches(doctor.title, selectedTitles) && phoneMatches(doctor.phone, doctorPhoneKeyword))),
+    [doctors, doctorPhoneKeyword, selectedTitles]
   );
   const strategyCandidates = useMemo(
     () => sortByWorkloadAsc(doctors.filter((doctor) => doctor.available && titleMatches(doctor.title, selectedTitles))),
@@ -705,9 +713,19 @@ function DoctorPolicyEditor({
 
         {wlEnabled && (
           <>
-            <div className="mb-3 mt-6 flex items-center justify-between gap-3">
+            <div className="mb-3 mt-6 flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-[14px] font-semibold text-foreground">Step 2 · 勾选指定医生并填写篇数</h3>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <label className="relative block">
+                  <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="search"
+                    value={doctorPhoneKeyword}
+                    onChange={(event) => setDoctorPhoneKeyword(event.target.value)}
+                    placeholder="按手机号搜索"
+                    className="h-7 w-44 rounded border border-border bg-background pl-7 pr-2 text-[11.5px] text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/50"
+                  />
+                </label>
                 <Badge color="gray" className="text-[11px]">候选 {whitelistCandidates.length} · 已选 {selectedDoctors.length}</Badge>
                 {whitelistCandidates.length > 0 && (
                   <Button variant="secondary" size="sm" className="h-7 px-2 text-[11.5px]" onClick={toggleSelectAll}>
@@ -718,7 +736,11 @@ function DoctorPolicyEditor({
             </div>
 
             {whitelistCandidates.length === 0 ? (
-              <div className="rounded border border-dashed border-border bg-muted/20 p-6 text-center text-[12px] text-muted-foreground">请先在 Step 1 选择 <span className="font-semibold text-foreground">职称</span> 以命中候选医生。</div>
+              <div className="rounded border border-dashed border-border bg-muted/20 p-6 text-center text-[12px] text-muted-foreground">
+                {doctorPhoneKeyword.trim()
+                  ? '当前手机号搜索没有命中候选医生，请调整关键词。'
+                  : <>请先在 Step 1 选择 <span className="font-semibold text-foreground">职称</span> 以命中候选医生。</>}
+              </div>
             ) : (
               <div className="max-h-[320px] space-y-1.5 overflow-y-auto rounded border border-border bg-background/40 p-2">
                 {whitelistCandidates.map((doctor) => {
