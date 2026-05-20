@@ -14,6 +14,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { KpiCard } from '@/components/KpiCard';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Spinner } from '@/components/ui/Spinner';
+import { syncDxTaskStatuses } from '@/api/endpoints/distribution';
 import { useContentStore } from '@/stores/useContentStore';
 import { CONTENT_TYPE_LABELS } from '@/utils/constants';
 import { formatDateOnly, formatNumber } from '@/utils/formatters';
@@ -24,7 +25,9 @@ export function ContentDetail(): JSX.Element {
   const { selectedItem, loading, error, fetchById, clearSelected } = useContentStore();
 
   useEffect(() => {
-    fetchById(id);
+    void syncDxTaskStatuses().catch(() => undefined).finally(() => {
+      void fetchById(id);
+    });
     return () => clearSelected();
   }, [clearSelected, fetchById, id]);
 

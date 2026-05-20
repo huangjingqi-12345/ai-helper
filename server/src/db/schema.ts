@@ -411,9 +411,42 @@ const sqliteSchema = `
     total_count INTEGER DEFAULT 0,
     whitelist_total INTEGER DEFAULT 0,
     strategy_total INTEGER DEFAULT 0,
+    dispatch_success_count INTEGER DEFAULT 0,
+    dispatch_failed_count INTEGER DEFAULT 0,
+    dispatch_status TEXT DEFAULT 'pending',
     operator TEXT,
     submitted_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    FOREIGN KEY (request_id) REFERENCES content_requests(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS doctor_tasks (
+    px_task_id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    doctor_id TEXT,
+    doctor_phone TEXT,
+    title TEXT NOT NULL,
+    content_format TEXT,
+    theme TEXT,
+    status TEXT DEFAULT 'pending_dispatch' CHECK(status IN ('pending_dispatch','assigned','dispatch_failed')),
+    dx_task_id TEXT,
+    dx_status TEXT,
+    assigned_at TEXT,
+    submitted_at TEXT,
+    reviewed_at TEXT,
+    dx_updated_at TEXT,
+    dx_last_synced_at TEXT,
+    latest_submission TEXT DEFAULT '{}',
+    latest_review TEXT DEFAULT '{}',
+    dx_idempotent INTEGER DEFAULT 0,
+    dispatch_error TEXT,
+    retry_count INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (batch_id) REFERENCES request_distribution_batches(id),
     FOREIGN KEY (request_id) REFERENCES content_requests(id)
   );
 
@@ -601,6 +634,8 @@ const sqliteSchema = `
   CREATE INDEX IF NOT EXISTS idx_distribution_project ON distribution_strategies(project_id);
   CREATE INDEX IF NOT EXISTS idx_distribution_projects_status ON distribution_projects(status);
   CREATE INDEX IF NOT EXISTS idx_request_distribution_batches_request ON request_distribution_batches(request_id);
+  CREATE INDEX IF NOT EXISTS idx_doctor_tasks_batch ON doctor_tasks(batch_id);
+  CREATE INDEX IF NOT EXISTS idx_doctor_tasks_request ON doctor_tasks(request_id);
   CREATE INDEX IF NOT EXISTS idx_approval_tasks_tenant_status ON approval_tasks(tenant_id, status);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_time ON audit_logs(tenant_id, created_at);
 `;
@@ -850,7 +885,8 @@ const postgresSchema = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS request_distribution_batches (id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES content_requests(id), batch_matrix JSONB DEFAULT '{}'::jsonb, total_count INTEGER DEFAULT 0, whitelist_total INTEGER DEFAULT 0, strategy_total INTEGER DEFAULT 0, operator TEXT, submitted_at TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS request_distribution_batches (id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES content_requests(id), batch_matrix JSONB DEFAULT '{}'::jsonb, total_count INTEGER DEFAULT 0, whitelist_total INTEGER DEFAULT 0, strategy_total INTEGER DEFAULT 0, dispatch_success_count INTEGER DEFAULT 0, dispatch_failed_count INTEGER DEFAULT 0, dispatch_status TEXT DEFAULT 'pending', operator TEXT, submitted_at TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS doctor_tasks (px_task_id TEXT PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES request_distribution_batches(id), request_id TEXT NOT NULL REFERENCES content_requests(id), project_id TEXT NOT NULL, tenant_id TEXT NOT NULL, doctor_id TEXT, doctor_phone TEXT, title TEXT NOT NULL, content_format TEXT, theme TEXT, status TEXT DEFAULT 'pending_dispatch' CHECK(status IN ('pending_dispatch','assigned','dispatch_failed')), dx_task_id TEXT, dx_status TEXT, assigned_at TEXT, submitted_at TEXT, reviewed_at TEXT, dx_updated_at TEXT, dx_last_synced_at TEXT, latest_submission JSONB DEFAULT '{}'::jsonb, latest_review JSONB DEFAULT '{}'::jsonb, dx_idempotent BOOLEAN DEFAULT FALSE, dispatch_error TEXT, retry_count INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 
   CREATE TABLE IF NOT EXISTS approval_items (id TEXT PRIMARY KEY, content_id TEXT NOT NULL, content_title TEXT NOT NULL, submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL, status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')), reviewed_by TEXT, reviewed_at TEXT, comments TEXT, project_name TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS approval_flows (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), name TEXT NOT NULL, description TEXT, status TEXT DEFAULT 'active' CHECK(status IN ('active','inactive')), return_policy TEXT DEFAULT 'submitter' CHECK(return_policy IN ('submitter','previous','first')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -877,6 +913,8 @@ const postgresSchema = `
   CREATE INDEX IF NOT EXISTS idx_distribution_project ON distribution_strategies(project_id);
   CREATE INDEX IF NOT EXISTS idx_distribution_projects_status ON distribution_projects(status);
   CREATE INDEX IF NOT EXISTS idx_request_distribution_batches_request ON request_distribution_batches(request_id);
+  CREATE INDEX IF NOT EXISTS idx_doctor_tasks_batch ON doctor_tasks(batch_id);
+  CREATE INDEX IF NOT EXISTS idx_doctor_tasks_request ON doctor_tasks(request_id);
   CREATE INDEX IF NOT EXISTS idx_approval_tasks_tenant_status ON approval_tasks(tenant_id, status);
   CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_time ON audit_logs(tenant_id, created_at);
@@ -1008,6 +1046,16 @@ const sqliteColumnSpecs: SqliteColumnSpec[] = [
   { table: 'users', name: 'password_salt', definition: 'TEXT' },
   { table: 'users', name: 'note', definition: "TEXT DEFAULT ''" },
   { table: 'users', name: 'updated_at', definition: 'TEXT' },
+  { table: 'request_distribution_batches', name: 'dispatch_success_count', definition: 'INTEGER DEFAULT 0' },
+  { table: 'request_distribution_batches', name: 'dispatch_failed_count', definition: 'INTEGER DEFAULT 0' },
+  { table: 'request_distribution_batches', name: 'dispatch_status', definition: "TEXT DEFAULT 'pending'" },
+  { table: 'doctor_tasks', name: 'dx_idempotent', definition: 'INTEGER DEFAULT 0' },
+  { table: 'doctor_tasks', name: 'submitted_at', definition: 'TEXT' },
+  { table: 'doctor_tasks', name: 'reviewed_at', definition: 'TEXT' },
+  { table: 'doctor_tasks', name: 'dx_updated_at', definition: 'TEXT' },
+  { table: 'doctor_tasks', name: 'dx_last_synced_at', definition: 'TEXT' },
+  { table: 'doctor_tasks', name: 'latest_submission', definition: "TEXT DEFAULT '{}'" },
+  { table: 'doctor_tasks', name: 'latest_review', definition: "TEXT DEFAULT '{}'" },
 ];
 
 async function ensureSqliteColumns(): Promise<void> {
@@ -1031,6 +1079,16 @@ async function ensurePostgresColumns(): Promise<void> {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS password_salt TEXT;
     ALTER TABLE projects ADD COLUMN IF NOT EXISTS brand_name TEXT;
     ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_name TEXT;
+    ALTER TABLE request_distribution_batches ADD COLUMN IF NOT EXISTS dispatch_success_count INTEGER DEFAULT 0;
+    ALTER TABLE request_distribution_batches ADD COLUMN IF NOT EXISTS dispatch_failed_count INTEGER DEFAULT 0;
+    ALTER TABLE request_distribution_batches ADD COLUMN IF NOT EXISTS dispatch_status TEXT DEFAULT 'pending';
+    ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS dx_idempotent BOOLEAN DEFAULT FALSE;
+    ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS submitted_at TEXT;
+    ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS reviewed_at TEXT;
+    ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS dx_updated_at TEXT;
+    ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS dx_last_synced_at TEXT;
+    ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS latest_submission JSONB DEFAULT '{}'::jsonb;
+    ALTER TABLE doctor_tasks ADD COLUMN IF NOT EXISTS latest_review JSONB DEFAULT '{}'::jsonb;
   `);
 }
 

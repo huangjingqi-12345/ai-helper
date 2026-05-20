@@ -28,6 +28,7 @@ import { showToast } from '@/components/ui/Toast';
 import {
   getDistributionRequestWorkbench,
   saveRequestDistributionConfig,
+  syncDxTaskStatuses,
   submitRequestDistributionBatch,
 } from '@/api/endpoints/distribution';
 import type {
@@ -175,10 +176,12 @@ function normalizeDoctorConfig(config: RequestDistributionConfig, doctors: Docto
   );
   const clearLegacyDefaults = hasRemoteDoctors && hasLegacyDemoDoctorIds && legacyDemoTitleDefaults;
   const whitelistEnabled = clearLegacyDefaults ? false : config.whitelistEnabled && whitelistDoctorIds.length > 0;
+  const assignmentMode = whitelistEnabled ? 'whitelist' : 'strategy';
   return {
     ...config,
-    assignmentMode: whitelistEnabled && config.strategyEnabled ? 'mixed' : whitelistEnabled ? 'whitelist' : 'strategy',
-    whitelistEnabled,
+    assignmentMode,
+    whitelistEnabled: assignmentMode === 'whitelist',
+    strategyEnabled: assignmentMode === 'strategy',
     titleFilters: clearLegacyDefaults ? [] : config.titleFilters,
     whitelistDoctorIds,
     whitelistDoctorQuota,
@@ -200,6 +203,7 @@ export function RequestDistributionDetail(): JSX.Element {
     setLoading(true);
     setError('');
     try {
+      await syncDxTaskStatuses().catch(() => undefined);
       const res = await getDistributionRequestWorkbench(ticketId);
       setWorkbench(res.data);
       setConfig(normalizeDoctorConfig(res.data.config, res.data.doctors));
@@ -227,8 +231,8 @@ export function RequestDistributionDetail(): JSX.Element {
       .filter(([doctorId]) => config.whitelistDoctorIds.includes(doctorId))
       .reduce((sum, [, value]) => sum + Math.max(0, Number(value) || 0), 0);
   }, [config]);
-  const whitelistTotal = Math.min(batchTotal, whitelistQuotaTotal);
-  const strategyTotal = config?.strategyEnabled ? Math.max(0, batchTotal - whitelistTotal) : 0;
+  const whitelistTotal = config?.assignmentMode === 'whitelist' ? whitelistQuotaTotal : 0;
+  const strategyTotal = config?.assignmentMode === 'strategy' ? batchTotal : 0;
   const unassignedTotal = Math.max(0, batchTotal - whitelistTotal - strategyTotal);
 
   const saveConfig = async (nextConfig = config) => {
@@ -262,7 +266,8 @@ export function RequestDistributionDetail(): JSX.Element {
   const submitBatch = async () => {
     if (!request) return;
     if (batchTotal <= 0) return showToast('请先填写本次分发的主题 × 形式篇数', 'error');
-    if (unassignedTotal > 0) return showToast(`还有 ${unassignedTotal} 篇未分配，请启用策略分发或提高医生指定篇数`, 'error');
+    if (config?.assignmentMode === 'whitelist' && whitelistQuotaTotal !== batchTotal) return showToast(`指定分发需刚好分完全部 ${batchTotal} 篇，当前已指定 ${whitelistQuotaTotal} 篇`, 'error');
+    if (unassignedTotal > 0) return showToast(`还有 ${unassignedTotal} 篇未分配，请调整分发方式`, 'error');
     setSaving(true);
     try {
       const res = await submitRequestDistributionBatch(request.id, {
@@ -276,7 +281,9 @@ export function RequestDistributionDetail(): JSX.Element {
         batches: [res.data, ...current.batches],
       } : current);
       setBatchMatrix({});
-      showToast(`已提交本批分发 ${res.data.totalCount} 篇`, 'success');
+      const failed = res.data.dispatchFailedCount ?? 0;
+      const success = res.data.dispatchSuccessCount ?? 0;
+      showToast(failed > 0 ? `已提交本批 ${res.data.totalCount} 篇：DX 成功 ${success} 篇，失败 ${failed} 篇` : `已提交本批 ${res.data.totalCount} 篇，DX 派单成功 ${success} 篇`, failed > 0 ? 'error' : 'success');
     } catch {
       showToast('提交分发批次失败，请检查后端服务', 'error');
     } finally {
@@ -529,13 +536,12 @@ function DoctorPolicyEditor({
     [doctors, selectedTitles]
   );
   const strategyCandidates = useMemo(
-    () => sortByWorkloadAsc(doctors.filter((doctor) => doctor.available && titleMatches(doctor.title, selectedTitles) && !wlIds.includes(doctor.id))),
-    [doctors, selectedTitles, wlIds]
+    () => sortByWorkloadAsc(doctors.filter((doctor) => doctor.available && titleMatches(doctor.title, selectedTitles))),
+    [doctors, selectedTitles]
   );
   const selectedDoctors = useMemo(() => wlIds.map((id) => doctors.find((doctor) => doctor.id === id)).filter(Boolean) as DoctorCandidate[], [doctors, wlIds]);
   const wlAssignedTotal = selectedDoctors.reduce((sum, doctor) => sum + Math.max(0, wlQuota[doctor.id] ?? 0), 0);
-  const strategyRemaining = Math.max(0, contentCount - wlAssignedTotal);
-  const strategyAssignments = stEnabled ? allocateStrategy(strategyCandidates, strategyRemaining) : [];
+  const strategyAssignments = stEnabled ? allocateStrategy(strategyCandidates, contentCount) : [];
   const strategyAssignedTotal = strategyAssignments.reduce((sum, assignment) => sum + assignment.count, 0);
 
   const patch = (partial: Partial<RequestDistributionConfig>) => onChange({ ...config, ...partial });
@@ -549,17 +555,17 @@ function DoctorPolicyEditor({
 
   const toggleMode = (mode: 'whitelist' | 'strategy') => {
     if (mode === 'whitelist') {
-      const nextEnabled = !wlEnabled;
       patch({
-        whitelistEnabled: nextEnabled,
-        assignmentMode: nextEnabled && !stEnabled ? 'whitelist' : stEnabled ? 'mixed' : 'strategy',
+        assignmentMode: 'whitelist',
+        whitelistEnabled: true,
+        strategyEnabled: false,
       });
       return;
     }
-    const nextEnabled = !stEnabled;
     patch({
-      strategyEnabled: nextEnabled,
-      assignmentMode: nextEnabled && !wlEnabled ? 'strategy' : wlEnabled ? 'mixed' : 'whitelist',
+      assignmentMode: 'strategy',
+      whitelistEnabled: false,
+      strategyEnabled: true,
     });
   };
 
@@ -610,10 +616,10 @@ function DoctorPolicyEditor({
   };
 
   const handleSave = () => {
-    if (!wlEnabled && !stEnabled) return showToast('请至少启用一种分发方式', 'error');
+    if (!wlEnabled && !stEnabled) return showToast('请选择一种分发方式', 'error');
     if (wlEnabled && selectedDoctors.length === 0) return showToast('已开启指定分发，请勾选医生并填写本人篇数', 'error');
     if (wlEnabled && wlAssignedTotal === 0) return showToast('指定分发已勾选医生但篇数仍为 0，请填写各医生承担篇数', 'error');
-    if (contentCount > 0 && wlAssignedTotal > contentCount) return showToast(`指定分发合计 ${wlAssignedTotal} 篇 已超过本次分发总篇数 ${contentCount}`, 'error');
+    if (contentCount > 0 && wlAssignedTotal !== contentCount) return showToast(`指定分发必须刚好分完全部 ${contentCount} 篇，当前已指定 ${wlAssignedTotal} 篇`, 'error');
     void onSave(config);
   };
 
@@ -626,13 +632,12 @@ function DoctorPolicyEditor({
       <div className="rounded-lg border border-border bg-card/60 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.14)]">
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-primary" />
-          <h3 className="text-[14px] font-semibold text-foreground">分发方式（可同时启用）</h3>
+          <h3 className="text-[14px] font-semibold text-foreground">分发方式（二选一）</h3>
         </div>
         <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-          产品规则：先用<strong className="mx-0.5 text-foreground">指定分发</strong>给勾选医生派指定篇数；
-          剩余 <span className="tabular-nums text-foreground">{strategyRemaining}</span> 篇由
-          <strong className="mx-0.5 text-foreground">策略分发</strong>按医生<strong className="text-foreground"> 当前工作负载 </strong>
-          升序自动派发，工作负载相同时优先给历史已发布数更高的医生。
+          产品规则：<strong className="mx-0.5 text-foreground">指定分发</strong>必须由运营把本批全部篇数分配完；
+          <strong className="mx-0.5 text-foreground">策略分发</strong>则由系统按医生<strong className="text-foreground"> 当前工作负载 </strong>
+          升序自动派发本批全部篇数，工作负载相同时优先给历史已发布数更高的医生。
         </p>
 
         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -640,14 +645,14 @@ function DoctorPolicyEditor({
             active={wlEnabled}
             onClick={() => toggleMode('whitelist')}
             title="指定分发"
-            desc="在职称命中的候选池中勾选医生，并为每位医生填写本人篇数"
+            desc="勾选医生并填写篇数，合计必须等于本批总篇数"
             icon={<Users className="h-4 w-4" />}
           />
           <ModeCard
             active={stEnabled}
             onClick={() => toggleMode('strategy')}
             title="策略分发"
-            desc="按进行中任务 asc、历史已发布 desc 排序，自动平均派发剩余篇数"
+            desc="按进行中任务 asc、历史已发布 desc 排序，自动分完全部篇数"
             icon={<Activity className="h-4 w-4" />}
           />
         </div>
@@ -657,8 +662,8 @@ function DoctorPolicyEditor({
             <div className="mb-0.5 font-semibold text-emerald-100">策略分发 · 负载均衡逻辑</div>
             <div>
               系统对候选池按<strong className="mx-0.5">进行中任务数 asc</strong>排序，工作负载相同时按
-              <strong className="mx-0.5">历史已发布数 desc</strong>排序，将剩余篇数<strong className="mx-0.5">平均派发</strong>给前 N 位医生；
-              当出现余数时优先补给当前负载更低、历史经验更高的医生。已被指定分发选中的医生<strong className="mx-0.5">不再参与</strong>策略分发，避免重复。
+              <strong className="mx-0.5">历史已发布数 desc</strong>排序，将本批全部篇数<strong className="mx-0.5">平均派发</strong>给前 N 位医生；
+              当出现余数时优先补给当前负载更低、历史经验更高的医生。
             </div>
           </div>
         )}
@@ -748,6 +753,7 @@ function DoctorPolicyEditor({
                 <div className="text-muted-foreground">
                   指定分发已分 <span className="tabular-nums font-semibold text-foreground">{wlAssignedTotal}</span> / 本批 <span className="tabular-nums font-semibold text-foreground">{contentCount}</span> 篇
                   {wlAssignedTotal > contentCount && <span className="ml-2 text-rose-300">已超出 {wlAssignedTotal - contentCount} 篇</span>}
+                  {wlAssignedTotal < contentCount && <span className="ml-2 text-amber-300">还差 {contentCount - wlAssignedTotal} 篇</span>}
                 </div>
                 <Button variant="secondary" size="sm" className="h-7 px-2 text-[11.5px]" onClick={distributeEvenly}><Sparkles className="h-3 w-3" />按本批总数平均分配</Button>
               </div>
@@ -767,9 +773,7 @@ function DoctorPolicyEditor({
           <Badge color="gray" className="text-[11px]">合计 {contentCount} 篇</Badge>
         </div>
         <p className="mt-1 text-[12px] text-muted-foreground">
-          {wlEnabled && stEnabled
-            ? '上半区为指定医生及其篇数；下半区为剩余篇数按工作负载升序的策略分发预估。'
-            : wlEnabled
+          {wlEnabled
               ? '仅启用指定分发：仅按已勾选医生派发对应篇数。'
               : '仅启用策略分发：按候选医生工作负载 asc、历史已发布 desc 平均派发。'}
         </p>
@@ -795,8 +799,6 @@ function DoctorPolicyEditor({
             </div>
             {strategyCandidates.length === 0 ? (
               <div className="rounded border border-dashed border-border bg-muted/20 p-4 text-center text-[12px] text-muted-foreground">当前筛选条件下没有命中的候选医生。</div>
-            ) : strategyRemaining === 0 ? (
-              <div className="rounded border border-dashed border-border bg-muted/20 p-4 text-center text-[12px] text-muted-foreground">指定分发已覆盖全部 {contentCount} 篇，无需走策略分发。</div>
             ) : (
               <div className="max-h-[260px] space-y-1.5 overflow-y-auto pr-1">
                 {strategyAssignments.map((assignment, index) => {
@@ -859,6 +861,13 @@ function DoctorRow({ doctor, rank, assigned }: { doctor: DoctorCandidate; rank: 
 }
 
 function HistoryCard({ batches }: { batches: DistributionRequestWorkbench['batches'] }): JSX.Element {
+  const statusLabel: Record<string, string> = {
+    pending: '待派单',
+    assigned: '已派单',
+    partial_failed: '部分失败',
+    dispatch_failed: '派单失败',
+  };
+
   return (
     <Card>
       <div className="flex items-center gap-2"><History className="h-4 w-4 text-accent-blue" /><h2 className="text-base font-semibold text-text-primary">历史分发批次</h2><Badge color="gray">{batches.length} 次</Badge></div>
@@ -867,8 +876,32 @@ function HistoryCard({ batches }: { batches: DistributionRequestWorkbench['batch
       ) : (
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-xs text-text-muted"><tr className="border-b border-border"><th className="px-2 py-2 text-left font-medium">批次</th><th className="px-2 py-2 text-left font-medium">时间</th><th className="px-2 py-2 text-left font-medium">操作人</th><th className="px-2 py-2 text-left font-medium">主题×形式</th><th className="px-2 py-2 text-right font-medium">指定 / 策略 / 合计</th></tr></thead>
-            <tbody>{batches.map((batch) => <tr key={batch.id} className="border-b border-border/60"><td className="px-2 py-3 font-mono text-xs text-text-muted">{batch.id}</td><td className="px-2 py-3 text-xs text-text-secondary">{batch.submittedAt}</td><td className="px-2 py-3 text-xs text-text-secondary">{batch.operator || 'PX 运营组'}</td><td className="px-2 py-3"><div className="flex flex-wrap gap-1">{matrixCells(batch.batchMatrix).map((cell) => <Badge key={cell} color="gray">{cell}</Badge>)}</div></td><td className="px-2 py-3 text-right font-mono text-xs text-text-primary">{batch.whitelistTotal} / {batch.strategyTotal} / {batch.totalCount}</td></tr>)}</tbody>
+            <thead className="text-xs text-text-muted"><tr className="border-b border-border"><th className="px-2 py-2 text-left font-medium">批次</th><th className="px-2 py-2 text-left font-medium">时间</th><th className="px-2 py-2 text-left font-medium">操作人</th><th className="px-2 py-2 text-left font-medium">主题×形式</th><th className="px-2 py-2 text-left font-medium">DX 下发</th><th className="px-2 py-2 text-right font-medium">指定 / 策略 / 合计</th></tr></thead>
+            <tbody>{batches.map((batch) => {
+              const failedTasks = (batch.tasks ?? []).filter((task) => task.status === 'dispatch_failed');
+              const dispatchStatus = batch.dispatchStatus ?? 'pending';
+              return (
+                <tr key={batch.id} className="border-b border-border/60 align-top">
+                  <td className="px-2 py-3 font-mono text-xs text-text-muted">{batch.id}</td>
+                  <td className="px-2 py-3 text-xs text-text-secondary">{batch.submittedAt}</td>
+                  <td className="px-2 py-3 text-xs text-text-secondary">{batch.operator || 'PX 运营组'}</td>
+                  <td className="px-2 py-3"><div className="flex flex-wrap gap-1">{matrixCells(batch.batchMatrix).map((cell) => <Badge key={cell} color="gray">{cell}</Badge>)}</div></td>
+                  <td className="px-2 py-3 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge color={dispatchStatus === 'assigned' ? 'green' : dispatchStatus === 'pending' ? 'gray' : 'red'}>{statusLabel[dispatchStatus] ?? dispatchStatus}</Badge>
+                      <span className="font-mono text-text-secondary">成功 {batch.dispatchSuccessCount ?? 0} / 失败 {batch.dispatchFailedCount ?? 0}</span>
+                    </div>
+                    {failedTasks.length > 0 && (
+                      <div className="mt-1 max-w-[360px] space-y-0.5 text-[11px] leading-snug text-accent-red">
+                        {failedTasks.slice(0, 2).map((task) => <div key={task.pxTaskId}>{task.pxTaskId}: {task.dispatchError || 'DX 派单失败'}</div>)}
+                        {failedTasks.length > 2 && <div>另有 {failedTasks.length - 2} 条失败任务</div>}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-2 py-3 text-right font-mono text-xs text-text-primary">{batch.whitelistTotal} / {batch.strategyTotal} / {batch.totalCount}</td>
+                </tr>
+              );
+            })}</tbody>
           </table>
         </div>
       )}
