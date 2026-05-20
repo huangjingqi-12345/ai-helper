@@ -1,7 +1,7 @@
 import { dbAll, dbGet, dbRun } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 
-const DEFAULT_DX_API_BASE_URL = 'https://uat-dx.senzco.com';
+const DEFAULT_DX_API_BASE_URL = 'https://sit-dx.senzco.com';
 
 /**
  * DX Content Sync Integration

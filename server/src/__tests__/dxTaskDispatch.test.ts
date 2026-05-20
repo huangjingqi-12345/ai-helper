@@ -76,12 +76,12 @@ describe('DX task dispatch integration', () => {
     expect(result.idempotent).toBe(true);
   });
 
-  it('uses the UAT DX endpoint when DX_API_BASE_URL is not configured', async () => {
+  it('uses the SIT DX endpoint when DX_API_BASE_URL is not configured', async () => {
     delete process.env.DX_API_BASE_URL;
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({
-        dx_task_id: 'tk_uat_default',
+        dx_task_id: 'tk_sit_default',
         px_task_id: 'PX-REQ-1-BATCH-1-001',
         status: 'assigned',
         assigned_at: '2026-05-19T10:00:00+08:00',
@@ -91,7 +91,7 @@ describe('DX task dispatch integration', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     expect(isDxTaskDispatchConfigured()).toBe(true);
-    await expect(dispatchDxTask(payload())).resolves.toMatchObject({ dx_task_id: 'tk_uat_default' });
-    expect(fetchMock).toHaveBeenCalledWith('https://uat-dx.senzco.com/api/px/tasks', expect.any(Object));
+    await expect(dispatchDxTask(payload())).resolves.toMatchObject({ dx_task_id: 'tk_sit_default' });
+    expect(fetchMock).toHaveBeenCalledWith('https://sit-dx.senzco.com/api/px/tasks', expect.any(Object));
   });
 });

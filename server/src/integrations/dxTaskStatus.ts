@@ -1,6 +1,6 @@
 import { logger } from '../utils/logger.js';
 
-const DEFAULT_DX_API_BASE_URL = 'https://uat-dx.senzco.com';
+const DEFAULT_DX_API_BASE_URL = 'https://sit-dx.senzco.com';
 
 export type DxTaskLifecycleStatus = 'assigned' | 'dx_review' | 'dx_revising' | 'draft_finalized' | 'published';
 
