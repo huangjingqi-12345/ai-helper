@@ -1,5 +1,7 @@
 import { logger } from '../utils/logger.js';
 
+const DEFAULT_DX_API_BASE_URL = 'https://uat-dx.senzco.com';
+
 export type DxAttachmentSource = 'dx_api' | 'local_cache';
 export type DxAttachmentStatus = 'pending' | 'ready' | 'unavailable';
 
@@ -33,11 +35,11 @@ function cleanBaseUrl(value: string): string {
 }
 
 export function isDxContentApiConfigured(): boolean {
-  return Boolean(process.env.DX_API_BASE_URL?.trim());
+  return Boolean((process.env.DX_API_BASE_URL?.trim() || DEFAULT_DX_API_BASE_URL));
 }
 
 function buildDxContentUrl(contentId: string): string {
-  const baseUrl = cleanBaseUrl(process.env.DX_API_BASE_URL?.trim() ?? '');
+  const baseUrl = cleanBaseUrl(process.env.DX_API_BASE_URL?.trim() || DEFAULT_DX_API_BASE_URL);
   const template = process.env.DX_CONTENT_DETAIL_PATH_TEMPLATE?.trim() || '/content/{contentId}';
   const encodedId = encodeURIComponent(contentId);
   const path = template.replaceAll('{contentId}', encodedId);

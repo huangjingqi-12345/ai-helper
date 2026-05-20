@@ -1,6 +1,8 @@
 import { dbAll, dbGet, dbRun } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 
+const DEFAULT_DX_API_BASE_URL = 'https://uat-dx.senzco.com';
+
 /**
  * DX Content Sync Integration
  *
@@ -55,7 +57,7 @@ interface DxContentListResponse {
 }
 
 function getConfig() {
-  const baseUrl = (process.env.DX_API_BASE_URL || '').replace(/\/+$/, '');
+  const baseUrl = (process.env.DX_API_BASE_URL || DEFAULT_DX_API_BASE_URL).replace(/\/+$/, '');
   const token = process.env.DOCTOR_SERVER_TOKEN || '';
   const timeoutMs = Number(process.env.DX_API_TIMEOUT_MS || 10000);
   return { baseUrl, token, timeoutMs };

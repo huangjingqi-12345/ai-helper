@@ -3,6 +3,7 @@ import type { ApiResponse, PaginatedResponse } from '@/types/api';
 import type {
   Content,
   ContentFilter,
+  ContentRequestRecord,
   ContentRequestProject,
   CreateContentDTO,
   SubmitContentRequestDTO,
@@ -37,6 +38,11 @@ export async function deleteContent(id: string): Promise<ApiResponse<void>> {
 
 export async function getContentRequestProjects(): Promise<ApiResponse<ContentRequestProject[]>> {
   const response = await apiClient.get<ApiResponse<ContentRequestProject[]>>('/content/request-projects');
+  return response.data;
+}
+
+export async function getContentRequests(params?: { projectId?: string; status?: string; page?: number; pageSize?: number }): Promise<PaginatedResponse<ContentRequestRecord>> {
+  const response = await apiClient.get<PaginatedResponse<ContentRequestRecord>>('/content/requests', { params });
   return response.data;
 }
 

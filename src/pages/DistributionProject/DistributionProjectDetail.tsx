@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Building2, Calendar, FileText, Inbox, Layers, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
@@ -6,7 +6,9 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { getDistributionProjectById } from '@/api/endpoints/distribution';
+import { getContentRequests } from '@/api/endpoints/content';
 import type { DistributionProject } from '@/types/distribution';
+import type { ContentRequestRecord } from '@/types/content';
 
 type ProjectRequestStatus = 'pending' | 'in_progress' | 'in_review' | 'distributing' | 'completed' | 'rejected';
 
@@ -23,41 +25,31 @@ type ProjectRequest = {
   routeId?: string;
 };
 
+const THEME_LABELS: Record<string, string> = {
+  awareness: '疾病认知',
+  screening: '早筛与诊断',
+  treatment: '规范治疗',
+  adverse: '不良反应应对',
+  followup: '康复与随访',
+  lifestyle: '生活方式',
+  psychology: '心理与家属',
+  timely: '节点与热点',
+};
+
+const FORMAT_LABELS: Record<string, string> = {
+  article: '长图文',
+  longtext: '长图文',
+  poster: '海报',
+  checklist: '手册',
+  manual: '手册',
+};
+
 const PROJECT_TENANT_OVERRIDE: Record<string, string> = {
   'PRJ-1001': 'T-AZ',
 };
 
 const PROJECT_FLOW_OVERRIDE: Record<string, string> = {
   'PRJ-1001': '阿斯利康 · 标准审批流',
-};
-
-const LIVE_PROJECT_REQUESTS: Record<string, ProjectRequest[]> = {
-  'PRJ-1001': [
-    {
-      id: 'REQ-2030',
-      date: '2026-05-07 14:10',
-      pieces: 4,
-      title: '首输 6 周内安全信号识别',
-      strategy: '继承项目默认',
-      status: 'pending',
-      topics: ['规范治疗', '不良反应应对'],
-      formats: ['长图文 × 2', '海报 × 1', '手册 × 1'],
-      note: '等待派单',
-    },
-  ],
-  'PRJ-1000': [
-    {
-      id: 'REQ-2031',
-      date: '2026-05-07 09:42',
-      pieces: 6,
-      title: '12 周随访节点提醒 · 多子项诉求',
-      strategy: '继承项目默认',
-      status: 'pending',
-      topics: ['疾病认知', '规范治疗', '康复与随访'],
-      formats: ['长图文 × 3', '海报 × 2', '手册 × 1'],
-      note: '等待运营受理与合规预审',
-    },
-  ],
 };
 
 const REQUEST_STATUS_LABEL: Record<ProjectRequestStatus, { text: string; color: 'yellow' | 'blue' | 'green' | 'red' | 'purple' | 'gray'; className: string }> = {
@@ -69,42 +61,73 @@ const REQUEST_STATUS_LABEL: Record<ProjectRequestStatus, { text: string; color: 
   rejected: { text: '已驳回', color: 'red', className: 'border-rose-500/40 bg-rose-500/10 text-rose-300' },
 };
 
-function requestFallback(project: DistributionProject): ProjectRequest[] {
-  return [
-    {
-      id: `REQ-${project.id.slice(-4)}`,
-      date: '2026-05-07 09:42',
-      pieces: project.totalPieces,
-      title: `${project.brand} · ${project.disease} 患教诉求`,
-      strategy: '继承项目默认',
-      status: project.status === 'completed' ? 'completed' : project.status === 'distribution' ? 'distributing' : project.status === 'production' ? 'in_progress' : 'pending',
-      topics: (project.topics ?? []).map((topic) => topic.split('·')[0] || topic),
-      formats: (project.formats ?? '').split(' · ').filter(Boolean).map((format) => format.replace(/\s+(\d+)$/, ' × $1')),
-      note: project.currentNode ? `当前节点：${project.currentNode}` : '等待派单',
-    },
-  ];
+function matrixTopics(request: ContentRequestRecord): string[] {
+  return Object.keys(request.themeFormatMatrix ?? {}).map((theme) => THEME_LABELS[theme] ?? theme);
+}
+
+function matrixFormats(request: ContentRequestRecord): string[] {
+  const totals: Record<string, number> = {};
+  Object.values(request.themeFormatMatrix ?? {}).forEach((row) => {
+    Object.entries(row ?? {}).forEach(([format, count]) => {
+      totals[format] = (totals[format] ?? 0) + (Number(count) || 0);
+    });
+  });
+  return Object.entries(totals)
+    .filter(([, count]) => count > 0)
+    .map(([format, count]) => `${FORMAT_LABELS[format] ?? format} × ${count}`);
+}
+
+function requestStatus(status: ContentRequestRecord['status']): ProjectRequestStatus {
+  if (status === 'accepted') return 'in_progress';
+  if (status === 'converted') return 'completed';
+  if (status === 'rejected') return 'rejected';
+  return 'pending';
+}
+
+function mapRequest(request: ContentRequestRecord): ProjectRequest {
+  return {
+    id: request.id,
+    date: request.submittedAt,
+    pieces: request.totalCount,
+    title: request.requestName || request.title,
+    strategy: '继承项目默认',
+    status: requestStatus(request.status),
+    topics: matrixTopics(request),
+    formats: matrixFormats(request),
+    note: request.note ?? '',
+  };
 }
 
 export function DistributionProjectDetail(): JSX.Element {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const [project, setProject] = useState<DistributionProject | null>(null);
+  const [requests, setRequests] = useState<ProjectRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
     setLoading(true);
+
     getDistributionProjectById(id)
-      .then((res) => { if (mounted) setProject(res.data); })
-      .catch(() => { if (mounted) setProject(null); })
+      .then(async (projectRes) => {
+        if (!mounted) return;
+        setProject(projectRes.data);
+        try {
+          const requestRes = await getContentRequests({ projectId: id, pageSize: 100 });
+          if (mounted) setRequests(requestRes.data.map(mapRequest));
+        } catch {
+          if (mounted) setRequests([]);
+        }
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setProject(null);
+        setRequests([]);
+      })
       .finally(() => { if (mounted) setLoading(false); });
     return () => { mounted = false; };
   }, [id]);
-
-  const requests = useMemo(() => {
-    if (!project) return [];
-    return LIVE_PROJECT_REQUESTS[id] ?? requestFallback(project);
-  }, [id, project]);
 
   if (loading) return <div className="py-10 text-center text-sm text-muted-foreground">正在加载项目详情...</div>;
 

@@ -1,5 +1,7 @@
 import { logger } from '../utils/logger.js';
 
+const DEFAULT_DX_API_BASE_URL = 'https://uat-dx.senzco.com';
+
 export interface DxDoctorCandidate {
   id: string;
   doctorId: number;
@@ -32,11 +34,11 @@ function cleanBaseUrl(value: string): string {
 }
 
 export function isDxDoctorsApiConfigured(): boolean {
-  return Boolean(process.env.DX_API_BASE_URL?.trim());
+  return Boolean((process.env.DX_API_BASE_URL?.trim() || DEFAULT_DX_API_BASE_URL));
 }
 
 function buildDxDoctorsUrl(): string {
-  const baseUrl = cleanBaseUrl(process.env.DX_API_BASE_URL?.trim() ?? '');
+  const baseUrl = cleanBaseUrl(process.env.DX_API_BASE_URL?.trim() || DEFAULT_DX_API_BASE_URL);
   const path = process.env.DX_DOCTORS_PATH?.trim() || '/api/px/doctors';
   if (/^https?:\/\//i.test(path)) return path;
   if (baseUrl.endsWith('/api') && path.startsWith('/api/')) {
