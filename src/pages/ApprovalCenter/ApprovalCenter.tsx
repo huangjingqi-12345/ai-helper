@@ -35,30 +35,6 @@ const requirementByContent: Record<string, RequirementMeta> = {
     historyDate: '2026-04-10',
     sla: '531h / 8h',
   },
-  'CNT-105': {
-    label: '诉求 · 5 年辅助服药遗忘补救 5 问',
-    shortLabel: '5 年辅助服药遗忘补救 5 问',
-    projectName: '他莫昔芬 · 内分泌依从性',
-    historyActor: '王医生',
-    historyDate: '2026-04-10',
-    sla: '507h / 8h',
-  },
-  'CNT-106': {
-    label: '诉求 · 二线口服方案 · 常见问题 8 问',
-    shortLabel: '二线口服方案 · 常见问题 8 问',
-    projectName: '唯择 · CDK4/6 二线依从性',
-    historyActor: '王医生',
-    historyDate: '2026-04-10',
-    sla: '531h / 8h',
-  },
-  'CNT-107': {
-    label: '诉求 · 机制对比 · 驳回',
-    shortLabel: '机制对比 · 驳回',
-    projectName: '优赫得 · HER2 ADC 重点随访',
-    historyActor: '王医生',
-    historyDate: '2026-04-10',
-    sla: '459h / 8h',
-  },
 };
 
 const APPROVAL_STEPS = [
@@ -68,7 +44,7 @@ const APPROVAL_STEPS = [
 ];
 
 function approvalGroups(tasks: ApprovalTask[]): ApprovalGroup[] {
-  const order: Record<string, number> = { 'CNT-102': 1, 'CNT-105': 2, 'CNT-106': 3, 'CNT-107': 4 };
+  const order: Record<string, number> = { 'CNT-102': 1 };
   return [...tasks]
     .sort((a, b) => (order[a.contentId] ?? 99) - (order[b.contentId] ?? 99))
     .map((task) => {

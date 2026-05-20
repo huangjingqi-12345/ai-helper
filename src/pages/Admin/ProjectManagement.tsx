@@ -42,18 +42,6 @@ const tenantLabel: Record<string, string> = {
 const requirementCountByProject: Record<string, number> = {
   'PRJ-1000': 3,
   'PRJ-1001': 2,
-  'PRJ-1002': 1,
-  'PRJ-1003': 1,
-  'PRJ-1004': 2,
-  'PRJ-1005': 1,
-  'PRJ-1006': 1,
-  'PRJ-1007': 1,
-  'PRJ-1008': 1,
-  'PRJ-1009': 1,
-  'PRJ-1010': 1,
-  'PRJ-1011': 1,
-  'PRJ-1012': 1,
-  'PRJ-1013': 1,
 };
 
 function formatProjectTimestamp(value?: string): string {

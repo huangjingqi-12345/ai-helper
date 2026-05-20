@@ -999,6 +999,7 @@ export async function getDistributionProjects(filters: { status?: string; priori
 
   // 先尝试从 projects 表查询（统一实体）
   const tenant = tenantCondition('p', filters.scope);
+  conditions.push("p.id LIKE 'PRJ-%'");
   if (tenant.sql) { conditions.push(tenant.sql); params.push(...tenant.params); }
   if (filters.status) { conditions.push('p.status = ?'); params.push(filters.status); }
   if (filters.priority) { conditions.push('p.priority = ?'); params.push(filters.priority); }

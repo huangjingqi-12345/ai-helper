@@ -177,6 +177,14 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     ]);
   }
 
+  const activeDistributionProjectIds = distributionProjects.map((project) => project.id);
+  if (activeDistributionProjectIds.length > 0) {
+    await run(
+      `DELETE FROM projects WHERE id LIKE 'PRJ-%' AND id NOT IN (${activeDistributionProjectIds.map(() => '?').join(', ')})`,
+      activeDistributionProjectIds,
+    );
+  }
+
   const contentWorkflowStates = new Set(['requirement_submitted', 'doctor_distributing', 'doctor_producing', 'third_party_review', 'internal_review', 'published']);
   for (const item of contentList) {
     const itemStatus = String(item.status);
@@ -323,7 +331,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
       title: override.title ?? `乳腺癌 · ${item.title}`,
       priority: override.priority ?? item.priority,
       expectedDate: override.expectedDate ?? item.expectedDate ?? '2026-05-30',
-      matrix: override.matrix ?? { treatment: { article: item.type === 'article' ? 1 : 0, poster: item.type === 'poster' ? 1 : 0, checklist: item.type === 'checklist' ? 1 : 0 } },
+      matrix: override.matrix ?? { treatment: { [String(item.type)]: 1 } },
       totalCount: override.totalCount ?? 1,
       note: override.note ?? 'Demo seeded pharma content request.',
       status: override.status ?? 'pending',
@@ -581,10 +589,8 @@ async function seedStrategies(now: string): Promise<void> {
   await replaceRowsForSqlite(['distribution_strategies', 'distribution_strategy_filters', 'distribution_records']);
 
   const strategies = [
-    ['str-001', 'T-NV', '乳腺癌春季推送计划', 'proj-breast', ['华东', '华南'], ['乳腺癌'], 3200, ['CNT-105', 'CNT-112'], 'recurring', '2026-03-01T00:00:00Z', '2026-05-31T23:59:59Z', 'weekly', 'active', 3200, 3050, 2100, 1800, '2026-02-20T08:00:00Z', now],
-    ['str-002', 'T-MSD', '肺癌科普专项推送', 'proj-breast', ['华北', '西南'], ['肺癌(NSCLC)'], 2800, ['CNT-106'], 'scheduled', '2026-04-01T00:00:00Z', '2026-06-30T23:59:59Z', null, 'active', 2800, 2650, 1800, 1500, '2026-03-15T08:00:00Z', now],
-    ['str-003', 'T-AZ', '糖尿病管理推送', 'proj-breast', ['全国'], ['2型糖尿病'], 4500, ['CNT-104', 'CNT-114'], 'recurring', '2026-02-01T00:00:00Z', '2026-07-31T23:59:59Z', 'monthly', 'active', 4500, 4200, 3100, 2600, '2026-01-25T08:00:00Z', now],
-    ['str-004', 'T-PX', '高血压患者关怀', 'proj-breast', ['华中'], ['高血压'], 2300, ['CNT-110'], 'immediate', null, null, null, 'paused', 2300, 2100, 1400, 1100, '2026-03-10T08:00:00Z', now],
+    ['str-001', 'T-NV', '乳腺癌春季推送计划', 'proj-breast', ['华东', '华南'], ['乳腺癌'], 3200, ['CNT-101'], 'recurring', '2026-03-01T00:00:00Z', '2026-05-31T23:59:59Z', 'weekly', 'active', 3200, 3050, 2100, 1800, '2026-02-20T08:00:00Z', now],
+    ['str-002', 'T-AZ', '乳腺癌口服依从性推送', 'proj-breast', ['全国'], ['乳腺癌'], 2800, ['CNT-102'], 'scheduled', '2026-04-01T00:00:00Z', '2026-06-30T23:59:59Z', null, 'active', 2800, 2650, 1800, 1500, '2026-03-15T08:00:00Z', now],
   ];
 
   for (const strategy of strategies) {
@@ -611,6 +617,14 @@ async function seedStrategies(now: string): Promise<void> {
         metrics_read = excluded.metrics_read,
         updated_at = excluded.updated_at
     `, [id, tenantId, name, projectId, json(regions), json(diseases), patientCount, json(contentIds), scheduleType, startDate, endDate, frequency, status, pushed, delivered, opened, read, createdAt, updatedAt]);
+  }
+
+  const activeStrategyIds = strategies.map((strategy) => String(strategy[0]));
+  if (activeStrategyIds.length > 0) {
+    await run(
+      `DELETE FROM distribution_strategies WHERE id LIKE 'str-%' AND id NOT IN (${activeStrategyIds.map(() => '?').join(', ')})`,
+      activeStrategyIds,
+    );
   }
 }
 
@@ -679,18 +693,6 @@ async function seedApproval(now: string): Promise<void> {
   const taskSeeds = [
     ['task-CNT-101', 'CNT-101', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
     ['task-CNT-102', 'CNT-102', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '531h / 8h'],
-    ['task-CNT-104', 'CNT-104', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-105', 'CNT-105', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '507h / 8h'],
-    ['task-CNT-106', 'CNT-106', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '531h / 8h'],
-    ['task-CNT-107', 'CNT-107', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '459h / 8h'],
-    ['task-CNT-103', 'CNT-103', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-108', 'CNT-108', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-110', 'CNT-110', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-111', 'CNT-111', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-109', 'CNT-109', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-112', 'CNT-112', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-113', 'CNT-113', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-114', 'CNT-114', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
   ];
 
   for (const task of taskSeeds) {
@@ -781,7 +783,7 @@ async function seedAccountsAndLogs(now: string): Promise<void> {
 
   const logs = [
     ['log-001', 'T-PX', 'A-001', '张明', 'publish_content', 'content', 'CNT-101', '张明 发布了内容 《心衰患者每日体重监测的 5 个细节》', '2026-04-28 09:32'],
-    ['log-002', 'T-PX', 'A-002', '李雨晴', 'update_content', 'content', 'CNT-114', '李雨晴 更新了内容 《胰岛素笔注射 7 步法》', '2026-04-27 17:46'],
+    ['log-002', 'T-PX', 'A-002', '李雨晴', 'update_content', 'content', 'CNT-102', '李雨晴 更新了内容 《爱博新 · CDK4/6 口服药服药顺序与漏服处理 5 问》', '2026-04-27 17:46'],
     ['log-003', 'T-PX', 'A-003', '王健', 'archive_content', 'content', 'CNT-102', '王健 下架了内容 《沙库巴曲缬沙坦该饭前还是饭后吃？》', '2026-04-26 11:12'],
     ['log-004', 'T-PX', 'A-001', '张明', 'invite_member', 'user', 'm-4', '张明 邀请成员加入 陈思雨 (查看者)', '2026-04-25 15:08'],
     ['log-005', 'T-PX', null, '系统', 'export_report', 'behavior_export', 'export-001', '系统 导出报告 近 7 天行为汇总.csv', '2026-04-24 10:01'],

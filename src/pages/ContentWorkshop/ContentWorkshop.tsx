@@ -37,10 +37,7 @@ const PIPELINE_STAGE_OPTIONS: PipelineStage[] = [
 // DEMO FALLBACK: 生产应从 API content.projectBrief 获取，此处仅为 seed 数据补充展示
 const CONTENT_PROJECT_BRIEFS: Record<string, string> = {
   'CNT-101': '项目 · 赫赛汀 · HER2+ 术后辅助随访计划 · 诉求 · 12 周随访节点提醒',
-  'CNT-102': '项目 · 优赫得 · HER2 ADC 重点随访 · 诉求 · 首输 6 周内安全信号识别',
-  'CNT-103': '项目 · 帕杰特 · HER2+ 双抗联合靶向计划 · 诉求 · 12 周随访节点提醒',
-  'CNT-104': '项目 · 爱博新 · CDK4/6 口服依从性 · 诉求 · 启药 6 周依从性提醒',
-  'CNT-105': '项目 · 他莫昔芬 · 内分泌依从性 · 诉求 · 5 年辅助服药遗忘补救 5 问',
+  'CNT-102': '项目 · 爱博新 · CDK4/6 口服依从性 · 诉求 · 启药 6 周依从性提醒',
 };
 
 /** PM 确认的 6 态状态样式映射 */
