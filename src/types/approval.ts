@@ -1,4 +1,5 @@
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type ApprovalReviewerType = 'dx_editor' | 'system_precheck' | 'px_ops' | 'pharma_med' | 'pharma_mkt';
 
 export interface ApprovalItem {
   id: string;
@@ -53,6 +54,7 @@ export interface ApprovalTask {
   disease: string;
   author: string;
   node: string;
+  reviewerType?: ApprovalReviewerType;
   progress: string;
   sla: string;
   status: ApprovalStatus;

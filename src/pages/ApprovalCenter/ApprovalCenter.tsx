@@ -5,7 +5,9 @@ import { PageHeader } from '@/components/PageHeader';
 import { showToast } from '@/components/ui/Toast';
 import { useLogger } from '@/hooks/useLogger';
 import { getApprovalTaskAttachment, getApprovalTasks, updateApprovalTask } from '@/api/endpoints/approval';
+import { useAuthStore } from '@/stores/useAuthStore';
 import type { ApprovalAttachment, ApprovalTask } from '@/types/approval';
+import type { AuthUser } from '@/api/endpoints/auth';
 
 type ApprovalFilter = 'pending' | 'approved' | 'rejected' | 'all';
 type ApprovalDecision = 'approve' | 'reject';
@@ -66,6 +68,21 @@ function displayNode(task: ApprovalTask): string {
   return task.node || 'DX 医学审核';
 }
 
+function reviewerTypeForTask(task: ApprovalTask): string {
+  if (task.reviewerType) return task.reviewerType;
+  const node = displayNode(task);
+  if (node === 'PX 运营审核' || node === 'Px 审核') return 'px_ops';
+  if (node === '药企审核') return 'pharma_med';
+  if (node === 'DX 医学审核' || node === '编辑审核') return 'dx_editor';
+  return '';
+}
+
+function canHandleTask(task: ApprovalTask, user: AuthUser | null): boolean {
+  if (task.status !== 'pending') return false;
+  if (user?.tenantType === 'ops') return reviewerTypeForTask(task) === 'px_ops';
+  return true;
+}
+
 function displaySla(task: ApprovalTask): string {
   return requirementByContent[task.contentId]?.sla ?? task.sla;
 }
@@ -83,6 +100,7 @@ function replaceTask(tasks: ApprovalTask[], nextTask: ApprovalTask): ApprovalTas
 
 export function ApprovalCenter(): JSX.Element {
   const { log } = useLogger('ApprovalCenter');
+  const { user } = useAuthStore();
   const [tasks, setTasks] = useState<ApprovalTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<ApprovalFilter>('pending');
@@ -146,12 +164,17 @@ export function ApprovalCenter(): JSX.Element {
       showToast('请先勾选要批量处理的内容', 'info');
       return;
     }
+    const selectedTasks = tasks.filter((task) => selectedTaskIds.includes(task.id));
+    const actionableTasks = selectedTasks.filter((task) => canHandleTask(task, user));
+    if (actionableTasks.length === 0) {
+      showToast('当前选中的任务不在运营可处理节点', 'info');
+      return;
+    }
     setSaving(true);
     try {
-      const selectedTasks = tasks.filter((task) => selectedTaskIds.includes(task.id));
-      const updated = await Promise.all(selectedTasks.map((task) => updateApprovalTask(task.id, { action })));
+      const updated = await Promise.all(actionableTasks.map((task) => updateApprovalTask(task.id, { action })));
       setTasks((current) => updated.reduce((acc, response) => replaceTask(acc, response.data), current));
-      showToast(action === 'approve' ? `已批量通过 ${selectedTaskIds.length} 条` : `已批量驳回 ${selectedTaskIds.length} 条`, 'success');
+      showToast(action === 'approve' ? `已批量通过 ${actionableTasks.length} 条` : `已批量驳回 ${actionableTasks.length} 条`, 'success');
       setSelectedTaskIds([]);
       if (activeTask && selectedTaskIds.includes(activeTask.id)) setActiveTask(null);
     } catch {
@@ -163,6 +186,10 @@ export function ApprovalCenter(): JSX.Element {
 
   const submitActiveTask = async (): Promise<void> => {
     if (!activeTask) return;
+    if (!canHandleTask(activeTask, user)) {
+      showToast('当前节点需由对应审核方处理，运营端不可提交', 'info');
+      return;
+    }
     setSaving(true);
     try {
       const res = await updateApprovalTask(activeTask.id, {
@@ -304,6 +331,7 @@ export function ApprovalCenter(): JSX.Element {
         decision={decision}
         comment={approvalComment}
         saving={saving}
+        canSubmit={activeTask ? canHandleTask(activeTask, user) : false}
         onDecision={setDecision}
         onComment={setApprovalComment}
         onClose={() => setActiveTask(null)}
@@ -384,6 +412,7 @@ function ApprovalDrawer({
   decision,
   comment,
   saving,
+  canSubmit,
   onDecision,
   onComment,
   onClose,
@@ -393,6 +422,7 @@ function ApprovalDrawer({
   decision: ApprovalDecision;
   comment: string;
   saving: boolean;
+  canSubmit: boolean;
   onDecision: (decision: ApprovalDecision) => void;
   onComment: (comment: string) => void;
   onClose: () => void;
@@ -440,6 +470,7 @@ function ApprovalDrawer({
   const requirement = requirementByContent[task.contentId];
   const historyActor = requirement?.historyActor ?? task.author ?? '作者';
   const historyDate = requirement?.historyDate ?? '2026-04-10';
+  const blockedReason = canSubmit ? '' : '当前节点需由对应审核方处理，运营端不可提交审核。';
 
   return (
     <aside className="fixed inset-y-0 right-0 z-50 w-full max-w-[544px] overflow-y-auto border-l border-border bg-[oklch(18%_.02_260)] p-5 shadow-[-24px_0_60px_rgba(0,0,0,0.35)]">
@@ -489,15 +520,17 @@ function ApprovalDrawer({
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
+              disabled={!canSubmit}
               onClick={() => onDecision('approve')}
-              className={`h-9 rounded-lg border text-[12.5px] font-medium transition ${decision === 'approve' ? 'border-primary bg-emerald-500/20 text-emerald-100 shadow-[0_0_0_1px_rgba(45,212,191,0.65)]' : 'border-border bg-secondary text-muted-foreground hover:text-foreground'}`}
+              className={`h-9 rounded-lg border text-[12.5px] font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ${decision === 'approve' ? 'border-primary bg-emerald-500/20 text-emerald-100 shadow-[0_0_0_1px_rgba(45,212,191,0.65)]' : 'border-border bg-secondary text-muted-foreground hover:text-foreground'}`}
             >
               通过
             </button>
             <button
               type="button"
+              disabled={!canSubmit}
               onClick={() => onDecision('reject')}
-              className={`h-9 rounded-lg border text-[12.5px] font-medium transition ${decision === 'reject' ? 'border-rose-400 bg-rose-500/15 text-rose-200 shadow-[0_0_0_1px_rgba(251,113,133,0.55)]' : 'border-border bg-secondary text-muted-foreground hover:text-foreground'}`}
+              className={`h-9 rounded-lg border text-[12.5px] font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ${decision === 'reject' ? 'border-rose-400 bg-rose-500/15 text-rose-200 shadow-[0_0_0_1px_rgba(251,113,133,0.55)]' : 'border-border bg-secondary text-muted-foreground hover:text-foreground'}`}
             >
               不通过
             </button>
@@ -506,12 +539,14 @@ function ApprovalDrawer({
             审批意见（可选）
             <textarea
               value={comment}
+              disabled={!canSubmit}
               onChange={(event) => onComment(event.target.value)}
-              className="mt-2 h-[74px] w-full resize-none rounded-lg border border-border bg-background/70 px-3 py-2 text-[12.5px] text-foreground outline-none focus:border-primary/60"
+              className="mt-2 h-[74px] w-full resize-none rounded-lg border border-border bg-background/70 px-3 py-2 text-[12.5px] text-foreground outline-none focus:border-primary/60 disabled:cursor-not-allowed disabled:opacity-50"
             />
           </label>
+          {blockedReason && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">{blockedReason}</div>}
           <div className="mt-5 flex justify-end">
-            <button disabled={saving} onClick={onSubmit} className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-[12.5px] font-semibold text-primary-foreground disabled:opacity-50">
+            <button disabled={saving || !canSubmit} onClick={onSubmit} className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-[12.5px] font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
               {decision === 'approve' ? '提交通过' : '提交不通过'}
             </button>
           </div>

@@ -1728,6 +1728,14 @@ function canAccessApprovalTask(task: Record<string, unknown>, scope?: QueryScope
   return reviewerType === 'pharma_med' || reviewerType === 'pharma_mkt';
 }
 
+function canHandleApprovalTask(task: Record<string, unknown>, scope?: QueryScope): boolean {
+  if (!canAccessApprovalTask(task, scope)) return false;
+  if (String(task.status ?? '') !== 'pending') return false;
+  const reviewerType = String(task.reviewer_type ?? task.reviewerType ?? '');
+  if (scope?.tenantType === 'ops') return reviewerType === 'px_ops';
+  return true;
+}
+
 function progressForNode(node?: ApprovalNodeRow): string {
   if (!node) return '0/3';
   const order = Number(node.sort_order ?? 0);
@@ -1988,6 +1996,7 @@ function mapApprovalTaskRow(row: Record<string, unknown>) {
     disease: task.disease,
     author: task.author || task.submittedBy,
     node: status === 'approved' ? '发布' : task.nodeName || '未提交',
+    reviewerType: task.reviewerType,
     progress: task.progressText || '0/3',
     sla: task.slaDueAt || '—',
     status,
@@ -2148,7 +2157,7 @@ export async function handleApprovalTask(id: string, action: 'approve' | 'reject
      WHERE (t.id = ? OR t.content_id = ?)`,
     [id, id]
   );
-  if (!existing || !canAccessApprovalTask(existing, user)) return null;
+  if (!existing || !canHandleApprovalTask(existing, user)) return null;
   const now = new Date().toISOString();
   const nodes = await getApprovalFlowNodes(String(existing.flow_id ?? existing.flowId ?? ''));
   const currentOrder = Number(existing.sort_order ?? existing.sortOrder ?? 0);
