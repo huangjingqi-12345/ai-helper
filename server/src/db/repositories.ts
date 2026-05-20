@@ -1712,11 +1712,158 @@ export async function getDoctorCandidates() {
 }
 
 // === Approval ===
+type ApprovalNodeRow = {
+  id: string;
+  flow_id: string;
+  sort_order: number | string;
+  node_name: string;
+  reviewer_type: string;
+  sla_hours?: number | string;
+};
+
+function canAccessApprovalTask(task: Record<string, unknown>, scope?: QueryScope): boolean {
+  if (isPxAdmin(scope)) return true;
+  if (String(task.tenant_id ?? task.tenantId ?? '') === scope?.tenantId) return true;
+  const reviewerType = String(task.reviewer_type ?? task.reviewerType ?? '');
+  return reviewerType === 'pharma_med' || reviewerType === 'pharma_mkt';
+}
+
+function progressForNode(node?: ApprovalNodeRow): string {
+  if (!node) return '0/3';
+  const order = Number(node.sort_order ?? 0);
+  return `${Math.max(0, order - 1)}/3`;
+}
+
+function slaTextForNode(node?: ApprovalNodeRow): string {
+  const hours = Number(node?.sla_hours ?? 24);
+  return `${hours}h / ${hours}h`;
+}
+
+async function getActiveApprovalFlow(tenantId: string): Promise<Record<string, unknown> | null> {
+  return await dbGet<Record<string, unknown>>(`
+    SELECT *
+    FROM approval_flows
+    WHERE tenant_id = ? AND status = 'active'
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [tenantId]) ?? null;
+}
+
+async function getApprovalFlowNodes(flowId: string): Promise<ApprovalNodeRow[]> {
+  return dbAll<ApprovalNodeRow>(`
+    SELECT *
+    FROM approval_flow_nodes
+    WHERE flow_id = ?
+    ORDER BY sort_order ASC
+  `, [flowId]);
+}
+
+function nodeForContentStatus(nodes: ApprovalNodeRow[], status: string): ApprovalNodeRow | undefined {
+  if (status === 'internal_review') {
+    return nodes.find((node) => node.reviewer_type === 'pharma_med' || node.reviewer_type === 'pharma_mkt')
+      ?? nodes[nodes.length - 1];
+  }
+  if (status === 'third_party_review') {
+    return nodes.find((node) => node.reviewer_type === 'px_ops')
+      ?? nodes.find((node) => node.reviewer_type === 'dx_editor')
+      ?? nodes[0];
+  }
+  return undefined;
+}
+
+async function ensureApprovalTasksForReviewContent(): Promise<void> {
+  const rows = await dbAll<Record<string, unknown>>(`
+    SELECT c.*
+    FROM content c
+    WHERE c.status IN ('third_party_review', 'internal_review')
+  `);
+  const now = new Date().toISOString();
+  const flowCache = new Map<string, { flow: Record<string, unknown>; nodes: ApprovalNodeRow[] }>();
+
+  for (const content of rows) {
+    const tenantId = String(content.tenant_id ?? 'T-PX');
+    let cached = flowCache.get(tenantId);
+    if (!cached) {
+      const flow = await getActiveApprovalFlow(tenantId) ?? await getActiveApprovalFlow('T-PX');
+      if (!flow?.id) continue;
+      cached = { flow, nodes: await getApprovalFlowNodes(String(flow.id)) };
+      flowCache.set(tenantId, cached);
+    }
+
+    const status = String(content.status ?? '');
+    const node = nodeForContentStatus(cached.nodes, status);
+    if (!node) continue;
+    const taskId = `task-${String(content.id)}`;
+    const progress = progressForNode(node);
+    const sla = slaTextForNode(node);
+
+    await dbRun(`
+      INSERT INTO approval_tasks (id, tenant_id, content_id, project_id, flow_id, current_node_id, status, progress_text, sla_due_at, submitted_by, submitted_at, completed_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        tenant_id = excluded.tenant_id,
+        content_id = excluded.content_id,
+        project_id = excluded.project_id,
+        flow_id = excluded.flow_id,
+        current_node_id = excluded.current_node_id,
+        status = 'pending',
+        progress_text = excluded.progress_text,
+        sla_due_at = excluded.sla_due_at,
+        completed_at = NULL,
+        updated_at = excluded.updated_at
+    `, [
+      taskId,
+      tenantId,
+      String(content.id),
+      String(content.project_id),
+      String(cached.flow.id),
+      node.id,
+      progress,
+      sla,
+      String(content.author ?? '作者'),
+      String(content.created_at ?? now),
+      now,
+      now,
+    ]);
+
+    await dbRun(`
+      INSERT INTO approval_items (id, content_id, content_title, submitted_by, submitted_at, status, reviewed_by, reviewed_at, comments, project_name)
+      VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        content_title = excluded.content_title,
+        submitted_by = excluded.submitted_by,
+        submitted_at = excluded.submitted_at,
+        status = CASE WHEN ? IN ('third_party_review','internal_review') THEN 'pending' ELSE status END,
+        reviewed_by = CASE WHEN ? IN ('third_party_review','internal_review') THEN NULL ELSE reviewed_by END,
+        reviewed_at = CASE WHEN ? IN ('third_party_review','internal_review') THEN NULL ELSE reviewed_at END,
+        comments = CASE WHEN ? IN ('third_party_review','internal_review') THEN NULL ELSE comments END,
+        project_name = excluded.project_name
+    `, [
+      `apr-${String(content.id)}`,
+      String(content.id),
+      String(content.title ?? '未命名内容'),
+      String(content.author ?? '作者'),
+      String(content.created_at ?? now),
+      String(content.project_id ?? '患教项目'),
+      status,
+      status,
+      status,
+      status,
+    ]);
+  }
+}
+
 export async function getApprovalQueue(filters: { status?: string; page: number; pageSize: number; scope?: QueryScope }) {
+  await ensureApprovalTasksForReviewContent();
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (!isPxAdmin(filters.scope)) {
-    conditions.push('content_id IN (SELECT id FROM content WHERE tenant_id = ?)');
+    conditions.push(`content_id IN (
+      SELECT t.content_id
+      FROM approval_tasks t
+      LEFT JOIN approval_flow_nodes n ON n.id = t.current_node_id
+      WHERE t.tenant_id = ? OR n.reviewer_type IN ('pharma_med','pharma_mkt')
+    )`);
     params.push(filters.scope!.tenantId);
   }
 
@@ -1772,12 +1919,21 @@ export async function rejectItem(id: string, comments?: string, user?: QueryScop
 }
 
 export async function getApprovalTasks(filters: { status?: string; page: number; pageSize: number; scope?: QueryScope }) {
+  await ensureApprovalTasksForReviewContent();
   const conditions: string[] = [];
   const params: unknown[] = [];
-  if (!isPxAdmin(filters.scope)) { conditions.push('t.tenant_id = ?'); params.push(filters.scope!.tenantId); }
+  if (!isPxAdmin(filters.scope)) {
+    conditions.push("(t.tenant_id = ? OR n.reviewer_type IN ('pharma_med','pharma_mkt'))");
+    params.push(filters.scope!.tenantId);
+  }
   if (filters.status && filters.status !== 'all') { conditions.push('t.status = ?'); params.push(filters.status); }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const totalRow = await dbGet<{ cnt: number | string }>(`SELECT COUNT(*) as cnt FROM approval_tasks t ${where}`, params);
+  const totalRow = await dbGet<{ cnt: number | string }>(`
+    SELECT COUNT(*) as cnt
+    FROM approval_tasks t
+    LEFT JOIN approval_flow_nodes n ON n.id = t.current_node_id
+    ${where}
+  `, params);
   const total = Number(totalRow?.cnt ?? 0);
   const offset = (filters.page - 1) * filters.pageSize;
   const rows = await dbAll<Record<string, unknown>>(`
@@ -1919,6 +2075,7 @@ function mergeDxAttachment(row: Record<string, unknown>, dx: DxContentAttachment
 }
 
 export async function getApprovalTaskAttachment(id: string, scope?: QueryScope): Promise<DxContentAttachment | null> {
+  await ensureApprovalTasksForReviewContent();
   const row = await dbGet<Record<string, unknown>>(`
     SELECT
       t.*,
@@ -1935,16 +2092,18 @@ export async function getApprovalTaskAttachment(id: string, scope?: QueryScope):
       cv.version_no AS attachment_version_no,
       cv.immutable_hash AS attachment_hash,
       COALESCE(cv.body, c.content) AS attachment_body,
-      COALESCE(cv.excerpt, c.excerpt) AS attachment_excerpt
+      COALESCE(cv.excerpt, c.excerpt) AS attachment_excerpt,
+      n.reviewer_type
     FROM approval_tasks t
     LEFT JOIN content c ON c.id = t.content_id
     LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN approval_flow_nodes n ON n.id = t.current_node_id
     LEFT JOIN content_versions cv ON cv.content_id = t.content_id
       AND cv.version_no = (SELECT MAX(version_no) FROM content_versions WHERE content_id = t.content_id)
-    WHERE (t.id = ? OR t.content_id = ?) ${!isPxAdmin(scope) ? 'AND t.tenant_id = ?' : ''}
-  `, !isPxAdmin(scope) ? [id, id, scope!.tenantId] : [id, id]);
+    WHERE (t.id = ? OR t.content_id = ?)
+  `, [id, id]);
 
-  if (!row) return null;
+  if (!row || !canAccessApprovalTask(row, scope)) return null;
 
   const task = toCamel(row);
   const contentId = String(task.contentId ?? '');
@@ -1982,21 +2141,40 @@ export async function getApprovalTaskAttachment(id: string, scope?: QueryScope):
 }
 
 export async function handleApprovalTask(id: string, action: 'approve' | 'reject', comments?: string, rejectReason?: string, user?: QueryScope) {
-  const tenantSql = !isPxAdmin(user) ? 'AND tenant_id = ?' : '';
   const existing = await dbGet<Record<string, unknown>>(
-    `SELECT * FROM approval_tasks WHERE (id = ? OR content_id = ?) ${tenantSql}`,
-    !isPxAdmin(user) ? [id, id, user!.tenantId] : [id, id]
+    `SELECT t.*, n.reviewer_type, n.sort_order, n.node_name, n.sla_hours
+     FROM approval_tasks t
+     LEFT JOIN approval_flow_nodes n ON n.id = t.current_node_id
+     WHERE (t.id = ? OR t.content_id = ?)`,
+    [id, id]
   );
-  if (!existing) return null;
+  if (!existing || !canAccessApprovalTask(existing, user)) return null;
   const now = new Date().toISOString();
-  const nextStatus = action === 'approve' ? 'approved' : 'rejected';
+  const nodes = await getApprovalFlowNodes(String(existing.flow_id ?? existing.flowId ?? ''));
+  const currentOrder = Number(existing.sort_order ?? existing.sortOrder ?? 0);
+  const nextNode = nodes.find((node) => Number(node.sort_order) > currentOrder);
+  const isFinalApprove = action === 'approve' && !nextNode;
+  const nextTaskStatus = action === 'reject' ? 'rejected' : isFinalApprove ? 'approved' : 'pending';
+  const nextContentStatus = action === 'reject'
+    ? 'doctor_producing'
+    : isFinalApprove
+      ? 'published'
+      : (nextNode?.reviewer_type === 'pharma_med' || nextNode?.reviewer_type === 'pharma_mkt' ? 'internal_review' : 'third_party_review');
+  const nextWorkflowState = action === 'reject' ? 'rejected' : isFinalApprove ? 'approved_locked' : nextContentStatus;
   await dbRun(`
     UPDATE approval_tasks
     SET status = ?, current_node_id = ?, progress_text = ?, sla_due_at = ?, completed_at = ?, updated_at = ?
-    WHERE (id = ? OR content_id = ?) ${tenantSql}
-  `, !isPxAdmin(user)
-    ? [nextStatus, action === 'approve' ? null : existing.current_node_id, action === 'approve' ? '3/3' : existing.progress_text, action === 'approve' ? '已完成' : '修改中', action === 'approve' ? now : null, now, id, id, user!.tenantId]
-    : [nextStatus, action === 'approve' ? null : existing.current_node_id, action === 'approve' ? '3/3' : existing.progress_text, action === 'approve' ? '已完成' : '修改中', action === 'approve' ? now : null, now, id, id]);
+    WHERE (id = ? OR content_id = ?)
+  `, [
+    nextTaskStatus,
+    action === 'approve' ? (nextNode?.id ?? null) : existing.current_node_id,
+    action === 'approve' ? (nextNode ? progressForNode(nextNode) : '3/3') : existing.progress_text,
+    action === 'approve' ? (nextNode ? slaTextForNode(nextNode) : '已完成') : '修改中',
+    isFinalApprove ? now : null,
+    now,
+    id,
+    id,
+  ]);
 
   await dbRun(`
     INSERT INTO approval_task_actions (task_id, node_id, action, actor_user_id, actor_name, reject_reason, comment, created_at)
@@ -2005,16 +2183,36 @@ export async function handleApprovalTask(id: string, action: 'approve' | 'reject
 
   await dbRun(`
     UPDATE approval_items SET status = ?, reviewed_by = ?, reviewed_at = ?, comments = ? WHERE content_id = ?
-  `, [nextStatus, user?.name || '管理员', now, comments || rejectReason || (action === 'approve' ? '审批通过' : '审批不通过'), existing.content_id]);
+  `, [
+    nextTaskStatus,
+    user?.name || '管理员',
+    now,
+    comments || rejectReason || (action === 'approve' ? '审批通过' : '审批不通过'),
+    existing.content_id,
+  ]);
 
   await dbRun(`
-    UPDATE content SET workflow_state = ?, status = ?, updated_at = ? WHERE id = ?
-    ${!isPxAdmin(user) ? 'AND tenant_id = ?' : ''}
-  `, !isPxAdmin(user)
-    ? [action === 'approve' ? 'approved_locked' : 'rejected', action === 'approve' ? 'published' : 'doctor_producing', now, existing.content_id, user!.tenantId]
-    : [action === 'approve' ? 'approved_locked' : 'rejected', action === 'approve' ? 'published' : 'doctor_producing', now, existing.content_id]);
+    UPDATE content
+    SET workflow_state = ?,
+        status = ?,
+        pipeline_stage = ?,
+        rejection_note = CASE WHEN ? = 'reject' THEN ? ELSE rejection_note END,
+        published_at = CASE WHEN ? = 'published' THEN ? ELSE published_at END,
+        updated_at = ?
+    WHERE id = ?
+  `, [
+    nextWorkflowState,
+    nextContentStatus,
+    nextContentStatus,
+    action,
+    rejectReason || comments || '医学编辑修改',
+    nextContentStatus,
+    now,
+    now,
+    existing.content_id,
+  ]);
 
-  if (action === 'approve') {
+  if (isFinalApprove) {
     await dbRun(`
       UPDATE content_versions
       SET workflow_state = 'approved_locked', approved_by = ?, approved_at = ?
@@ -2049,9 +2247,9 @@ export async function handleApprovalTask(id: string, action: 'approve' | 'reject
     LEFT JOIN approval_flow_nodes n ON n.id = t.current_node_id
     LEFT JOIN content_versions cv ON cv.content_id = t.content_id
       AND cv.version_no = (SELECT MAX(version_no) FROM content_versions WHERE content_id = t.content_id)
-    WHERE (t.id = ? OR t.content_id = ?) ${!isPxAdmin(user) ? 'AND t.tenant_id = ?' : ''}
-  `, !isPxAdmin(user) ? [id, id, user!.tenantId] : [id, id]);
-  return row ? mapApprovalTaskRow(row) : null;
+    WHERE (t.id = ? OR t.content_id = ?)
+  `, [id, id]);
+  return row && canAccessApprovalTask(row, user) ? mapApprovalTaskRow(row) : null;
 }
 
 // === Platform base users/settings ===
