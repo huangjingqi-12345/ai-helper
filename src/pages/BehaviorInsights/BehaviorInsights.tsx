@@ -89,11 +89,10 @@ export function BehaviorInsights(): JSX.Element {
       <ProjectFilter options={projectOptions} selected={projects} onToggle={toggleProject} onClear={() => setProjects([])} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {/* DEMO: delta 值为硬编码占位，生产应从 API 获取环比/同比趋势 */}
-        <KpiCard label="推送人数" value={formatNumber(kpis.pushPeople)} unit="人" icon={Users} delta={{ value: 6.4 }} hint="推送的总计患者数" />
-        <KpiCard label="阅读人数" value={formatNumber(kpis.readPeople)} unit="人" icon={Activity} delta={{ value: 4.2 }} hint="患教内容的阅读人数" />
-        <KpiCard label="阅读次数" value={formatNumber(kpis.readTimes)} unit="次" icon={Zap} delta={{ value: 7.1 }} hint="患教内容累计阅读人次" />
-        <KpiCard label="互动数" value={formatNumber(kpis.interactions)} unit="次" icon={Heart} delta={{ value: -1.2 }} hint="正向互动数 = 点赞 + 收藏" />
+        <KpiCard label="推送人数" value={formatNumber(kpis.pushPeople)} unit="人" icon={Users} hint="推送的总计患者数" />
+        <KpiCard label="阅读人数" value={formatNumber(kpis.readPeople)} unit="人" icon={Activity} hint="患教内容的阅读人数" />
+        <KpiCard label="阅读次数" value={formatNumber(kpis.readTimes)} unit="次" icon={Zap} hint="患教内容累计阅读人次" />
+        <KpiCard label="互动数" value={formatNumber(kpis.interactions)} unit="次" icon={Heart} hint="正向互动数 = 点赞 + 收藏" />
       </div>
 
       <div className="rounded-xl border border-border bg-card">

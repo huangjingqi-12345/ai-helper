@@ -116,15 +116,14 @@ export function ContentDetail(): JSX.Element {
       <ContentBody item={item} />
 
       <div className="grid grid-cols-4 gap-4">
-        <KpiCard label="推送人数" value={formatNumber(item.pushCount ?? 0)} unit="人" icon={Eye} delta={{ value: 4.5 }} hint="推送的总计患者数" />
-        <KpiCard label="阅读人数" value={formatNumber(item.readUsers ?? 0)} unit="人" icon={Users} delta={{ value: 5.0 }} hint="患教内容的阅读人数" />
-        <KpiCard label="阅读次数" value={formatNumber(item.readCount)} unit="次" icon={MessageSquare} delta={{ value: 6.1 }} hint="累计阅读人次" />
+        <KpiCard label="推送人数" value={formatNumber(item.pushCount ?? 0)} unit="人" icon={Eye} hint="推送的总计患者数" />
+        <KpiCard label="阅读人数" value={formatNumber(item.readUsers ?? 0)} unit="人" icon={Users} hint="患教内容的阅读人数" />
+        <KpiCard label="阅读次数" value={formatNumber(item.readCount)} unit="次" icon={MessageSquare} hint="累计阅读人次" />
         <KpiCard
           label="互动数"
           value={formatNumber(interactions)}
           unit="次"
           icon={Heart}
-          delta={{ value: -1.2 }}
           hint={`赞 ${item.likeCount} · 踩 ${item.dislikeCount ?? 0} · 藏 ${item.bookmarkCount}`}
         />
       </div>

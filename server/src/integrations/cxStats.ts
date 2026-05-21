@@ -39,7 +39,8 @@ export interface CxStatsByDoctorResponse {
 }
 
 function getConfig() {
-  const baseUrl = (process.env.CX_API_BASE_URL || '').replace(/\/+$/, '');
+  const configuredBaseUrl = (process.env.CX_API_BASE_URL || '').replace(/\/+$/, '');
+  const baseUrl = configuredBaseUrl.replace(/\/health-education$/, '');
   const token = process.env.CX_PHARMA_ACCESS_TOKEN || '';
   const timeoutMs = Number(process.env.CX_API_TIMEOUT_MS || 10000);
   return { baseUrl, token, timeoutMs };
