@@ -602,6 +602,11 @@ function AttachmentPanel({ attachments, loading = false, error }: { attachments:
               <InlineMarkdown text={attachment.excerpt} />
             </p>
           )}
+          {attachment.renderedImageUrl && (
+            <div className="mt-3 max-h-64 overflow-y-auto rounded-md border border-border/70 bg-background/50">
+              <img src={attachment.renderedImageUrl} alt={attachment.title ?? '患教渲染稿'} className="w-full object-contain" />
+            </div>
+          )}
           <div className="mt-3 max-h-40 overflow-y-auto rounded-md border border-border/70 bg-background/50 px-3 py-2 text-[12px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
             {attachment.body ? <InlineMarkdown text={attachment.body} /> : '暂无正文内容。'}
           </div>

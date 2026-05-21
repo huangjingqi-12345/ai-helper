@@ -29,6 +29,15 @@ const DX_STATUS_LABELS: Record<string, string> = {
 };
 const DX_TASK_DETAIL_STATUSES = new Set(['third_party_review', 'internal_review', 'published']);
 
+type RenderedImageCarrier = {
+  rendered_image_url?: string;
+  renderedImageUrl?: string;
+};
+
+function renderedImageUrlFrom(value?: RenderedImageCarrier | null): string | undefined {
+  return value?.rendered_image_url || value?.renderedImageUrl;
+}
+
 export function ContentDetail(): JSX.Element {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -113,7 +122,7 @@ export function ContentDetail(): JSX.Element {
         <DxTaskStatusPanel task={dxTask} loading={dxTaskLoading} error={dxTaskError} />
       )}
 
-      <ContentBody item={item} />
+      <ContentBody item={item} task={dxTask} />
 
       <div className="grid grid-cols-4 gap-4">
         <KpiCard label="推送人数" value={formatNumber(item.pushCount ?? 0)} unit="人" icon={Eye} hint="推送的总计患者数" />
@@ -157,24 +166,38 @@ export function ContentDetail(): JSX.Element {
   );
 }
 
-function ContentBody({ item }: { item: Content }): JSX.Element {
+function ContentBody({ item, task }: { item: Content; task?: DxTaskStatusDetail | null }): JSX.Element {
+  const taskPosterContent = task?.latest_submission?.poster_content;
+  const itemPosterContent = item.latestSubmission?.poster_content;
+  const dxContent = taskPosterContent ?? itemPosterContent ?? item.dxContent;
   const content = item.bodyText || item.content;
   const blocks = content.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
-  const sections = item.dxContent?.sections ?? [];
+  const sections = dxContent?.sections ?? [];
   const hasDxSections = sections.length > 0;
+  const renderedImageUrl = renderedImageUrlFrom(taskPosterContent)
+    || renderedImageUrlFrom(task?.latest_submission)
+    || renderedImageUrlFrom(itemPosterContent)
+    || renderedImageUrlFrom(item.latestSubmission)
+    || item.renderedImageUrl
+    || renderedImageUrlFrom(item.dxContent);
 
   return (
     <article className="rounded-xl border border-border bg-card px-5 py-4">
       <div className="border-b border-border/70 pb-3">
-        <div className="text-[14px] font-semibold text-foreground">{item.dxContent?.title || '内容正文'}</div>
+        <div className="text-[14px] font-semibold text-foreground">{dxContent?.title || '内容正文'}</div>
         <div className="mt-0.5 text-[11.5px] text-muted-foreground">
           {item.dxPosterId ? `DX 海报 #${item.dxPosterId}${item.dxVersion ? ` · v${item.dxVersion}` : ''}` : '当前内容稿件'}
         </div>
       </div>
-      {item.dxContent?.subtitle && (
+      {dxContent?.subtitle && (
         <p className="mt-4 rounded-lg border border-primary/20 bg-primary/10 px-4 py-3 text-[13px] leading-6 text-foreground">
-          <InlineMarkdown text={item.dxContent.subtitle} />
+          <InlineMarkdown text={dxContent.subtitle} />
         </p>
+      )}
+      {renderedImageUrl && (
+        <div className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background/40">
+          <img src={renderedImageUrl} alt={dxContent?.title || item.title} className="max-h-[860px] w-full object-contain" />
+        </div>
       )}
       {hasDxSections && (
         <div className="mt-4 space-y-4">

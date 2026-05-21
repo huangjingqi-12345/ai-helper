@@ -36,6 +36,8 @@ export interface Content {
   dxContent?: {
     title?: string;
     subtitle?: string;
+    rendered_image_url?: string;
+    renderedImageUrl?: string;
     sections?: Array<{
       title?: string;
       bullets?: Array<{ text?: string; icon?: string; highlight?: boolean }>;
@@ -43,6 +45,7 @@ export interface Content {
       illustration_url?: string;
     }>;
   };
+  renderedImageUrl?: string;
   coverImageUrl?: string;
   bodyText?: string;
   previewText?: string;
@@ -60,6 +63,7 @@ export interface Content {
     department?: string;
     avatar_url?: string;
   };
+  latestSubmission?: DxTaskStatusDetail['latest_submission'];
   tags: string[];
   pushCount?: number;
   readUsers?: number;
@@ -179,6 +183,20 @@ export interface DxTaskStatusDetail {
     doctor_id?: number;
     conversation_id?: number;
     submitted_at?: string;
+    rendered_image_url?: string;
+    renderedImageUrl?: string;
+    poster_content?: {
+      title?: string;
+      subtitle?: string;
+      rendered_image_url?: string;
+      renderedImageUrl?: string;
+      sections?: Array<{
+        title?: string;
+        bullets?: Array<{ text?: string; icon?: string; highlight?: boolean }>;
+        markdown_body?: string;
+        illustration_url?: string;
+      }>;
+    };
   } | null;
   latest_review?: {
     verdict?: string;

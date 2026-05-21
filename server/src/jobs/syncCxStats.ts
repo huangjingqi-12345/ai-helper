@@ -52,7 +52,10 @@ export async function runCxStatsSync(): Promise<{ synced: number; errors: number
 
   // 1. Get all content with poster_id
   const contents = await dbAll<ContentWithPoster>(
-    `SELECT id, dx_poster_id, tenant_id, project_id, disease_id FROM content WHERE dx_poster_id IS NOT NULL`
+    `SELECT c.id, c.dx_poster_id, c.tenant_id, c.project_id, p.disease_id
+     FROM content c
+     LEFT JOIN projects p ON p.id = c.project_id
+     WHERE c.dx_poster_id IS NOT NULL`
   );
 
   if (!contents.length) {
@@ -109,6 +112,8 @@ export async function runCxStatsSync(): Promise<{ synced: number; errors: number
       logger.warn({ err, contentId: content.id, posterId: content.dx_poster_id }, 'Failed to sync stats for content');
     }
   }
+
+  await refreshBehaviorRollups(now);
 
   logger.info({ synced, errors, date: today }, 'CX stats sync completed');
   return { synced, errors };
@@ -236,7 +241,6 @@ async function upsertDailyMetrics(
 }
 
 async function updateContentStats(contentId: string, stats: CxItemStats): Promise<void> {
-  const interactionCount = stats.likeCount + stats.favoriteCount;
   await dbRun(
     `UPDATE content SET
        read_count = ?,
@@ -245,14 +249,179 @@ async function updateContentStats(contentId: string, stats: CxItemStats): Promis
        dislike_count = ?,
        bookmark_count = ?,
        updated_at = ?
-     WHERE id = ?`,
+    WHERE id = ?`,
     [stats.pvCount, stats.uvCount, stats.likeCount, stats.dislikeCount, stats.favoriteCount, new Date().toISOString(), contentId],
   );
+}
 
-  // Also update the interaction count (computed field on content table if exists)
-  // The content table doesn't have interaction_count but projects table does
-  // We'll leave project-level rollup for a separate aggregation
-  void interactionCount; // suppress unused
+async function refreshBehaviorRollups(now: string): Promise<void> {
+  await refreshProjectRollups(now);
+  await refreshOverviewStats(now);
+  await refreshBehaviorTrendTables();
+}
+
+async function refreshProjectRollups(now: string): Promise<void> {
+  const rows = await dbAll<{
+    project_id: string;
+    push_count: number | string;
+    read_users: number | string;
+    read_count: number | string;
+    interaction_count: number | string;
+  }>(`
+    SELECT
+      project_id,
+      COALESCE(SUM(push_count), 0) AS push_count,
+      COALESCE(SUM(read_users), 0) AS read_users,
+      COALESCE(SUM(read_count), 0) AS read_count,
+      COALESCE(SUM(COALESCE(like_count, 0) + COALESCE(bookmark_count, 0)), 0) AS interaction_count
+    FROM content
+    GROUP BY project_id
+  `);
+
+  for (const row of rows) {
+    await dbRun(
+      `UPDATE projects
+       SET push_count = ?, read_users = ?, read_count = ?, interaction_count = ?, updated_at = ?
+       WHERE id = ?`,
+      [
+        Number(row.push_count) || 0,
+        Number(row.read_users) || 0,
+        Number(row.read_count) || 0,
+        Number(row.interaction_count) || 0,
+        now,
+        row.project_id,
+      ],
+    );
+  }
+}
+
+async function refreshOverviewStats(now: string): Promise<void> {
+  const row = await dbGet<{
+    project_count: number | string;
+    content_count: number | string;
+    published_count: number | string;
+    push_count: number | string;
+    read_users: number | string;
+    read_count: number | string;
+    interaction_count: number | string;
+  }>(`
+    SELECT
+      COUNT(*) AS project_count,
+      COALESCE(SUM(content_count), 0) AS content_count,
+      COALESCE(SUM(published_count), 0) AS published_count,
+      COALESCE(SUM(push_count), 0) AS push_count,
+      COALESCE(SUM(read_users), 0) AS read_users,
+      COALESCE(SUM(read_count), 0) AS read_count,
+      COALESCE(SUM(interaction_count), 0) AS interaction_count
+    FROM projects
+  `);
+
+  const publishedCount = Number(row?.published_count) || 0;
+  const contentCount = Number(row?.content_count) || 0;
+
+  await dbRun(
+    `INSERT INTO overview_stats (
+       id, project_count, published_content, push_count, read_users, read_count, interaction_count, last_updated
+     ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       project_count = excluded.project_count,
+       published_content = excluded.published_content,
+       push_count = excluded.push_count,
+       read_users = excluded.read_users,
+       read_count = excluded.read_count,
+       interaction_count = excluded.interaction_count,
+       last_updated = excluded.last_updated`,
+    [
+      Number(row?.project_count) || 0,
+      `${publishedCount}/${contentCount}`,
+      Number(row?.push_count) || 0,
+      Number(row?.read_users) || 0,
+      Number(row?.read_count) || 0,
+      Number(row?.interaction_count) || 0,
+      now,
+    ],
+  );
+}
+
+async function refreshBehaviorTrendTables(): Promise<void> {
+  const daily = await dbAll<{
+    metric_date: string;
+    read_count: number | string;
+    interaction_count: number | string;
+  }>(`
+    SELECT metric_date, SUM(read_count) AS read_count, SUM(interaction_count) AS interaction_count
+    FROM behavior_daily_metrics
+    GROUP BY metric_date
+    ORDER BY metric_date ASC
+  `);
+
+  await dbRun('DELETE FROM behavior_trends');
+  for (const row of daily) {
+    await dbRun('INSERT INTO behavior_trends (date, type, value) VALUES (?, ?, ?)', [
+      row.metric_date,
+      'reads',
+      Number(row.read_count) || 0,
+    ]);
+    await dbRun('INSERT INTO behavior_trends (date, type, value) VALUES (?, ?, ?)', [
+      row.metric_date,
+      'interactions',
+      Number(row.interaction_count) || 0,
+    ]);
+  }
+
+  const topContent = await dbAll<{
+    id: string;
+    title: string;
+    reads: number | string;
+    interactions: number | string;
+  }>(`
+    SELECT
+      id,
+      title,
+      COALESCE(read_count, 0) AS reads,
+      COALESCE(like_count, 0) + COALESCE(bookmark_count, 0) AS interactions
+    FROM content
+    WHERE COALESCE(read_count, 0) > 0 OR COALESCE(like_count, 0) > 0 OR COALESCE(bookmark_count, 0) > 0
+    ORDER BY read_count DESC, updated_at DESC
+    LIMIT 20
+  `);
+
+  await dbRun('DELETE FROM behavior_top_content');
+  for (const row of topContent) {
+    await dbRun('INSERT INTO behavior_top_content (content_id, title, reads, interactions) VALUES (?, ?, ?, ?)', [
+      row.id,
+      row.title,
+      Number(row.reads) || 0,
+      Number(row.interactions) || 0,
+    ]);
+  }
+
+  const byDisease = await dbAll<{
+    disease: string | null;
+    reads: number | string;
+    interactions: number | string;
+    push_count: number | string;
+  }>(`
+    SELECT
+      COALESCE(p.disease, '未分组') AS disease,
+      COALESCE(SUM(c.read_count), 0) AS reads,
+      COALESCE(SUM(COALESCE(c.like_count, 0) + COALESCE(c.bookmark_count, 0)), 0) AS interactions,
+      COALESCE(SUM(c.push_count), 0) AS push_count
+    FROM content c
+    LEFT JOIN projects p ON p.id = c.project_id
+    GROUP BY p.disease
+    ORDER BY reads DESC
+  `);
+
+  await dbRun('DELETE FROM behavior_by_disease');
+  for (const row of byDisease) {
+    await dbRun('INSERT INTO behavior_by_disease (disease, reads, interactions, push_count) VALUES (?, ?, ?, ?)', [
+      row.disease ?? '未分组',
+      Number(row.reads) || 0,
+      Number(row.interactions) || 0,
+      Number(row.push_count) || 0,
+    ]);
+  }
 }
 
 /**

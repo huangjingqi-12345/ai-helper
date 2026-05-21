@@ -9,6 +9,8 @@ import { SideSheet } from '@/components/ui/SideSheet';
 import { Select } from '@/components/ui/Select';
 import { showToast } from '@/components/ui/Toast';
 import { createDistributionProject, getDistributionProjects } from '@/api/endpoints/distribution';
+import { getTenantOptions } from '@/api/endpoints/platform';
+import type { TenantOption } from '@/stores/useTenantStore';
 import type { DistributionProject, DistributionProjectStatus } from '@/types/distribution';
 import { formatNumber } from '@/utils/formatters';
 
@@ -21,28 +23,15 @@ const STATUS_OPTIONS = [
   { value: 'archived', label: '已归档' },
 ];
 
-const TENANT_OPTIONS = [
-  { value: '', label: '全部租户' },
-  { value: 'T-NV', label: '诺华' },
-  { value: 'T-AZ', label: '阿斯利康' },
-  { value: 'T-MSD', label: '默沙东' },
-  { value: 'T-RC', label: '罗氏' },
-  { value: 'T-LL', label: '礼来' },
-];
-
-const tenantLabel: Record<string, string> = {
-  'T-PX': 'Px Ops',
-  'T-NV': '诺华',
-  'T-AZ': '阿斯利康',
-  'T-MSD': '默沙东',
-  'T-RC': '罗氏',
-  'T-LL': '礼来',
-};
-
 const requirementCountByProject: Record<string, number> = {
   'PRJ-1000': 3,
   'PRJ-1001': 2,
 };
+
+function tenantDisplayName(tenant?: TenantOption): string {
+  if (!tenant) return '—';
+  return tenant.shortName && tenant.shortName !== tenant.name ? `${tenant.shortName} · ${tenant.name}` : tenant.name;
+}
 
 function formatProjectTimestamp(value?: string): string {
   return value ? value.slice(0, 16).replace('T', ' ') : '2026-05-07 09:42';
@@ -66,6 +55,7 @@ function statusClassName(status: DistributionProjectStatus): string {
 
 export function ProjectManagement(): JSX.Element {
   const [projects, setProjects] = useState<DistributionProject[]>([]);
+  const [tenants, setTenants] = useState<TenantOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [tenant, setTenant] = useState('');
@@ -75,15 +65,26 @@ export function ProjectManagement(): JSX.Element {
   useEffect(() => {
     let mounted = true;
     setLoading(true);
-    getDistributionProjects({ pageSize: 100 })
-      .then((res) => {
-        if (mounted) setProjects(res.data);
+    Promise.all([
+      getDistributionProjects({ pageSize: 100 }),
+      getTenantOptions().catch(() => ({ data: [] as TenantOption[] })),
+    ])
+      .then(([projectRes, tenantRes]) => {
+        if (!mounted) return;
+        setProjects(projectRes.data);
+        setTenants(tenantRes.data.filter((item) => item.type === 'pharma'));
       })
       .finally(() => {
         if (mounted) setLoading(false);
       });
     return () => { mounted = false; };
   }, []);
+
+  const tenantNames = useMemo(() => new Map(tenants.map((item) => [item.id, tenantDisplayName(item)])), [tenants]);
+  const tenantOptions = useMemo(() => [
+    { value: '', label: '全部租户' },
+    ...tenants.map((item) => ({ value: item.id, label: tenantDisplayName(item) })),
+  ], [tenants]);
 
   const filtered = useMemo(() => projects.filter((project) => {
     const haystack = `${project.title}${project.brand}${project.disease}${project.owner}`.toLowerCase();
@@ -138,7 +139,7 @@ export function ProjectManagement(): JSX.Element {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索项目名 / 病种 / 品牌 / 负责人" className="h-8 w-[260px] rounded-lg border border-border bg-bg-tertiary pl-9 pr-3 text-[12.5px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-blue" />
         </div>
-        <Select options={TENANT_OPTIONS} value={tenant} onChange={setTenant} className="h-8 w-[160px] py-1 text-[12.5px]" />
+        <Select options={tenantOptions} value={tenant} onChange={setTenant} className="h-8 w-[180px] py-1 text-[12.5px]" />
         <Select options={STATUS_OPTIONS} value={status} onChange={setStatus} className="h-8 w-[140px] py-1 text-[12.5px]" />
         <span className="ml-auto text-[11.5px] text-text-muted">共 <span className="text-text-primary">{filtered.length}</span> 个项目</span>
       </div>
@@ -153,12 +154,12 @@ export function ProjectManagement(): JSX.Element {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            {filtered.map((project) => <ProjectRow key={project.id} project={project} />)}
+            {filtered.map((project) => <ProjectRow key={project.id} project={project} tenantName={tenantNames.get(project.tenantId)} />)}
           </div>
         )}
       </div>
 
-      <CreateProjectSheet open={createOpen} onClose={() => setCreateOpen(false)} onCreate={addProject} />
+      <CreateProjectSheet open={createOpen} tenants={tenants} onClose={() => setCreateOpen(false)} onCreate={addProject} />
     </div>
   );
 }
@@ -174,7 +175,7 @@ function MiniKpi({ icon, label, value }: { icon: React.ReactNode; label: string;
   );
 }
 
-function ProjectRow({ project }: { project: DistributionProject }): JSX.Element {
+function ProjectRow({ project, tenantName }: { project: DistributionProject; tenantName?: string }): JSX.Element {
   return (
     <Card className="group relative overflow-hidden p-4 transition-colors hover:border-primary/40">
       <div className="flex items-start justify-between gap-3">
@@ -184,7 +185,7 @@ function ProjectRow({ project }: { project: DistributionProject }): JSX.Element 
             <h3 className="truncate text-[14px] font-semibold text-foreground">{project.title}</h3>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-muted-foreground">
-            <span>租户 · {tenantLabel[project.tenantId] ?? project.tenantId}</span>
+            <span>租户 · {tenantName ?? project.tenantId}</span>
             <span>·</span>
             <span>{project.disease}</span>
             {project.brand && (
@@ -258,9 +259,10 @@ const BRAND_OPTIONS: Record<string, Array<{ name: string; cls: string }>> = {
   阿尔茨海默病: [{ name: '仑卡奈单抗', cls: 'Aβ 单抗' }],
 };
 
-function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClose: () => void; onCreate: (draft: ProjectDraft) => Promise<void> }): JSX.Element {
+function CreateProjectSheet({ open, tenants, onClose, onCreate }: { open: boolean; tenants: TenantOption[]; onClose: () => void; onCreate: (draft: ProjectDraft) => Promise<void> }): JSX.Element {
+  const defaultTenantId = tenants[0]?.id ?? '';
   const [draft, setDraft] = useState<ProjectDraft>({
-    tenantId: 'T-NV',
+    tenantId: defaultTenantId,
     name: '',
     brand: '',
     disease: '乳腺癌',
@@ -271,14 +273,14 @@ function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClos
 
   useEffect(() => {
     if (open) {
-      setDraft({ tenantId: 'T-NV', name: '', brand: '', disease: '乳腺癌', owner: 'PX 运营组', note: '' });
+      setDraft({ tenantId: defaultTenantId, name: '', brand: '', disease: '乳腺癌', owner: 'PX 运营组', note: '' });
       setSubmitting(false);
     }
-  }, [open]);
+  }, [defaultTenantId, open]);
 
   const update = (patch: Partial<ProjectDraft>): void => setDraft((current) => ({ ...current, ...patch }));
   const drugOptions = BRAND_OPTIONS[draft.disease] ?? [];
-  const tenant = TENANT_OPTIONS.find((item) => item.value === draft.tenantId);
+  const selectedTenant = tenants.find((item) => item.id === draft.tenantId);
 
   const submit = async (): Promise<void> => {
     if (submitting) return;
@@ -288,6 +290,10 @@ function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClos
     }
     if (!draft.disease || !draft.owner.trim()) {
       showToast('请补充病种与项目负责人', 'error');
+      return;
+    }
+    if (!draft.tenantId) {
+      showToast('请先选择所属药企租户', 'error');
       return;
     }
     setSubmitting(true);
@@ -322,9 +328,10 @@ function CreateProjectSheet({ open, onClose, onCreate }: { open: boolean; onClos
         <div className="grid grid-cols-2 gap-3">
           <ProjectField label="所属租户" required>
             <select value={draft.tenantId} onChange={(event) => update({ tenantId: event.target.value })} className="h-9 w-full rounded-md border border-border bg-input/40 px-2.5 text-[12.5px] outline-none focus:border-[oklch(60%_.16_195)]/70">
-              {TENANT_OPTIONS.filter((item) => item.value).map((item) => <option key={item.value} value={item.value}>{item.label} · {item.value}</option>)}
+              {tenants.length === 0 && <option value="">暂无可选药企租户</option>}
+              {tenants.map((item) => <option key={item.id} value={item.id}>{tenantDisplayName(item)} · {item.id}</option>)}
             </select>
-            <p className="mt-1 text-[11px] text-muted-foreground">灰度上限 100% · k-匿名 ≥ {draft.tenantId === 'T-PX' ? '0' : '20'} · {tenant?.label ?? '—'}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">从平台租户列表实时读取 · {tenantDisplayName(selectedTenant)}</p>
           </ProjectField>
           <ProjectField label="项目负责人" required>
             <input value={draft.owner} onChange={(event) => update({ owner: event.target.value })} placeholder="如：运营 · 王雪" className="h-9 w-full rounded-md border border-border bg-input/40 px-2.5 text-[12.5px] outline-none focus:border-[oklch(60%_.16_195)]/70" />

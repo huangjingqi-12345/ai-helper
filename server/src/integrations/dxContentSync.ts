@@ -38,6 +38,8 @@ export interface DxContentItem {
   content?: {
     title: string;
     subtitle?: string;
+    rendered_image_url?: string;
+    renderedImageUrl?: string;
     sections?: Array<{
       title: string;
       bullets?: Array<{ text: string }>;
@@ -45,6 +47,8 @@ export interface DxContentItem {
       illustration_url?: string;
     }>;
   };
+  rendered_image_url?: string;
+  renderedImageUrl?: string;
   cover_image_url?: string;
   body_text?: string;
   preview_text?: string;

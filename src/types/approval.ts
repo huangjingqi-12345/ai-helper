@@ -30,6 +30,7 @@ export interface ApprovalAttachment {
   contentType?: string;
   excerpt?: string;
   body?: string;
+  renderedImageUrl?: string;
   tags?: string[];
   priority?: string;
   projectName?: string;

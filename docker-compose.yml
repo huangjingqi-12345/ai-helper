@@ -49,6 +49,10 @@ services:
       - DX_API_KEY=${DX_API_KEY:-}
       - DX_API_TIMEOUT_MS=${DX_API_TIMEOUT_MS:-5000}
       - DX_CONTENT_FALLBACK=${DX_CONTENT_FALLBACK:-local}
+      - CX_API_BASE_URL=${CX_API_BASE_URL:-}
+      - CX_PHARMA_ACCESS_TOKEN=${CX_PHARMA_ACCESS_TOKEN:-}
+      - CX_API_TIMEOUT_MS=${CX_API_TIMEOUT_MS:-10000}
+      - CX_SYNC_HOUR=${CX_SYNC_HOUR:-2}
     volumes:
       - pxlite-db:/app/data
       - pxlite-logs:/app/logs

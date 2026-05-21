@@ -14,6 +14,7 @@ export interface DxContentAttachment {
   contentType?: string;
   excerpt?: string;
   body?: string;
+  renderedImageUrl?: string;
   tags?: string[];
   priority?: string;
   projectName?: string;

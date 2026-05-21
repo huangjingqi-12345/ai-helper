@@ -436,6 +436,7 @@ async function seedOverviewContentAndBehavior(_now: string): Promise<void> {
     ]);
   }
 
+  await run("DELETE FROM doctor_tasks WHERE request_id IN ('REQ-2031', 'REQ-2030')");
   await run("DELETE FROM request_distribution_batches WHERE request_id IN ('REQ-2031', 'REQ-2030')");
   const requestHistoryBatches = [
     {
@@ -636,6 +637,55 @@ async function seedStrategies(now: string): Promise<void> {
 async function seedApproval(now: string): Promise<void> {
   await replaceRowsForSqlite(['approval_task_actions', 'approval_tasks', 'approval_flow_nodes', 'approval_flows', 'approval_items']);
 
+  await seedBaseApprovalFlows(now);
+
+  const taskSeeds = [
+    ['task-CNT-101', 'CNT-101', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
+    ['task-CNT-102', 'CNT-102', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '531h / 8h'],
+  ];
+
+  for (const task of taskSeeds) {
+    const content = contentList.find((item) => item.id === task[1]);
+    await run(`
+      INSERT INTO approval_tasks (id, tenant_id, content_id, project_id, flow_id, current_node_id, status, progress_text, sla_due_at, submitted_by, submitted_at, completed_at, created_at, updated_at)
+      VALUES (?, 'T-PX', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        content_id = excluded.content_id,
+        project_id = excluded.project_id,
+        flow_id = excluded.flow_id,
+        current_node_id = excluded.current_node_id,
+        status = excluded.status,
+        progress_text = excluded.progress_text,
+        sla_due_at = excluded.sla_due_at,
+        submitted_by = excluded.submitted_by,
+        submitted_at = excluded.submitted_at,
+        completed_at = excluded.completed_at,
+        updated_at = excluded.updated_at
+    `, [task[0], task[1], task[2], task[3], task[4], task[5], task[6], task[7], content?.author ?? '作者', content?.createdAt ?? now, task[5] === 'approved' ? now : null, now, now]);
+  }
+
+  for (const task of taskSeeds) {
+    const content = contentList.find((item) => item.id === task[1]);
+    if (!content) continue;
+    const itemStatus = task[5] === 'cancelled' ? 'approved' : task[5];
+    await run(`
+      INSERT INTO approval_items (id, content_id, content_title, submitted_by, submitted_at, status, reviewed_by, reviewed_at, comments, project_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        content_id = excluded.content_id,
+        content_title = excluded.content_title,
+        submitted_by = excluded.submitted_by,
+        submitted_at = excluded.submitted_at,
+        status = excluded.status,
+        reviewed_by = excluded.reviewed_by,
+        reviewed_at = excluded.reviewed_at,
+        comments = excluded.comments,
+        project_name = excluded.project_name
+    `, [`apr-${content.id}`, content.id, content.title, content.author, content.createdAt, itemStatus, itemStatus === 'pending' ? null : '管理员', itemStatus === 'pending' ? null : now, itemStatus === 'rejected' ? content.rejectionNote ?? '请修改后重新提交' : itemStatus === 'approved' ? '内容准确，可以发布' : null, content.projectName ?? content.tags[0] ?? '患教项目']);
+  }
+}
+
+async function seedBaseApprovalFlows(now: string): Promise<void> {
   const flows = [
     ['flow-1', 'T-PX', 'PX 默认审批流', 'DX 医学审核 → PX 运营审核 → 药企审核', 'active', 'submitter', '2026-04-20T00:00:00Z', '2026-04-20T00:00:00Z'],
     ['flow-2', 'T-PX', 'PX 快速流（品牌通识类）', '编辑审核 → Px 审核 → 药企审核', 'inactive', 'previous', '2026-03-15T00:00:00Z', '2026-03-15T00:00:00Z'],
@@ -694,51 +744,6 @@ async function seedApproval(now: string): Promise<void> {
         updated_at = excluded.updated_at
     `, [...node, now, now]);
   }
-
-  const taskSeeds = [
-    ['task-CNT-101', 'CNT-101', 'proj-breast', 'flow-1', null, 'cancelled', '—', '—'],
-    ['task-CNT-102', 'CNT-102', 'proj-breast', 'flow-1', 'flow-1-node-1', 'pending', '0/3', '531h / 8h'],
-  ];
-
-  for (const task of taskSeeds) {
-    const content = contentList.find((item) => item.id === task[1]);
-    await run(`
-      INSERT INTO approval_tasks (id, tenant_id, content_id, project_id, flow_id, current_node_id, status, progress_text, sla_due_at, submitted_by, submitted_at, completed_at, created_at, updated_at)
-      VALUES (?, 'T-PX', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        content_id = excluded.content_id,
-        project_id = excluded.project_id,
-        flow_id = excluded.flow_id,
-        current_node_id = excluded.current_node_id,
-        status = excluded.status,
-        progress_text = excluded.progress_text,
-        sla_due_at = excluded.sla_due_at,
-        submitted_by = excluded.submitted_by,
-        submitted_at = excluded.submitted_at,
-        completed_at = excluded.completed_at,
-        updated_at = excluded.updated_at
-    `, [task[0], task[1], task[2], task[3], task[4], task[5], task[6], task[7], content?.author ?? '作者', content?.createdAt ?? now, task[5] === 'approved' ? now : null, now, now]);
-  }
-
-  for (const task of taskSeeds) {
-    const content = contentList.find((item) => item.id === task[1]);
-    if (!content) continue;
-    const itemStatus = task[5] === 'cancelled' ? 'approved' : task[5];
-    await run(`
-      INSERT INTO approval_items (id, content_id, content_title, submitted_by, submitted_at, status, reviewed_by, reviewed_at, comments, project_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        content_id = excluded.content_id,
-        content_title = excluded.content_title,
-        submitted_by = excluded.submitted_by,
-        submitted_at = excluded.submitted_at,
-        status = excluded.status,
-        reviewed_by = excluded.reviewed_by,
-        reviewed_at = excluded.reviewed_at,
-        comments = excluded.comments,
-        project_name = excluded.project_name
-    `, [`apr-${content.id}`, content.id, content.title, content.author, content.createdAt, itemStatus, itemStatus === 'pending' ? null : '管理员', itemStatus === 'pending' ? null : now, itemStatus === 'rejected' ? content.rejectionNote ?? '请修改后重新提交' : itemStatus === 'approved' ? '内容准确，可以发布' : null, content.projectName ?? content.tags[0] ?? '患教项目']);
-  }
 }
 
 async function seedAccountsAndLogs(now: string): Promise<void> {
@@ -764,6 +769,23 @@ async function seedAccountsAndLogs(now: string): Promise<void> {
     ['A-017', 'T-LL', '禾未', 'hew@lilly.cn', 'viewer', ['药企 · 合规'], 'pharma', '华东', 'active', true, '2026-05-08 09:10', '合规审核员。'],
     ['A-018', 'T-LL', '言归', 'yang@lilly.cn', 'viewer', ['药企 · BD'], 'pharma', '华南', 'active', true, '2026-05-07 21:33', 'BD 项目提交。'],
   ];
+
+  const accountIds = accounts.map((account) => String(account[0]));
+  const accountTenants = Array.from(new Set(accounts.map((account) => String(account[1]))));
+  await run(
+    `DELETE FROM user_roles WHERE user_id IN (
+      SELECT id FROM users
+      WHERE tenant_id IN (${accountTenants.map(() => '?').join(', ')})
+        AND id NOT IN (${accountIds.map(() => '?').join(', ')})
+    )`,
+    [...accountTenants, ...accountIds],
+  );
+  await run(
+    `DELETE FROM users
+     WHERE tenant_id IN (${accountTenants.map(() => '?').join(', ')})
+       AND id NOT IN (${accountIds.map(() => '?').join(', ')})`,
+    [...accountTenants, ...accountIds],
+  );
 
   for (const account of accounts) {
     const [id, tenantId, name, email, role, roleLabels, viewType, region, status, has2fa, lastLogin, note] = account;
@@ -882,6 +904,7 @@ export async function seedDatabase(): Promise<void> {
   const now = new Date().toISOString();
   await seedTenants(now);
   await seedPlatformBase(now);
+  await seedBaseApprovalFlows(now);
 
   if (process.env.NODE_ENV === 'production' && process.env.RUN_DEMO_SEED !== 'true') {
     logger.info({ driver: DB_DRIVER }, 'Production mode: base data initialized; demo seed data skipped.');

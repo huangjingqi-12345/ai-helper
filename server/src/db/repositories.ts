@@ -91,6 +91,7 @@ const projectColors: Record<string, string> = {
 function mapContentRow(row: Record<string, unknown>) {
   const content = toCamel(row);
   parseJsonFields(content, ['tags']);
+  parseJsonObjectFields(content, ['latestSubmission']);
   return {
     ...content,
     projectColor: projectColors[String(content.projectId)] ?? 'blue',
@@ -118,6 +119,34 @@ function dxPreviewFromDetail(detail: DxContentDetail): string | undefined {
   if (detail.preview_text?.trim()) return detail.preview_text.trim();
   const body = dxBodyFromDetail(detail);
   return body ? body.slice(0, 160) : undefined;
+}
+
+function renderedImageUrlFromRecord(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  const direct = asText(record.rendered_image_url) || asText(record.renderedImageUrl);
+  if (direct) return direct;
+  for (const child of Object.values(record)) {
+    if (child && typeof child === 'object' && !Array.isArray(child)) {
+      const nested = renderedImageUrlFromRecord(child);
+      if (nested) return nested;
+    }
+  }
+  return undefined;
+}
+
+function renderedImageUrlFromSubmission(value: unknown): string | undefined {
+  return renderedImageUrlFromRecord(parseJson<Record<string, unknown>>(value, {}));
+}
+
+function dxRenderedImageUrlFromDetail(detail: DxContentDetail): string | undefined {
+  return renderedImageUrlFromRecord(detail);
+}
+
+function posterContentFromSubmission(value: unknown): Record<string, unknown> | undefined {
+  const submission = parseJson<Record<string, unknown>>(value, {});
+  if (!submission.poster_content || typeof submission.poster_content !== 'object' || Array.isArray(submission.poster_content)) return undefined;
+  return submission.poster_content as Record<string, unknown>;
 }
 
 function dxPosterIdFromContent(content: Record<string, unknown>): number | null {
@@ -158,22 +187,32 @@ async function resolveDxPosterForContent(contentId: string, content: Record<stri
 async function enrichContentWithDxDetail(content: Record<string, unknown>): Promise<Record<string, unknown>> {
   const contentId = asText(content.id);
   if (!contentId) return content;
+  const latestPosterContent = posterContentFromSubmission(content.latestSubmission);
+  const latestRenderedImageUrl = renderedImageUrlFromSubmission(content.latestSubmission);
+  const contentWithLatestSubmission = latestPosterContent || latestRenderedImageUrl
+    ? {
+      ...content,
+      dxContent: latestPosterContent ?? content.dxContent,
+      renderedImageUrl: latestRenderedImageUrl,
+    }
+    : content;
   const matched = await resolveDxPosterForContent(contentId, content);
-  if (!matched) return content;
+  if (!matched) return contentWithLatestSubmission;
 
   const detail = await fetchDxContentDetail(matched.poster_id);
-  if (!detail) return { ...content, dxPosterId: matched.poster_id, dxTaskId: matched.task_id };
+  if (!detail) return { ...contentWithLatestSubmission, dxPosterId: matched.poster_id, dxTaskId: matched.task_id };
 
   const body = dxBodyFromDetail(detail);
   return {
-    ...content,
+    ...contentWithLatestSubmission,
     content: body || content.content,
     excerpt: dxPreviewFromDetail(detail) ?? content.excerpt,
     publishedAt: detail.published_at ?? content.publishedAt,
     dxPosterId: detail.poster_id,
     dxTaskId: detail.task_id,
     dxVersion: detail.version,
-    dxContent: detail.content,
+    dxContent: detail.content ?? latestPosterContent,
+    renderedImageUrl: dxRenderedImageUrlFromDetail(detail) || latestRenderedImageUrl,
     coverImageUrl: detail.cover_image_url,
     bodyText: detail.body_text,
     previewText: detail.preview_text,
@@ -260,7 +299,15 @@ export async function getContentById(id: string, scope?: QueryScope) {
   const tenant = tenantCondition('c', scope);
   const tenantSql = tenant.sql ? `AND ${tenant.sql}` : '';
   const row = await dbGet<Record<string, unknown>>(`
-    SELECT c.*, p.name AS project_name
+    SELECT c.*, p.name AS project_name,
+      (
+        SELECT dt.latest_submission
+        FROM doctor_tasks dt
+        INNER JOIN content_requests cr ON LOWER(cr.id) = LOWER(dt.request_id)
+        WHERE LOWER(cr.content_id) = LOWER(c.id)
+        ORDER BY COALESCE(dt.dx_updated_at, dt.updated_at, dt.created_at) DESC, dt.px_task_id ASC
+        LIMIT 1
+      ) AS latest_submission
     FROM content c
     LEFT JOIN projects p ON p.id = c.project_id
     WHERE LOWER(c.id) = LOWER(?)
@@ -1791,6 +1838,10 @@ export async function getDoctorCandidates() {
     try {
       return await fetchDxDoctorCandidates();
     } catch (error) {
+      if (process.env.DX_DOCTORS_FALLBACK === 'none') {
+        logger.warn({ err: error }, 'DX doctor candidates unavailable; local fallback disabled');
+        return [];
+      }
       logger.warn({ err: error }, 'Falling back to local doctor candidates');
     }
   }
@@ -1945,10 +1996,10 @@ async function ensureApprovalTasksForReviewContent(): Promise<void> {
         content_title = excluded.content_title,
         submitted_by = excluded.submitted_by,
         submitted_at = excluded.submitted_at,
-        status = CASE WHEN ? IN ('third_party_review','internal_review') THEN 'pending' ELSE status END,
-        reviewed_by = CASE WHEN ? IN ('third_party_review','internal_review') THEN NULL ELSE reviewed_by END,
-        reviewed_at = CASE WHEN ? IN ('third_party_review','internal_review') THEN NULL ELSE reviewed_at END,
-        comments = CASE WHEN ? IN ('third_party_review','internal_review') THEN NULL ELSE comments END,
+        status = CASE WHEN ? IN ('third_party_review','internal_review') THEN 'pending' ELSE approval_items.status END,
+        reviewed_by = CASE WHEN ? IN ('third_party_review','internal_review') THEN NULL ELSE approval_items.reviewed_by END,
+        reviewed_at = CASE WHEN ? IN ('third_party_review','internal_review') THEN NULL ELSE approval_items.reviewed_at END,
+        comments = CASE WHEN ? IN ('third_party_review','internal_review') THEN NULL ELSE approval_items.comments END,
         project_name = excluded.project_name
     `, [
       `apr-${String(content.id)}`,
@@ -2143,6 +2194,7 @@ function buildLocalApprovalAttachment(row: Record<string, unknown>, error?: stri
     contentType: String(task.contentType ?? 'article'),
     excerpt: String(task.attachmentExcerpt ?? task.contentExcerpt ?? ''),
     body: String(task.attachmentBody ?? task.contentBody ?? ''),
+    renderedImageUrl: renderedImageUrlFromSubmission(task.latestSubmission),
     tags,
     priority: task.contentPriority ? String(task.contentPriority) : undefined,
     projectName: task.projectName ? String(task.projectName) : undefined,
@@ -2178,6 +2230,7 @@ function mergeDxAttachment(row: Record<string, unknown>, dx: DxContentAttachment
     contentId: local.contentId,
     title: dx.title || local.title,
     contentType: dx.contentType || local.contentType,
+    renderedImageUrl: dx.renderedImageUrl || local.renderedImageUrl,
     tags: dx.tags && dx.tags.length > 0 ? dx.tags : local.tags,
     route: local.route,
     source: 'dx_api',
@@ -2197,6 +2250,7 @@ function buildDxApprovalAttachment(row: Record<string, unknown>, detail: DxConte
     contentType: detail.content_format || local.contentType,
     excerpt: dxPreviewFromDetail(detail) ?? local.excerpt,
     body: dxBodyFromDetail(detail) || local.body,
+    renderedImageUrl: dxRenderedImageUrlFromDetail(detail) || local.renderedImageUrl,
     tags: detail.tags && detail.tags.length > 0 ? detail.tags : local.tags,
     author: detail.doctor?.name || local.author,
     updatedAt: detail.published_at ?? local.updatedAt,
@@ -2218,6 +2272,14 @@ export async function getApprovalTaskAttachment(id: string, scope?: QueryScope):
       c.author,
       c.type AS content_type,
       c.dx_poster_id AS dx_poster_id,
+      (
+        SELECT dt.latest_submission
+        FROM doctor_tasks dt
+        INNER JOIN content_requests cr ON LOWER(cr.id) = LOWER(dt.request_id)
+        WHERE LOWER(cr.content_id) = LOWER(t.content_id)
+        ORDER BY COALESCE(dt.dx_updated_at, dt.updated_at, dt.created_at) DESC, dt.px_task_id ASC
+        LIMIT 1
+      ) AS latest_submission,
       c.excerpt AS content_excerpt,
       c.content AS content_body,
       c.tags AS content_tags,
@@ -2285,6 +2347,20 @@ function latestSubmissionId(task: Record<string, unknown>): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function dxTaskStatus(task: Record<string, unknown>): string {
+  return String(task.dx_status ?? task.dxStatus ?? '').trim();
+}
+
+function isDxTaskReviewable(task: Record<string, unknown>): boolean {
+  if (dxTaskStatus(task) !== 'draft_finalized') return false;
+  return Boolean(latestSubmissionId(task) || task.submitted_at || task.submittedAt);
+}
+
+function isDxTaskAlreadyReviewed(task: Record<string, unknown>): boolean {
+  const status = dxTaskStatus(task);
+  return status === 'published' || status === 'dx_revising';
+}
+
 async function getDoctorTasksForContent(contentId: string): Promise<Record<string, unknown>[]> {
   const rows = await dbAll<Record<string, unknown>>(`
     SELECT dt.*
@@ -2306,8 +2382,22 @@ async function writeApprovalResultToDx(existing: Record<string, unknown>, verdic
     throw new Error(`No DX doctor task found for content ${String(existing.content_id ?? existing.contentId ?? '')}`);
   }
 
-  await Promise.all(doctorTasks.map(async (task) => {
+  let attempted = 0;
+  let alreadyReviewed = 0;
+
+  for (const task of doctorTasks) {
     const pxTaskId = String(task.px_task_id ?? task.pxTaskId);
+    if (isDxTaskAlreadyReviewed(task)) {
+      alreadyReviewed += 1;
+      logger.info({ pxTaskId, dxStatus: dxTaskStatus(task) }, 'Skipping already reviewed DX doctor task');
+      continue;
+    }
+    if (!isDxTaskReviewable(task)) {
+      logger.info({ pxTaskId, dxStatus: dxTaskStatus(task) }, 'Skipping non-reviewable DX doctor task');
+      continue;
+    }
+
+    attempted += 1;
     const payload = {
       reviewer_node: reviewerNode,
       reviewer_type: reviewerTypeForDx(reviewerNode),
@@ -2334,7 +2424,11 @@ async function writeApprovalResultToDx(existing: Record<string, unknown>, verdic
       reviewedAt,
       pxTaskId,
     ]);
-  }));
+  }
+
+  if (attempted === 0 && alreadyReviewed === 0) {
+    throw new Error(`No reviewable DX doctor task found for content ${String(existing.content_id ?? existing.contentId ?? '')}`);
+  }
 }
 
 export async function handleApprovalTask(id: string, action: 'approve' | 'reject', comments?: string, rejectReason?: string, user?: QueryScope) {
