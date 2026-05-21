@@ -11,7 +11,6 @@ import {
   Minus,
   PackagePlus,
   Plus,
-  Save,
   Search,
   Send,
   ShieldCheck,
@@ -28,7 +27,6 @@ import { Spinner } from '@/components/ui/Spinner';
 import { showToast } from '@/components/ui/Toast';
 import {
   getDistributionRequestWorkbench,
-  saveRequestDistributionConfig,
   syncDxTaskStatuses,
   submitRequestDistributionBatch,
 } from '@/api/endpoints/distribution';
@@ -242,21 +240,6 @@ export function RequestDistributionDetail(): JSX.Element {
   const strategyTotal = config?.assignmentMode === 'strategy' ? batchTotal : 0;
   const unassignedTotal = Math.max(0, batchTotal - whitelistTotal - strategyTotal);
 
-  const saveConfig = async (nextConfig = config) => {
-    if (!nextConfig || !ticketId) return;
-    setSaving(true);
-    try {
-      const res = await saveRequestDistributionConfig(ticketId, nextConfig);
-      setConfig(res.data);
-      setWorkbench((current) => current ? { ...current, config: res.data } : current);
-      showToast('诉求级分发策略已保存', 'success');
-    } catch {
-      showToast('保存策略失败，请检查后端服务', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const updateCell = (theme: string, format: FormatKey, nextValue: number) => {
     const cap = Number(request?.themeFormatMatrix?.[theme]?.[format] ?? 0);
     const value = Math.max(0, Math.min(cap, Math.floor(nextValue || 0)));
@@ -271,7 +254,7 @@ export function RequestDistributionDetail(): JSX.Element {
   };
 
   const submitBatch = async () => {
-    if (!request) return;
+    if (!request || !config) return;
     if (batchTotal <= 0) return showToast('请先填写本次分发的主题 × 形式篇数', 'error');
     if (config?.assignmentMode === 'whitelist' && whitelistQuotaTotal !== batchTotal) return showToast(`指定分发需刚好分完全部 ${batchTotal} 篇，当前已指定 ${whitelistQuotaTotal} 篇`, 'error');
     if (unassignedTotal > 0) return showToast(`还有 ${unassignedTotal} 篇未分配，请调整分发方式`, 'error');
@@ -281,6 +264,7 @@ export function RequestDistributionDetail(): JSX.Element {
         batchMatrix,
         whitelistTotal,
         strategyTotal,
+        config,
       });
       setWorkbench((current) => current ? {
         ...current,
@@ -349,7 +333,7 @@ export function RequestDistributionDetail(): JSX.Element {
       <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200">
         <Users className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         <div>
-          当前显示<strong className="mx-0.5">项目默认医生分发策略</strong>。任何修改将作为本诉求专属策略保存，不再随项目变化。
+          当前页面选择的医生分发策略会直接用于本次提交；未修改时沿用项目默认策略。
         </div>
       </div>
 
@@ -370,9 +354,7 @@ export function RequestDistributionDetail(): JSX.Element {
         defaultConfig={defaultConfig}
         doctors={doctors}
         contentCount={batchTotal}
-        saving={saving}
         onChange={setConfig}
-        onSave={saveConfig}
       />
 
       <HistoryCard batches={batches} />
@@ -520,17 +502,13 @@ function DoctorPolicyEditor({
   defaultConfig,
   doctors,
   contentCount,
-  saving,
   onChange,
-  onSave,
 }: {
   config: RequestDistributionConfig;
   defaultConfig: RequestDistributionConfig;
   doctors: DoctorCandidate[];
   contentCount: number;
-  saving: boolean;
   onChange: (config: RequestDistributionConfig) => void;
-  onSave: (config: RequestDistributionConfig) => void | Promise<void>;
 }): JSX.Element {
   const wlEnabled = config.whitelistEnabled;
   const stEnabled = config.strategyEnabled;
@@ -621,14 +599,6 @@ function DoctorPolicyEditor({
     });
     patch({ whitelistDoctorQuota: nextQuota });
     showToast('已按本批总数平均分配', 'success');
-  };
-
-  const handleSave = () => {
-    if (!wlEnabled && !stEnabled) return showToast('请选择一种分发方式', 'error');
-    if (wlEnabled && selectedDoctors.length === 0) return showToast('已开启指定分发，请勾选医生并填写本人篇数', 'error');
-    if (wlEnabled && wlAssignedTotal === 0) return showToast('指定分发已勾选医生但篇数仍为 0，请填写各医生承担篇数', 'error');
-    if (contentCount > 0 && wlAssignedTotal !== contentCount) return showToast(`指定分发必须刚好分完全部 ${contentCount} 篇，当前已指定 ${wlAssignedTotal} 篇`, 'error');
-    void onSave(config);
   };
 
   const selectedCandidateIds = whitelistCandidates.map((doctor) => doctor.id);
@@ -785,7 +755,6 @@ function DoctorPolicyEditor({
 
         <div className="mt-5 flex items-center justify-end gap-2">
           <Button variant="secondary" size="sm" onClick={() => onChange(defaultConfig)}>恢复默认</Button>
-          <Button size="sm" onClick={handleSave} disabled={saving}><Save className="h-3.5 w-3.5" />保存策略</Button>
         </div>
       </div>
 

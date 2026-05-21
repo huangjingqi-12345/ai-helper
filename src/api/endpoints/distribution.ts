@@ -71,7 +71,7 @@ export async function saveRequestDistributionConfig(id: string, data: RequestDis
 
 export async function submitRequestDistributionBatch(
   id: string,
-  data: Pick<RequestDistributionBatch, 'batchMatrix' | 'whitelistTotal' | 'strategyTotal'>
+  data: Pick<RequestDistributionBatch, 'batchMatrix' | 'whitelistTotal' | 'strategyTotal'> & { config?: RequestDistributionConfig }
 ): Promise<ApiResponse<RequestDistributionBatch>> {
   const response = await apiClient.post<ApiResponse<RequestDistributionBatch>>(`/distribution/requests/${id}/batches`, data);
   return response.data;

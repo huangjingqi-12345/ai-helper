@@ -1169,11 +1169,16 @@ async function dispatchDoctorTasks(tasks: Record<string, unknown>[], request: Re
   return { successCount, failedCount };
 }
 
-async function buildDoctorAssignments(requestId: string, totalCount: number, scope?: QueryScope): Promise<DoctorAssignmentPlan[]> {
+async function buildDoctorAssignments(
+  requestId: string,
+  totalCount: number,
+  scope?: QueryScope,
+  currentConfig?: Record<string, unknown>
+): Promise<DoctorAssignmentPlan[]> {
   if (totalCount <= 0) return [];
   const request = await getContentRequestById(requestId, scope);
   const patientCap = asNumber((request as Record<string, unknown> | null)?.project && ((request as Record<string, unknown>).project as Record<string, unknown>).patientCap, 5000);
-  const config = (await getRequestDistributionConfig(requestId) ?? defaultRequestDistributionConfig(requestId, patientCap)) as Record<string, unknown> & {
+  const config = (currentConfig ?? await getRequestDistributionConfig(requestId) ?? defaultRequestDistributionConfig(requestId, patientCap)) as Record<string, unknown> & {
     whitelistEnabled: boolean;
     strategyEnabled: boolean;
   };
@@ -1210,7 +1215,10 @@ export async function createRequestDistributionBatch(requestId: string, data: Re
   const now = new Date().toISOString();
   const id = `BATCH-${requestId}-${Date.now().toString(36).toUpperCase()}`;
   const patientCap = asNumber(requestRecord.project && (requestRecord.project as Record<string, unknown>).patientCap, 5000);
-  const config = (await getRequestDistributionConfig(requestId) ?? defaultRequestDistributionConfig(requestId, patientCap)) as Record<string, unknown> & {
+  const currentConfig = data.config && typeof data.config === 'object' && !Array.isArray(data.config)
+    ? data.config as Record<string, unknown>
+    : undefined;
+  const config = (currentConfig ?? await getRequestDistributionConfig(requestId) ?? defaultRequestDistributionConfig(requestId, patientCap)) as Record<string, unknown> & {
     whitelistEnabled: boolean;
     strategyEnabled: boolean;
   };
@@ -1244,7 +1252,7 @@ export async function createRequestDistributionBatch(requestId: string, data: Re
     now,
     now,
   ]);
-  const assignments = await buildDoctorAssignments(requestId, totalCount, scope);
+  const assignments = await buildDoctorAssignments(requestId, totalCount, scope, config);
   const tasks = await createDoctorTaskRows({ batchId: id, request: requestRecord, matrix, assignments, now });
   const dispatched = await dispatchDoctorTasks(tasks, requestRecord);
   const missingAssignmentCount = Math.max(0, totalCount - tasks.length);
