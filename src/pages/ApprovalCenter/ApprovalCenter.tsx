@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { showToast } from '@/components/ui/Toast';
 import { useLogger } from '@/hooks/useLogger';
 import { getApprovalTaskAttachment, getApprovalTasks, updateApprovalTask } from '@/api/endpoints/approval';
+import { syncDxTaskStatuses } from '@/api/endpoints/distribution';
 import { useAuthStore } from '@/stores/useAuthStore';
 import type { ApprovalAttachment, ApprovalTask } from '@/types/approval';
 import type { AuthUser } from '@/api/endpoints/auth';
@@ -53,8 +54,8 @@ function approvalGroups(tasks: ApprovalTask[]): ApprovalGroup[] {
       const requirement = requirementByContent[task.contentId];
       return {
         key: requirement ? `${requirement.label}-${requirement.projectName}` : `unlinked-${task.contentId}`,
-        label: requirement?.label ?? '（未关联诉求）',
-        projectName: requirement?.projectName ?? '—',
+        label: requirement?.label ?? `诉求 · ${task.title}`,
+        projectName: requirement?.projectName ?? task.projectName ?? '—',
         tasks: [task],
       };
     });
@@ -116,6 +117,9 @@ export function ApprovalCenter(): JSX.Element {
   const loadTasks = async (): Promise<void> => {
     setLoading(true);
     try {
+      await syncDxTaskStatuses().catch((error) => {
+        log.error('DX task status sync failed before approval load', error);
+      });
       const res = await getApprovalTasks({ pageSize: 100 });
       setTasks(res.data);
     } finally {

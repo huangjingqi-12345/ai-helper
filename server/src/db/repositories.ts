@@ -2097,6 +2097,7 @@ function mapApprovalTaskRow(row: Record<string, unknown>) {
     taskId: task.id,
     contentId,
     title,
+    projectName: task.projectName,
     disease: task.disease,
     author: task.author || task.submittedBy,
     node: status === 'approved' ? '发布' : task.nodeName || '未提交',

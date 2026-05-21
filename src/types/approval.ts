@@ -51,6 +51,7 @@ export interface ApprovalTask {
   taskId?: string;
   contentId: string;
   title: string;
+  projectName?: string;
   disease: string;
   author: string;
   node: string;
