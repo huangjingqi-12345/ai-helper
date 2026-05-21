@@ -30,6 +30,7 @@ FRONTEND_HOST_PORT_OVERRIDE="${FRONTEND_HOST_PORT:-}"
 SKIP_TESTS="${SKIP_TESTS:-false}"
 COMPOSE=(docker compose)
 COMPOSE_DISPLAY="docker compose"
+DEFAULT_CX_PHARMA_ACCESS_TOKEN="123456789abcdef"
 
 usage() {
   cat <<'USAGE'
@@ -73,6 +74,30 @@ read_env_value() {
     fi
   fi
   printf '%s' "$fallback"
+}
+
+ensure_env_value() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp="${file}.tmp.$$"
+
+  if grep -Eq "^[[:space:]]*${key}=" "$file"; then
+    awk -v key="$key" -v value="$value" '
+      BEGIN { replaced = 0 }
+      $0 ~ "^[[:space:]]*" key "=" {
+        if (!replaced) {
+          print key "=" value
+          replaced = 1
+        }
+        next
+      }
+      { print }
+    ' "$file" > "$tmp"
+    mv "$tmp" "$file"
+  else
+    printf '\n%s=%s\n' "$key" "$value" >> "$file"
+  fi
 }
 
 normalize_env() {
@@ -230,14 +255,18 @@ if [ ! -f "$ENV_FILE_PATH" ]; then
   fi
 fi
 
+ensure_env_value "$ENV_FILE_PATH" "CX_PHARMA_ACCESS_TOKEN" "$DEFAULT_CX_PHARMA_ACCESS_TOKEN"
+
 COMPOSE_PROJECT_NAME_VALUE="${PROJECT_NAME_OVERRIDE:-$(read_env_value "$ENV_FILE_PATH" "COMPOSE_PROJECT_NAME" "$(default_project_name "$ENV")")}"
 FRONTEND_HOST_PORT_VALUE="${FRONTEND_HOST_PORT_OVERRIDE:-$(read_env_value "$ENV_FILE_PATH" "FRONTEND_HOST_PORT" "$(default_frontend_port "$ENV")")}"
+CX_PHARMA_ACCESS_TOKEN_VALUE="$(read_env_value "$ENV_FILE_PATH" "CX_PHARMA_ACCESS_TOKEN" "$DEFAULT_CX_PHARMA_ACCESS_TOKEN")"
 
 validate_port "FRONTEND_HOST_PORT" "$FRONTEND_HOST_PORT_VALUE"
 
 export DEPLOY_ENV="$ENV"
 export COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME_VALUE"
 export FRONTEND_HOST_PORT="$FRONTEND_HOST_PORT_VALUE"
+export CX_PHARMA_ACCESS_TOKEN="$CX_PHARMA_ACCESS_TOKEN_VALUE"
 
 cd "$PROJECT_ROOT"
 
