@@ -464,7 +464,7 @@ describe('Backend API Integration Tests', () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          projectId: 'proj-breast',
+          projectId: 'test-project-id',
           requestName: 'Viewer should not submit',
           priority: 'P2',
           expectedDate: '2026-06-10',

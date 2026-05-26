@@ -55,6 +55,9 @@ CMD ["nginx", "-g", "daemon off;"]
 # ============================================
 FROM node:20-alpine AS backend
 
+RUN apk add --no-cache chromium nss freetype harfbuzz font-noto-cjk
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
 WORKDIR /app
 
 # Create non-root user

@@ -355,3 +355,18 @@ FRONTEND_HOST_PORT=其他端口
 ```bash
 ./scripts/deploy.sh dev --frontend-port 31012
 ```
+
+## 内置 PX AI Helper
+
+PX 智能助手已迁移为 `px-daydayup/server` 内置的 Node/TypeScript 实现，不再需要启动外部 `ai-helper` Python 服务。前端仍通过 `/api/ai-helper/*` 与 `/ai-helper-assets/*` 使用相同接口。
+
+后端可选模型配置：
+
+```env
+POE_API_KEY=...
+# 或 OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.poe.com/v1
+TEXT_MODEL=GPT-5.4
+```
+
+必须配置模型 Key 后才会生成 AI 分析和模型 SVG；未配置时请求会停止并提示配置。交付物保存在 `server/ai-helper/generated/`，包括 Markdown、HTML、PNG、PDF，以及 PPT 任务的可编辑 PPTX。其中 PNG 链路为：模型基于 SQL 指标和分析正文直接生成完整 SVG，后端仅做安全校验/清洗，再通过 `@resvg/resvg-js` 渲染 PNG；不再使用浏览器截图，也不再由代码模板拼接 SVG。

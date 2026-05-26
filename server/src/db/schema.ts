@@ -937,7 +937,7 @@ async function resetLegacySqliteSchemaIfNeeded(): Promise<void> {
 
   if (!forceReset && !isLegacy) return;
 
-  logger.warn({ forceReset, isLegacy }, 'Resetting legacy SQLite demo schema so fake DB data can use current columns and checks');
+  logger.warn({ forceReset, isLegacy }, 'Resetting legacy SQLite schema so current columns and checks are available');
   const tables = [
     'role_permissions',
     'user_roles',

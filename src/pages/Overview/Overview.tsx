@@ -4,6 +4,7 @@ import { ArrowRight } from 'lucide-react';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { PageHeader } from '@/components/PageHeader';
 import { KpiCards } from './KpiCards';
+import { PxAssistant } from './PxAssistant';
 import { ProjectTable } from './ProjectTable';
 import { useOverviewStore } from '@/stores/useOverviewStore';
 import { useTenantStore } from '@/stores/useTenantStore';
@@ -27,7 +28,7 @@ export function Overview(): JSX.Element {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         eyebrow="OVERVIEW"
         title="患者教育内容运营总览"
@@ -62,6 +63,9 @@ export function Overview(): JSX.Element {
 
       {/* KPI Cards */}
       <KpiCards stats={stats} loading={loading} />
+
+      {/* PX 智能助手（UI 预览） */}
+      <PxAssistant loading={loading} />
 
       {/* Project Table */}
       <ProjectTable projects={projects.filter((project) => project.contentCount > 0 || project.publishedCount > 0)} loading={loading} />

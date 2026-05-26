@@ -37,3 +37,8 @@ server/data/
 *.db
 *.db-wal
 *.db-shm
+
+# Embedded AI helper runtime outputs
+server/ai-helper/generated/
+server/ai-helper/projects/
+server/ai-helper/logs/

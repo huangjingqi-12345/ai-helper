@@ -1,0 +1,6 @@
+interface:
+  display_name: "患教月报生成"
+  short_description: "生成患教月报正文和PDF文档"
+  default_prompt: "Use $patient-education-monthly-report to create a monthly patient education operation report as Markdown and PDF."
+policy:
+  allow_implicit_invocation: true

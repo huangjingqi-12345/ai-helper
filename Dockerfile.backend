@@ -22,7 +22,7 @@ WORKDIR /app
 
 # Install runtime deps for better-sqlite3
 RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.aliyun.com/alpine#g' /etc/apk/repositories \
-    && apk add --no-cache ca-certificates tzdata python3 make g++
+    && apk add --no-cache ca-certificates tzdata python3 make g++ chromium nss freetype harfbuzz font-noto-cjk
 # RUN apk add --no-cache python3 make g++
 
 RUN addgroup -g 1001 -S nodejs && \
@@ -41,6 +41,7 @@ USER nodejs
 
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 # Database mode is selected at runtime.
 # - Local docker-compose sets DB_CLIENT=sqlite and DB_PATH=/app/data/pxlite.db.
 # - Production should set DB_CLIENT=postgres plus DATABASE_URL, or at least DATABASE_URL.

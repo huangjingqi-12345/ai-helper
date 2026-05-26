@@ -76,17 +76,12 @@ function asText(value: unknown, fallback = ''): string {
   return fallback;
 }
 
-
-const projectColors: Record<string, string> = {
-  'proj-breast': 'purple',
-  'proj-hf': 'cyan',
-  'proj-diabetes': 'blue',
-  'proj-ra': 'yellow',
-  'proj-mm': 'red',
-  'proj-lung': 'green',
-  'proj-hypertension': 'red',
-  'proj-copd': 'cyan',
-};
+function colorForProject(projectId: unknown): string {
+  const palette = ['blue', 'cyan', 'purple', 'yellow', 'red', 'green'];
+  const value = String(projectId || '');
+  const hash = [...value].reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  return palette[hash % palette.length] || 'blue';
+}
 
 function mapContentRow(row: Record<string, unknown>) {
   const content = toCamel(row);
@@ -94,7 +89,7 @@ function mapContentRow(row: Record<string, unknown>) {
   parseJsonObjectFields(content, ['latestSubmission']);
   return {
     ...content,
-    projectColor: projectColors[String(content.projectId)] ?? 'blue',
+    projectColor: colorForProject(content.projectId),
   };
 }
 

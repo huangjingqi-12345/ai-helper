@@ -1,0 +1,6 @@
+interface:
+  display_name: "患教数据概览"
+  short_description: "生成患教运营概览KPI与指标口径说明"
+  default_prompt: "Use $patient-education-data-overview to generate patient education KPI cards and metric definitions from the current database schema."
+policy:
+  allow_implicit_invocation: true

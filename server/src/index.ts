@@ -1,8 +1,10 @@
+import './config/env.js';
 import express from 'express';
 import { corsMiddleware } from './middleware/cors.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import apiRoutes from './routes/index.js';
+import { aiHelperAssetsProxy } from './routes/aiHelper.js';
 import { logger } from './utils/logger.js';
 import { seedDatabase } from './db/seed.js';
 import { DB_DRIVER } from './db/connection.js';
@@ -22,6 +24,20 @@ app.use(rateLimit);
 app.use(express.json({ limit: process.env.REQUEST_BODY_LIMIT || '1mb' }));
 app.use(express.text({ type: ['text/csv', 'application/csv'], limit: process.env.REQUEST_BODY_LIMIT || '1mb' }));
 app.use(requestLogger);
+
+// Root path: API is mounted at /api (visiting / alone is not the app UI).
+app.get('/', (_req, res) => {
+  res.json({
+    name: 'Px Lite API',
+    status: 'ok',
+    docs: 'Use /api/* endpoints. Open the frontend at http://localhost:5173 for the UI.',
+    health: '/api/health',
+    ready: '/api/ready',
+  });
+});
+
+// AI helper static deliverables (generated/, projects/)
+app.use('/ai-helper-assets', aiHelperAssetsProxy);
 
 // API routes
 app.use('/api', apiRoutes);

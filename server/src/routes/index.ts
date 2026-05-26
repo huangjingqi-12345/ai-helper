@@ -13,6 +13,7 @@ import ingestRoutes from './ingest.js';
 import cxStatsSyncRoutes from './cxStatsSync.js';
 import importRoutes from './imports.js';
 import exportRoutes from './exports.js';
+import aiHelperRoutes from './aiHelper.js';
 import { authenticate } from '../middleware/auth.js';
 import { DB_DRIVER, dbGet } from '../db/connection.js';
 
@@ -61,6 +62,8 @@ router.use('/auth', publicAuthRoutes);
 
 // Everything below this line requires authenticated context in production.
 router.use(authenticate);
+
+router.use('/ai-helper', aiHelperRoutes);
 
 router.use('/auth', authRoutes);
 router.use('/tenants', tenantRoutes);

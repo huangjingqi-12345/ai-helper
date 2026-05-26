@@ -142,4 +142,85 @@
   .skeleton {
     @apply bg-bg-tertiary animate-pulse-skeleton rounded;
   }
+
+  .assistant-md p {
+    @apply mb-2 last:mb-0;
+    color: rgb(241 245 249);
+  }
+
+  .assistant-md h1,
+  .assistant-md h2,
+  .assistant-md h3 {
+    @apply mb-1.5 mt-2 font-semibold text-white first:mt-0;
+  }
+
+  .assistant-md h1 {
+    @apply text-[14px];
+  }
+
+  .assistant-md h2 {
+    @apply text-[13px];
+  }
+
+  .assistant-md h3 {
+    @apply text-[12.5px];
+  }
+
+  .assistant-md ul,
+  .assistant-md ol {
+    @apply mb-2 ml-4 list-disc space-y-0.5;
+    color: rgb(241 245 249);
+  }
+
+  .assistant-md ol {
+    @apply list-decimal;
+  }
+
+  .assistant-md code.md-code {
+    @apply rounded px-1 py-0.5 font-mono text-[11px] text-cyan-100;
+    background-color: oklch(30% 0.025 260 / 0.9);
+  }
+
+  .assistant-md pre.md-pre {
+    @apply mb-2 overflow-x-auto rounded-lg border border-border bg-slate-900/70 p-2 text-[11px] text-slate-100;
+  }
+
+  .assistant-md a.md-link {
+    @apply text-primary underline-offset-2 hover:underline;
+  }
+
+  .assistant-loading-dots {
+    display: inline-flex;
+    gap: 3px;
+    align-items: center;
+  }
+
+  .assistant-loading-dots span {
+    width: 4px;
+    height: 4px;
+    border-radius: 9999px;
+    background: oklch(70% 0.15 200);
+    animation: assistant-dot-pulse 1.2s ease-in-out infinite;
+  }
+
+  .assistant-loading-dots span:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  .assistant-loading-dots span:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+
+  @keyframes assistant-dot-pulse {
+    0%,
+    80%,
+    100% {
+      opacity: 0.25;
+      transform: scale(0.85);
+    }
+    40% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
 }
