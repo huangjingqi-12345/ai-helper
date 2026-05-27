@@ -6,7 +6,7 @@ import {
   statusFromStreamEvent,
 } from '@/lib/ai-helper/loadingStatus';
 import { postAiHelperStream, readNdjsonStream } from '@/lib/ai-helper/stream';
-import type { ChatMessage, PptSvgProgress, ShortcutPrompts, ShortcutRunOptions } from '@/lib/ai-helper/types';
+import type { AiShortcut, ChatMessage, PptSvgProgress, ShortcutPrompts, ShortcutRunOptions } from '@/lib/ai-helper/types';
 
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -53,6 +53,16 @@ function extractPptSvgSlides(data: unknown): string[] {
 
 function extractPptxFiles(data: unknown): string[] {
   return sortedUnique(collectStringFiles(data).filter(isPptxPath));
+}
+
+function isPptShortcut(shortcut?: AiShortcut): boolean {
+  return shortcut === 'ppt' || shortcut === 'ppt_svg';
+}
+
+function pptProgressForShortcut(shortcut?: AiShortcut): PptSvgProgress | undefined {
+  if (shortcut === 'ppt_svg') return { slides: [], completed: false, mode: 'svg', title: 'PPT 精美版生成进度' };
+  if (shortcut === 'ppt') return { slides: [], completed: false, mode: 'spec', title: 'PPT 快速版页面预览' };
+  return undefined;
 }
 
 export function usePxAssistant() {
@@ -111,12 +121,9 @@ export function usePxAssistant() {
       const userMsg: ChatMessage = { id: newId('user'), role: 'user', text };
       const assistantId = newId('assistant');
       const startedAt = Date.now();
-      const isPptPreviewShortcut = options.shortcut === 'ppt_svg' || options.shortcut === 'ppt';
-      const initialPptSvgProgress: PptSvgProgress | undefined = isPptPreviewShortcut
-        ? options.shortcut === 'ppt_svg'
-          ? { slides: [], completed: false, mode: 'svg', title: 'SVG 直出进度' }
-          : { slides: [], completed: false, mode: 'spec', title: '趋势分析 PPT 页面预览' }
-        : undefined;
+      let activeShortcut = options.shortcut;
+      let isPptPreviewShortcut = isPptShortcut(activeShortcut);
+      const initialPptSvgProgress = pptProgressForShortcut(activeShortcut);
       const assistantMsg: ChatMessage = {
         id: assistantId,
         role: 'assistant',
@@ -138,8 +145,36 @@ export function usePxAssistant() {
       let turnFiles: string[] = [];
       let sawDone = false;
       let pptSvgProgress = initialPptSvgProgress;
+      let latestLoadingStatus = assistantMsg.loadingStatus || '';
+      let modelWaitingTimerId: number | undefined;
+
+      const clearModelWaitingTimer = () => {
+        if (modelWaitingTimerId !== undefined) {
+          window.clearTimeout(modelWaitingTimerId);
+          modelWaitingTimerId = undefined;
+        }
+      };
+
+      const scheduleModelWaitingStatus = () => {
+        clearModelWaitingTimer();
+        modelWaitingTimerId = window.setTimeout(() => {
+          if (latestLoadingStatus !== '正在调用 AI 模型…') return;
+          latestLoadingStatus = '已调用模型，正在等待模型生成…';
+          updateAssistant(assistantId, {
+            loadingStatus: latestLoadingStatus,
+            loadingStartedAt: startedAt,
+          });
+          modelWaitingTimerId = undefined;
+        }, 1800);
+      };
 
       const pushLoadingStatus = (line: string, step?: number) => {
+        latestLoadingStatus = line;
+        if (line === '正在调用 AI 模型…') {
+          scheduleModelWaitingStatus();
+        } else {
+          clearModelWaitingTimer();
+        }
         updateAssistant(assistantId, {
           loadingStatus: line,
           loadingStep: step,
@@ -149,11 +184,8 @@ export function usePxAssistant() {
 
       const updatePptSvgProgress = (patch: Partial<PptSvgProgress>) => {
         if (!isPptPreviewShortcut) return;
-        const base = pptSvgProgress || (
-          options.shortcut === 'ppt_svg'
-            ? { slides: [], completed: false, mode: 'svg' as const, title: 'SVG 直出进度' }
-            : { slides: [], completed: false, mode: 'spec' as const, title: '趋势分析 PPT 页面预览' }
-        );
+        const base = pptSvgProgress || pptProgressForShortcut(activeShortcut);
+        if (!base) return;
         pptSvgProgress = {
           ...base,
           ...patch,
@@ -184,6 +216,19 @@ export function usePxAssistant() {
       };
 
       const applyStreamEvent = (evt: { type: string; data: unknown }) => {
+        if (evt.type === 'route' && evt.data && typeof evt.data === 'object') {
+          const payload = evt.data as { shortcut?: AiShortcut; label?: string; note?: string };
+          if (isPptShortcut(payload.shortcut)) {
+            activeShortcut = payload.shortcut;
+            isPptPreviewShortcut = true;
+            const nextProgress = pptSvgProgress || pptProgressForShortcut(activeShortcut);
+            if (nextProgress) {
+              pptSvgProgress = nextProgress;
+              updateAssistant(assistantId, { pptSvgProgress });
+            }
+            pushLoadingStatus(payload.note || `已选择${payload.label || 'PPT 生成模式'}，正在准备数据`);
+          }
+        }
         const pptStatus = pptSpecificStatus(evt);
         if (pptStatus) {
           pushLoadingStatus(pptStatus);
@@ -239,8 +284,8 @@ export function usePxAssistant() {
                 const slides = sortedUnique([...(pptSvgProgress?.slides || []), ...newSlides]);
                 updatePptSvgProgress({ slides, completed: false });
                 pushLoadingStatus(
-                  options.shortcut === 'ppt_svg'
-                    ? `第 ${slides.length} 页已生成，正在继续生成`
+                  activeShortcut === 'ppt_svg'
+                    ? `精美版第 ${slides.length} 页已生成，正在继续生成`
                     : `已生成 ${slides.length} 页预览，正在继续处理`,
                   undefined,
                 );
@@ -302,12 +347,13 @@ export function usePxAssistant() {
       } catch {
         updateAssistant(assistantId, {
           loading: false,
-          text: assistantText.trim() || '已结束。',
+          text: assistantText.trim() || '连接已中断，请稍后重试。',
           loadingStatus: undefined,
           loadingElapsed: undefined,
           loadingStep: undefined,
         });
       } finally {
+        clearModelWaitingTimer();
         window.clearInterval(elapsedTimerId);
         setStreaming(false);
       }

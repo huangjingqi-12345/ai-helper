@@ -8,15 +8,18 @@ import { SkillRegistry } from '../ai-helper/skillRegistry.js';
 import { getBackgroundJob, listBackgroundJobs } from '../ai-helper/backgroundJobs.js';
 import { logger } from '../utils/logger.js';
 import { DB_DRIVER } from '../db/connection.js';
+import { runtimeLog } from '../ai-helper/runtimeLogger.js';
 
 ensureAiHelperDirs();
 
 const router = Router();
 
-router.get('/health', (_req, res) => {
+export function aiHelperHealth(_req: Request, res: Response): void {
   const ai = new AIService();
   res.json({ ok: true, embedded: true, runtime: 'node-ts', db_driver: DB_DRIVER, model_configured: ai.configured(), model: ai.modelName() });
-});
+}
+
+router.get('/health', aiHelperHealth);
 
 router.get('/system_prompt', (_req, res) => {
   res.json({ system_prompt: SYSTEM_PROMPT, shortcuts: Object.keys(SHORTCUT_PROMPTS), shortcut_prompts: SHORTCUT_PROMPTS });
@@ -72,16 +75,53 @@ router.post(['/run/stream', '/command/stream'], async (req: Request, res: Respon
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
 
+  const heartbeatMs = Math.max(5_000, Number(process.env.AI_HELPER_STREAM_HEARTBEAT_MS || 15_000) || 15_000);
+  const heartbeat = setInterval(() => {
+    if (res.destroyed || res.writableEnded) return;
+    try {
+      res.write(JSON.stringify({ type: 'heartbeat', data: { ts: new Date().toISOString() } }) + '\n');
+    } catch {
+      clearInterval(heartbeat);
+    }
+  }, heartbeatMs);
+  let completed = false;
+  let disconnected = false;
+  res.on('close', () => {
+    if (completed) return;
+    disconnected = true;
+    runtimeLog('stream_client_closed', {
+      conversation_id: req.body?.conversation_id,
+      run_id: req.body?.run_id,
+      shortcut: req.body?.shortcut,
+      message: req.body?.message,
+      url: req.originalUrl,
+    });
+  });
+
   try {
     for await (const line of streamAssistant(req.body || {})) {
+      if (res.destroyed || res.writableEnded) break;
       res.write(line);
     }
   } catch (err) {
     logger.error({ err }, 'embedded AI helper stream error');
-    res.write(JSON.stringify({ type: 'text', data: `AI helper 执行失败: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
-    res.write(JSON.stringify({ type: 'done', data: { text: 'AI helper 执行失败', files: [] } }) + '\n');
+    if (!res.destroyed && !res.writableEnded) {
+      res.write(JSON.stringify({ type: 'text', data: `AI helper 执行失败: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
+      res.write(JSON.stringify({ type: 'done', data: { text: 'AI helper 执行失败', files: [] } }) + '\n');
+    }
   } finally {
-    res.end();
+    clearInterval(heartbeat);
+    completed = true;
+    runtimeLog('stream_response_finally', {
+      conversation_id: req.body?.conversation_id,
+      run_id: req.body?.run_id,
+      shortcut: req.body?.shortcut,
+      disconnected,
+      destroyed: res.destroyed,
+      writable_ended: res.writableEnded,
+      url: req.originalUrl,
+    });
+    if (!res.destroyed && !res.writableEnded) res.end();
   }
 });
 

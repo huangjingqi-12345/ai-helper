@@ -42,7 +42,7 @@ export interface ShortcutRunOptions {
 
 export const SHORTCUT_BUTTONS = [
   { cmd: '/overview', label: '数据概览', shortcut: 'overview', data_scope: 'last_7_days' },
-  { cmd: '/ppt', label: '趋势分析 PPT 生成', shortcut: 'ppt', data_scope: 'last_1_year' },
-  { cmd: '/ppt-svg', label: 'PPT SVG 直出', shortcut: 'ppt_svg', data_scope: 'last_1_year' },
+  { cmd: '/ppt', label: 'PPT 快速版', shortcut: 'ppt', data_scope: 'last_1_year' },
+  { cmd: '/ppt-svg', label: 'PPT 精美版', shortcut: 'ppt_svg', data_scope: 'last_1_year' },
   { cmd: '/monthly', label: '月度报告', shortcut: 'monthly', data_scope: 'latest_complete_month' },
 ] as const;

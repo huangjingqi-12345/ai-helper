@@ -1,9 +1,10 @@
 import { SHORTCUT_BUTTONS, type ShortcutPrompts, type ShortcutRunOptions } from './types';
+import { aiHelperAuthHeaders } from './auth';
 
 const FALLBACK_LABELS: Record<string, string> = {
   '/overview': '数据概览',
-  '/ppt': '趋势分析 PPT 生成',
-  '/ppt-svg': 'PPT SVG 直出',
+  '/ppt': 'PPT 快速版',
+  '/ppt-svg': 'PPT 精美版',
   '/monthly': '月度报告',
 };
 
@@ -27,7 +28,10 @@ export function shortcutRunOptions(cmd: string): ShortcutRunOptions {
 
 export async function fetchShortcutPrompts(): Promise<ShortcutPrompts> {
   try {
-    const resp = await fetch('/api/ai-helper/system_prompt', { cache: 'no-store' });
+    const resp = await fetch('/api/ai-helper/system_prompt', {
+      cache: 'no-store',
+      headers: aiHelperAuthHeaders(),
+    });
     if (!resp.ok) return {};
     const data = (await resp.json()) as { shortcut_prompts?: ShortcutPrompts };
     return data.shortcut_prompts || {};
@@ -38,10 +42,13 @@ export async function fetchShortcutPrompts(): Promise<ShortcutPrompts> {
 
 export async function checkAiHelperHealth(): Promise<boolean> {
   try {
-    const resp = await fetch('/api/ai-helper/health', { cache: 'no-store' });
+    const resp = await fetch('/api/ai-helper/health', {
+      cache: 'no-store',
+      headers: aiHelperAuthHeaders(),
+    });
     if (!resp.ok) return false;
-    const data = (await resp.json()) as { ok?: boolean };
-    return data.ok === true;
+    const data = (await resp.json()) as { ok?: boolean; model_configured?: boolean };
+    return data.ok === true && data.model_configured !== false;
   } catch {
     return false;
   }

@@ -44,15 +44,15 @@ const REPORT_ACTIONS: AssistantAction[] = [
     accentClass: 'border-cyan-300/40 bg-cyan-300/15 text-cyan-100 shadow-[0_0_22px_rgba(34,211,238,.14)]',
   },
   {
-    title: '趋势分析 PPT 生成',
-    desc: '趋势图表 · 异常归因 · 汇报材料',
+    title: 'PPT 快速版',
+    desc: '结构化生成 · 稳定快速 · 约 2-3 分钟',
     cmd: '/ppt',
     icon: Presentation,
     accentClass: 'border-sky-300/40 bg-sky-300/15 text-sky-100 shadow-[0_0_22px_rgba(56,189,248,.13)]',
   },
   {
-    title: 'PPT SVG 直出',
-    desc: '大模型直写 SVG · 导出 PPT',
+    title: 'PPT 精美版',
+    desc: '逐页精修 SVG · 视觉更强 · 约 5-10 分钟',
     cmd: '/ppt-svg',
     icon: Wand2,
     accentClass: 'border-violet-300/40 bg-violet-300/15 text-violet-100 shadow-[0_0_22px_rgba(167,139,250,.13)]',
@@ -80,7 +80,7 @@ function currentTime(): string {
 function PptSvgProgressPreview({ progress }: { progress: PptSvgProgress }): JSX.Element {
   const slides = progress.slides;
   const [activeIndex, setActiveIndex] = useState(0);
-  const title = progress.title || (progress.mode === 'spec' ? '趋势分析 PPT 页面预览' : 'SVG 直出进度');
+  const title = progress.title || (progress.mode === 'spec' ? 'PPT 快速版页面预览' : 'PPT 精美版生成进度');
 
   useEffect(() => {
     if (!slides.length) {
@@ -172,6 +172,59 @@ function PptSvgProgressPreview({ progress }: { progress: PptSvgProgress }): JSX.
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function isOverviewPng(path: string): boolean {
+  const name = fileNameFromUrl(path).toLowerCase();
+  return name.endsWith('.png') && (
+    name === 'overview_kpi.png'
+    || name === 'overview_canvas.png'
+    || /^overview_.*(?:kpi|canvas).*\.png$/.test(name)
+  );
+}
+
+function OverviewPngPreview({ files }: { files?: string[] }): JSX.Element | null {
+  const previews = [...new Set((files || []).filter(isOverviewPng))];
+  if (!previews.length) return null;
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200/25 bg-cyan-300/10 px-2.5 py-1 text-[11px] font-medium text-cyan-50">
+        <Images className="h-3.5 w-3.5 text-cyan-200" />
+        数据概览图片预览
+      </div>
+      {previews.map((file) => {
+        const href = resolveAiHelperAssetUrl(file);
+        const name = fileNameFromUrl(file);
+        return (
+          <figure
+            key={file}
+            className="overflow-hidden rounded-2xl border border-cyan-200/20 bg-slate-950/35 shadow-[0_16px_36px_rgba(0,0,0,.20),inset_0_1px_0_rgba(255,255,255,.05)]"
+          >
+            <a href={href} target="_blank" rel="noopener noreferrer" title="点击查看大图">
+              <img
+                src={href}
+                alt="数据概览 PNG 预览"
+                className="max-h-[620px] w-full bg-white object-contain"
+                loading="lazy"
+              />
+            </a>
+            <figcaption className="flex flex-wrap items-center justify-between gap-2 border-t border-cyan-200/15 bg-slate-900/70 px-3 py-2 text-[11px] text-slate-200">
+              <span className="min-w-0 truncate" title={name}>{name}</span>
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 rounded-md border border-cyan-200/25 bg-cyan-300/10 px-2 py-1 text-cyan-50 hover:bg-cyan-300/18"
+              >
+                查看大图
+              </a>
+            </figcaption>
+          </figure>
+        );
+      })}
     </div>
   );
 }
@@ -269,7 +322,7 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
                 )}
               </div>
               <p className="mt-1 text-[13px] leading-relaxed text-slate-200">
-                基于药企视图当前数据范围，一键生成近 7 天概览、月报与趋势分析 PPT；也可向我提问数据口径或合规约束。
+                基于药企视图当前数据范围，一键生成近 7 天概览、月报，以及 PPT 快速版/精美版；也可向我提问数据口径或合规约束。
               </p>
             </div>
           </div>
@@ -338,7 +391,7 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
               <div className="mb-3 flex justify-start">
                 <div className="max-w-[78%] rounded-2xl rounded-tl-md border border-slate-500/50 bg-slate-800/80 px-3.5 py-2.5 text-[13px] leading-relaxed text-slate-100 shadow-[0_10px_24px_rgba(0,0,0,.12)]">
                   <p>
-                    我是 <span className="font-semibold text-white">Px AI 数据助手</span>，可以帮你一键生成周度 / 月度数据分析报告与趋势 PPT，也可以回答常见数据口径问题。试试问：「互动数怎么算？」 「k-匿名是什么？」
+                    我是 <span className="font-semibold text-white">Px AI 数据助手</span>，可以帮你一键生成周度 / 月度数据分析报告、PPT 快速版或精美版，也可以回答常见数据口径问题。试试问：「互动数怎么算？」 「k-匿名是什么？」
                   </p>
                   <p className="mt-2 text-[11px] text-slate-300">{greetingTimeRef.current}</p>
                 </div>
@@ -408,6 +461,7 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
                         )}
                         <p className="mt-2 text-[11px] text-slate-300">{currentTime()}</p>
                       </div>
+                      <OverviewPngPreview files={msg.files} />
                       {msg.pptSvgProgress && <PptSvgProgressPreview progress={msg.pptSvgProgress} />}
                       {msg.files && msg.files.length > 0 && <PxAssistantFiles files={msg.files} />}
                     </div>

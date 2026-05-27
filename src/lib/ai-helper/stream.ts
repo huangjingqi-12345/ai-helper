@@ -1,4 +1,5 @@
 import type { ShortcutRunOptions, StreamEvent } from './types';
+import { aiHelperAuthHeaders } from './auth';
 
 export function formatProgressStatus(data: unknown): string {
   if (typeof data === 'string') return data;
@@ -59,14 +60,14 @@ export async function postAiHelperStream(
 
   let resp = await fetch('/api/ai-helper/run/stream', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...aiHelperAuthHeaders() },
     body,
   });
 
   if (resp.status === 404) {
     resp = await fetch('/api/ai-helper/command/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...aiHelperAuthHeaders() },
       body,
     });
   }

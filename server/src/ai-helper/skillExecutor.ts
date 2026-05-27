@@ -49,6 +49,8 @@ const RUN_OUTPUT_DIR_SKILLS = new Set(['patient-education-data-overview']);
 const PPT_SVG_BATCH_MAX_PAGES = Math.max(1, Number(process.env.PPT_SVG_BATCH_MAX_PAGES || 1) || 1);
 const PPT_MANUAL_SVG_ENABLED = process.env.AI_HELPER_PPT_MANUAL_SVG === 'true';
 const DEFAULT_HIDDEN_SKILL_IDS = new Set(['data-autoload-from-data-dir', 'sql-pro']);
+const PPT_SAFE_FONT_STACK = 'Microsoft YaHei, Arial, sans-serif';
+const PPT_SAFE_FONTS = ['Microsoft YaHei', 'SimHei', 'SimSun', 'Arial', 'Calibri', 'Segoe UI', 'Times New Roman', 'Georgia', 'Consolas', 'Courier New', 'Impact', 'Arial Black', 'PingFang SC'];
 
 function str(value: unknown): string { return String(value ?? '').trim(); }
 function sanitizeUserContent(value: string): string { return value.replace(/管理层/g, '业务团队'); }
@@ -217,6 +219,97 @@ function safePptSlideFileName(rawName: unknown, slideNo: number, title: string):
   return `${named}.svg`;
 }
 
+function canonicalPptSlideFileName(slideNo: number): string {
+  return `${String(slideNo).padStart(2, '0')}_slide.svg`;
+}
+
+function isOverwriteAllowedProjectFile(rel: string, params: Record<string, unknown>): boolean {
+  if (params.overwrite === true || params.force === true) return true;
+  return ['notes/total.md', 'design_spec.md', 'spec_lock.md'].includes(rel);
+}
+
+function sortSvgNames(names: string[]): string[] {
+  return [...names].sort((a, b) => {
+    const an = Number((a.match(/^(\d+)/) || [])[1] || 9999);
+    const bn = Number((b.match(/^(\d+)/) || [])[1] || 9999);
+    return an - bn || a.localeCompare(b);
+  });
+}
+
+function markdownSectionHeadings(content: string): Set<string> {
+  const headings = new Set<string>();
+  for (const match of content.matchAll(/^#{1,6}\s+(.+?)\s*$/gm)) {
+    headings.add(match[1].trim());
+  }
+  return headings;
+}
+
+function textFromSvg(svg: string): string {
+  const match = svg.match(/<text\b[^>]*>([\s\S]*?)<\/text>/i);
+  if (!match) return '';
+  return match[1]
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
+function matchExistingNoteSections(content: string, svgStems: string[]): Map<string, string> {
+  const byStem = new Map<string, string>();
+  const exact = new Set(svgStems);
+  const byNo = new Map<number, string[]>();
+  for (const stem of svgStems) {
+    const n = Number((stem.match(/^(\d{1,3})/) || [])[1] || NaN);
+    if (Number.isInteger(n)) byNo.set(n, [...(byNo.get(n) || []), stem]);
+  }
+  const sections = [...content.matchAll(/^#{1,6}\s+(.+?)\s*$([\s\S]*?)(?=^#{1,6}\s+|\s*$)/gm)];
+  for (const match of sections) {
+    const heading = match[1].trim();
+    let stem = exact.has(heading) ? heading : '';
+    if (!stem) {
+      const n = Number((heading.match(/^(\d{1,3})/) || [])[1] || NaN);
+      const candidates = Number.isInteger(n) ? byNo.get(n) || [] : [];
+      if (candidates.length === 1) stem = candidates[0];
+    }
+    if (stem && !byStem.has(stem)) {
+      byStem.set(stem, match[2].trim());
+    }
+  }
+  return byStem;
+}
+
+function repairPptNotesForSvgFilesSync(root: string): { repaired: boolean; missing: string[]; path: string } {
+  const svgDir = path.join(root, 'svg_output');
+  const notesDir = path.join(root, 'notes');
+  const notesPath = path.join(notesDir, 'total.md');
+  const svgFiles = fs.existsSync(svgDir)
+    ? sortSvgNames(fs.readdirSync(svgDir).filter((name) => name.toLowerCase().endsWith('.svg')))
+    : [];
+  if (!svgFiles.length) return { repaired: false, missing: [], path: notesPath };
+
+  fs.mkdirSync(notesDir, { recursive: true });
+  const original = fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8') : '';
+  const stems = svgFiles.map((name) => name.replace(/\.svg$/i, ''));
+  const existing = matchExistingNoteSections(original, stems);
+  const missing = stems.filter((base) => !existing.has(base) || !String(existing.get(base) || '').trim());
+  const sections = stems.map((base) => {
+    const svgPath = path.join(svgDir, `${base}.svg`);
+    const title = fs.existsSync(svgPath) ? textFromSvg(fs.readFileSync(svgPath, 'utf8')) : '';
+    const conclusion = sanitizeUserContent(title || base.replace(/^\d+_/, '').replace(/[_-]+/g, ' ') || '本页内容');
+    const body = existing.get(base)?.trim() || `- 核心结论：${conclusion}\n- 讲解要点：本页用于说明${conclusion}，请结合页面图表和关键数据进行简洁讲解。`;
+    return `# ${base}\n${sanitizeUserContent(body)}`;
+  });
+  const next = sanitizeUserContent(sections.join('\n\n---\n\n'));
+  if (next.trim() === original.trim()) return { repaired: false, missing: [], path: notesPath };
+  fs.writeFileSync(notesPath, `${next.trim()}\n`, 'utf8');
+  return { repaired: true, missing, path: notesPath };
+}
+
 function compactParamsForError(params: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const compactValue = (item: unknown): unknown => {
@@ -336,6 +429,17 @@ function cleanIllegalSvgChars(content: string): string {
     .replace(/&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)/g, '&amp;');
 }
 
+function normalizePptSvgFonts(content: string): { content: string; repaired: boolean } {
+  let repaired = false;
+  const next = content.replace(/\bfont-family\s*=\s*(['"])(.*?)\1/gi, (raw, quote: string, family: string) => {
+    const ok = PPT_SAFE_FONTS.some((font) => String(family || '').includes(font));
+    if (ok && String(family || '').includes('Microsoft YaHei')) return raw;
+    repaired = true;
+    return `font-family=${quote}${PPT_SAFE_FONT_STACK}${quote}`;
+  });
+  return { content: next, repaired };
+}
+
 function normalizePptSvgRootForSlide(rawContent: string): { content: string; repaired: boolean } {
   let content = cleanIllegalSvgChars(stripCodeFence(rawContent)).trim();
   let repaired = false;
@@ -359,12 +463,15 @@ function normalizePptSvgRootForSlide(rawContent: string): { content: string; rep
     content = content.replace(/<svg\b[^>]*>/i, normalizedRoot);
     repaired = true;
   }
+  const fontNormalized = normalizePptSvgFonts(content);
+  content = fontNormalized.content;
+  repaired = repaired || fontNormalized.repaired;
   return { content, repaired };
 }
 
 function normalizePptSvgCanvas(target: string, rawContent: string): { content: string; repaired: boolean } {
   if (!target.includes('/svg_output/') || !target.endsWith('.svg')) return { content: rawContent, repaired: false };
-  let content = stripCodeFence(rawContent).trim();
+  let content = cleanIllegalSvgChars(stripCodeFence(rawContent)).trim();
   const tag = content.match(/<svg\b[^>]*>/i)?.[0] || '';
   let repaired = false;
   if (!tag) {
@@ -378,6 +485,9 @@ function normalizePptSvgCanvas(target: string, rawContent: string): { content: s
   const tagOk = /width=["']1280["']/i.test(normalizedTag) && /height=["']720["']/i.test(normalizedTag) && /viewBox=["']0 0 1280 720["']/i.test(normalizedTag);
   if (!tagOk) throw new SkillExecutionError('PPT 16:9 SVG 必须使用 width="1280" height="720" viewBox="0 0 1280 720"');
   if (/<(?:script|foreignObject|style)\b/i.test(content)) throw new SkillExecutionError('PPT SVG 禁止 script/style/foreignObject');
+  const fontNormalized = normalizePptSvgFonts(content);
+  content = fontNormalized.content;
+  repaired = repaired || fontNormalized.repaired;
   return { content, repaired };
 }
 
@@ -406,10 +516,9 @@ function validatePptSvgLint(content: string): void {
   if (/<g\b[^>]*\bopacity\s*=/i.test(content)) problems.push('<g opacity>');
   if (/&(nbsp|mdash|copy|hellip|ldquo|rdquo|lsquo|rsquo);/i.test(content)) problems.push('HTML named entities');
   if (/(?:…+|⋯+|\.{3,}|。{3,})/.test(content)) problems.push('forbidden ellipsis');
-  const safeFonts = ['Microsoft YaHei', 'SimHei', 'SimSun', 'Arial', 'Calibri', 'Segoe UI', 'Times New Roman', 'Georgia', 'Consolas', 'Courier New', 'Impact', 'Arial Black', 'PingFang SC'];
   for (const match of content.matchAll(/\bfont-family\s*=\s*(['"])(.*?)\1/gi)) {
     const family = match[2] || '';
-    if (!safeFonts.some((font) => family.includes(font))) {
+    if (!PPT_SAFE_FONTS.some((font) => family.includes(font))) {
       problems.push(`unsafe font-family: ${family.slice(0, 80)}`);
       break;
     }
@@ -549,7 +658,7 @@ export class SkillExecutor {
             title: '本页标题',
             core_conclusion: '本页核心结论/一句话 takeaway（用于压缩上下文与进度展示）',
             svg: '<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">...</svg>',
-            file_name: '可选；默认按 slide_no 生成 svg_output/NN_slide.svg',
+            file_name: '不建议提供；后端统一按 slide_no 写入 svg_output/NN_slide.svg，避免同页多文件',
             backend_repairs: ['校验/抽取 SVG 根标签', '自动补齐 width/height/viewBox/xmlns', '清理 XML 非法控制字符和常见 HTML 实体', '成功后上下文只保留页码/路径/标题/结论'],
           },
           ppt_master_export: { skill_id: 'ppt-master', project_path: 'projects/...' },
@@ -721,9 +830,9 @@ export class SkillExecutor {
 
   private resolveExportFile(value: string): string {
     const raw = value.replace(/\\/g, '/');
-    if (path.isAbsolute(raw)) return raw;
     if (raw.startsWith('/generated/') || raw.startsWith('/projects/')) return path.join(AI_HELPER_ROOT, raw.slice(1));
     if (raw.startsWith('generated/') || raw.startsWith('projects/')) return path.join(AI_HELPER_ROOT, raw);
+    if (path.isAbsolute(raw)) return raw;
     if (raw.startsWith('server/')) return path.resolve(WORKSPACE_ROOT, raw);
     return path.join(this.outputDir, path.basename(raw));
   }
@@ -761,7 +870,8 @@ export class SkillExecutor {
     }
     if (path.basename(rel) === 'spec_lock.md') validateSpecLock(content);
     const out = safeUnder(AI_HELPER_ROOT, path.join(project, rel));
-    if (fs.existsSync(out) && fs.statSync(out).size > 0) {
+    const existed = fs.existsSync(out) && fs.statSync(out).size > 0;
+    if (existed && !isOverwriteAllowedProjectFile(rel, params)) {
       return jsonResult(
         `项目文件已存在，复用不重复写入 ${relToHelper(out)}`,
         { kind: 'write_project', path: relToHelper(out), reused_existing: true, skipped_write: true, requested_path: inputRel, normalized_path: rel },
@@ -786,8 +896,8 @@ export class SkillExecutor {
     await fsp.mkdir(path.dirname(out), { recursive: true });
     await fsp.writeFile(out, content, 'utf8');
     return jsonResult(
-      `写入项目文件 ${relToHelper(out)}`,
-      { kind: 'write_project', path: relToHelper(out), repaired_svg_root: normalized.repaired, moved_from: normalizedRel.moved_from, requested_path: inputRel, normalized_path: rel },
+      `${existed ? '更新' : '写入'}项目文件 ${relToHelper(out)}`,
+      { kind: 'write_project', path: relToHelper(out), repaired_svg_root: normalized.repaired, moved_from: normalizedRel.moved_from, requested_path: inputRel, normalized_path: rel, overwritten: existed || undefined },
       { file: relToHelper(out), files: [relToHelper(out)] },
     );
   }
@@ -803,7 +913,8 @@ export class SkillExecutor {
     const normalizedSvg = normalizePptSvgRootForSlide(rawSvg);
     validatePptSvgLint(normalizedSvg.content);
 
-    const fileName = safePptSlideFileName(params.file_name || params.path, slideNo, title);
+    const requestedFileName = str(params.file_name || params.path);
+    const fileName = canonicalPptSlideFileName(slideNo);
     const rel = `svg_output/${fileName}`;
     const result = await this.writeProjectFile(skillId, { ...params, path: rel, content: normalizedSvg.content });
     const detail = result.detail && typeof result.detail === 'object' ? result.detail as Record<string, unknown> : {};
@@ -818,6 +929,8 @@ export class SkillExecutor {
         path: file || detail.path || rel,
         repaired_svg_root: normalizedSvg.repaired || Boolean(detail.repaired_svg_root),
         reused_existing: Boolean(detail.reused_existing),
+        requested_file_name: requestedFileName || undefined,
+        normalized_file_name: fileName,
       },
       { file: file || undefined, files: result.files || (file ? [file] : []) },
     );
@@ -879,7 +992,7 @@ export class SkillExecutor {
     return jsonResult(`新建 PPT 项目 ${projectPath}`, { kind: 'bootstrap', project_path: projectPath, command: run.command }, { project_path: projectPath });
   }
 
-  pptMasterExportPrecheck(params: Record<string, unknown>): { ok: boolean; missing: string[]; project_path?: string; svg_count: number; has_total_md: boolean; moved_files?: Array<{ from: string; to: string; skipped?: boolean; reason: string }> } {
+  pptMasterExportPrecheck(params: Record<string, unknown>): { ok: boolean; missing: string[]; project_path?: string; svg_count: number; has_total_md: boolean; moved_files?: Array<{ from: string; to: string; skipped?: boolean; reason: string }>; notes_repaired?: boolean; notes_missing_sections?: string[] } {
     const project = str(params.project_path).replace(/^\/+/, '');
     const missing: string[] = [];
     if (!project) return { ok: false, missing: ['params.project_path'], svg_count: 0, has_total_md: false };
@@ -887,10 +1000,11 @@ export class SkillExecutor {
     const movedFiles = repairPptProjectLayoutSync(root);
     const svgDir = path.join(root, 'svg_output');
     const svgs = fs.existsSync(svgDir) ? fs.readdirSync(svgDir).filter((x) => x.endsWith('.svg')) : [];
+    const notesRepair = svgs.length ? repairPptNotesForSvgFilesSync(root) : { repaired: false, missing: [] as string[], path: path.join(root, 'notes', 'total.md') };
     const hasTotal = fs.existsSync(path.join(root, 'notes', 'total.md'));
     if (!svgs.length) missing.push('svg_output/*.svg');
     if (!hasTotal) missing.push('notes/total.md');
-    return { ok: !missing.length, missing, project_path: project, svg_count: svgs.length, has_total_md: hasTotal, moved_files: movedFiles };
+    return { ok: !missing.length, missing, project_path: project, svg_count: svgs.length, has_total_md: hasTotal, moved_files: movedFiles, notes_repaired: notesRepair.repaired, notes_missing_sections: notesRepair.missing };
   }
 
   private async pptMasterExport(params: Record<string, unknown>): Promise<SkillResult> {
@@ -915,7 +1029,18 @@ export class SkillExecutor {
     if (!pptx) throw new SkillExecutionError('ppt-master 导出完成但未找到可编辑 PPTX');
     const out = safeGeneratedPath(this.outputDir, `ppt_${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}.pptx`);
     await fsp.copyFile(pptx, out);
-    return jsonResult(`导出可编辑 PPTX ${toAssetPath(out)}`, { kind: 'ppt_export', project_path: project, scripts: runs.map((r) => ({ command: r.command, duration_ms: r.duration_ms })) }, { file: toAssetPath(out), files: [toAssetPath(out)] });
+    return jsonResult(
+      `导出可编辑 PPTX ${toAssetPath(out)}`,
+      {
+        kind: 'ppt_export',
+        project_path: project,
+        svg_count: pre.svg_count,
+        notes_repaired: pre.notes_repaired,
+        notes_missing_sections: pre.notes_missing_sections,
+        scripts: runs.map((r) => ({ command: r.command, duration_ms: r.duration_ms })),
+      },
+      { file: toAssetPath(out), files: [toAssetPath(out)] },
+    );
   }
 
   private extractFiles(parsed: Record<string, unknown>): string[] {
