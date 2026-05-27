@@ -2,8 +2,10 @@ export type ChatRole = 'user' | 'assistant';
 
 export interface PptSvgProgress {
   slides: string[];
-  expectedMin: number;
-  expectedMax: number;
+  expectedMin?: number;
+  expectedMax?: number;
+  mode?: 'spec' | 'svg';
+  title?: string;
   completed?: boolean;
   exportedPpt?: string;
 }

@@ -5,9 +5,9 @@ import { createRunDirectory, GENERATED_DIR, toAssetPath } from './paths.js';
 import { prefetchMetrics } from './metrics.js';
 import { MODEL_IO_LOG_PATH, RUNTIME_LOG_PATH, modelIoLog, runtimeLog } from './runtimeLogger.js';
 import type { AiDataScope, AiShortcut, PrefetchMetrics, PrefetchMetricsParams, RunRequest, StreamEvent } from './types.js';
-import { SHORTCUT_PROMPTS, SYSTEM_PROMPT } from './promptTemplates.js';
+import { DATA_QA_PROMPT, MONTHLY_PROMPT, OVERVIEW_PROMPT, PPT_SVG_LEGACY_PROMPT, SHORTCUT_PROMPTS, SYSTEM_PROMPT } from './promptTemplates.js';
 import { SkillRegistry } from './skillRegistry.js';
-import { SkillExecutor, type SkillCall, type SkillResult } from './skillExecutor.js';
+import { SkillExecutor, type ActionSpecMode, type SkillCall, type SkillResult } from './skillExecutor.js';
 import { scheduleBackgroundJob, type BackgroundJob } from './backgroundJobs.js';
 
 export { SHORTCUT_PROMPTS, SYSTEM_PROMPT } from './promptTemplates.js';
@@ -22,6 +22,19 @@ interface AgentDonePayload {
 
 function eventLine(type: string, data: unknown): string {
   return JSON.stringify({ type, data } satisfies StreamEvent) + '\n';
+}
+
+function sanitizeUserVisibleText(value: string): string {
+  return value.replace(/管理层/g, '业务团队');
+}
+
+function sanitizeUserVisibleData<T>(value: T): T {
+  if (typeof value === 'string') return sanitizeUserVisibleText(value) as T;
+  if (Array.isArray(value)) return value.map((item) => sanitizeUserVisibleData(item)) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, sanitizeUserVisibleData(item)])) as T;
+  }
+  return value;
 }
 
 function requestLog(req: RunRequest): Record<string, unknown> {
@@ -146,6 +159,10 @@ function summarizeFileContent(pathValue: unknown, content: string): unknown {
 function compactParamsForContext(params: Record<string, unknown>): Record<string, unknown> {
   const next = { ...params };
   const ownPath = next.path || next.file_name || next.fileName;
+  const svg = typeof next.svg === 'string' ? next.svg : undefined;
+  if (svg !== undefined) {
+    next.svg = `[svg omitted from conversation context; chars=${svg.length}]`;
+  }
   const content = typeof next.content === 'string' ? next.content : undefined;
   if (content !== undefined) {
     next.content_summary = summarizeFileContent(ownPath, content);
@@ -179,6 +196,114 @@ function compactSkillCallForContext(raw: string): string {
   const params = parsed.params && typeof parsed.params === 'object' ? compactParamsForContext(parsed.params as Record<string, unknown>) : {};
 
   return JSON.stringify({ ...parsed, params });
+}
+
+function clipOneLine(value: unknown, maxChars = 120): string {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
+}
+
+function svgTextNodes(content: string): string[] {
+  return [...content.matchAll(/<text\b[^>]*>([\s\S]*?)<\/text>/gi)]
+    .map((m) => m[1].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+function slideNoFromPath(filePath: string, fallback?: unknown): number | undefined {
+  const fromParam = Number(fallback);
+  if (Number.isInteger(fromParam) && fromParam > 0) return fromParam;
+  const base = fileName(filePath);
+  const match = base.match(/^(\d{1,2})[_-]/);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function isSvgProjectFile(filePath: string): boolean {
+  const rel = filePath.replace(/\\/g, '/');
+  return (rel.startsWith('svg_output/') || rel.includes('/svg_output/')) && rel.toLowerCase().endsWith('.svg');
+}
+
+function slideContextFromContent(params: Record<string, unknown>, filePath: string, content: unknown, index = 0): Record<string, unknown> {
+  const svg = typeof content === 'string' ? content : '';
+  const texts = svg ? svgTextNodes(svg) : [];
+  const title = sanitizeUserVisibleText(clipOneLine(params.title || texts[0] || `第 ${slideNoFromPath(filePath, params.slide_no) || index + 1} 页`, 80));
+  const coreConclusion = clipOneLine(
+    params.core_conclusion || params.takeaway || params.conclusion || params.objective || texts.find((x) => x !== title && x.length >= 8) || '',
+    140,
+  );
+  const item: Record<string, unknown> = {
+    slide_no: slideNoFromPath(filePath, params.slide_no || params.slideNo) || index + 1,
+    file: filePath,
+    title,
+  };
+  if (coreConclusion) item.core_conclusion = sanitizeUserVisibleText(coreConclusion);
+  return item;
+}
+
+function completedPptSvgSlides(call: SkillCall, result: SkillResult): Array<Record<string, unknown>> {
+  if (result.ok === false || call.skill_id !== 'ppt-master') return [];
+  const params = (call.params || {}) as Record<string, unknown>;
+  if (call.action === 'write_ppt_svg_slide') {
+    const file = resultFiles(result).find(isSvgProjectFile) || String(result.file || '');
+    if (!file || !isSvgProjectFile(file)) return [];
+    return [slideContextFromContent(params, file, params.svg || params.content)];
+  }
+  if (call.action === 'write_project_file') {
+    const file = resultFiles(result).find(isSvgProjectFile) || String(result.file || '');
+    const requested = String(params.path || '');
+    if (!isSvgProjectFile(file || requested)) return [];
+    return [slideContextFromContent(params, file || requested, params.content)];
+  }
+  if (call.action === 'write_project_files' && Array.isArray(params.files)) {
+    const resultSvgFiles = resultFiles(result).filter(isSvgProjectFile);
+    let svgIndex = 0;
+    return (params.files as Array<Record<string, unknown>>)
+      .map((item, index) => {
+        const requested = String(item?.path || '');
+        if (!isSvgProjectFile(requested)) return undefined;
+        const matched = resultSvgFiles.find((file) => fileName(file) === fileName(requested));
+        const file = matched || resultSvgFiles[svgIndex++] || requested;
+        if (!isSvgProjectFile(file)) return undefined;
+        return slideContextFromContent({ ...params, ...item }, file, item?.content, index);
+      })
+      .filter((item): item is Record<string, unknown> => Boolean(item));
+  }
+  return [];
+}
+
+function compactAssistantOutputForContext(raw: string, call: SkillCall, result: SkillResult): string {
+  const slides = completedPptSvgSlides(call, result);
+  if (slides.length) {
+    return JSON.stringify({
+      type: 'skill_call',
+      skill_id: call.skill_id,
+      action: call.action,
+      params: {
+        context_compacted: true,
+        completed_slides: slides,
+        note: 'SVG body omitted after successful write; only page/file/title/core conclusion retained in model context.',
+      },
+    });
+  }
+  return compactSkillCallForContext(raw);
+}
+
+function compactCallForTrace(call: SkillCall, result?: SkillResult): SkillCall {
+  if (result) {
+    const slides = completedPptSvgSlides(call, result);
+    if (slides.length) {
+      return {
+        type: 'skill_call',
+        skill_id: call.skill_id,
+        action: call.action,
+        thought: call.thought,
+        params: { context_compacted: true, completed_slides: slides },
+      };
+    }
+  }
+  const params = call.params && typeof call.params === 'object' ? compactParamsForContext(call.params) : undefined;
+  return { ...call, params };
 }
 
 function asFinal(obj: Record<string, unknown>): { answer: string; deliverable_files: string[] } | undefined {
@@ -360,7 +485,7 @@ function resolvePrimaryDataScope(req: RunRequest, latestMetricDate: string): Pri
     shortcut,
     data_scope: dataScope,
     label: '最近一年',
-    intended_use: '生成管理层患教运营 PPT 的趋势背景与关键结论',
+    intended_use: '生成患教运营 PPT 的趋势背景与关键结论',
     granularity: 'day',
     dateRange,
     params: { dateRange, granularity: 'day', limit: 400, purpose: '快捷入口默认预取：最近一年 PPT 趋势背景' },
@@ -679,16 +804,20 @@ async function buildMessages(req: RunRequest, rootDir: string, registry: SkillRe
   const primaryDataContext = await buildPrimaryDataContext(req, rootDir);
   const catalog = registry.buildPromptContext();
   const primaryDataStr = `primary_data_context（本轮快捷入口默认主数据；可按需调用 px-data 补取）：\n${JSON.stringify(primaryDataContext, null, 2)}`;
+  const actionSpecMode = actionSpecModeForRequest(req);
 
   // 缓存分两层前缀：
   //  breakpoint 1 → SYSTEM_PROMPT（跨 run 稳定）
   //  breakpoint 2 → primary_data_context（同 run 内稳定，体积最大）
   const messages: ChatMessage[] = [
     { role: 'system', content: withCacheControl(SYSTEM_PROMPT) },
-    { role: 'system', content: `协议与动作说明: ${JSON.stringify(executor.actionSpec())}` },
+    { role: 'system', content: `协议与动作说明: ${JSON.stringify(executor.actionSpec({ mode: actionSpecMode }))}` },
     { role: 'system', content: `本轮交付根目录：${rootDir}\n所有 generated 交付文件必须落在该目录下。` },
     { role: 'system', content: withCacheControl(primaryDataStr) },
   ];
+  for (const prompt of taskPromptAdditionsForRequest(req)) {
+    if (prompt.trim()) messages.push({ role: 'system', content: prompt });
+  }
   if (asShortcut(req.shortcut) === 'monthly') {
     messages.push({
       role: 'system',
@@ -702,19 +831,7 @@ async function buildMessages(req: RunRequest, rootDir: string, registry: SkillRe
     });
   }
   if (asShortcut(req.shortcut) === 'ppt_svg') {
-    messages.push({
-      role: 'system',
-      content: [
-        'legacy PPT SVG 直出快捷入口运行时契约：',
-        '1. 本轮必须走旧链路：先调用 ppt-master.ppt_master_bootstrap 新建项目。',
-        '2. 必须用 ppt-master.write_project_file 或 write_project_files 写入 design_spec.md、spec_lock.md、notes/total.md 和 svg_output/*.svg。',
-        '3. 每页 SVG 必须完整合法，使用 <svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">。',
-        '4. 不要调用 ppt-master.render_ppt_from_specs；该快捷入口专门验证模型直接生成 SVG 的 legacy 链路。',
-        '5. 页面建议 6-8 页；为避免超时，逐页或小批量写入 SVG，失败后从缺失页面继续，不要重复重写已成功文件。',
-        '6. SVG 内文字必须可读，禁止中文省略号和三个连续英文句点；放不下就拆行、缩短或拆页。',
-        '7. 最后调用 ppt-master.ppt_master_export 导出 PPTX；导出成功后后端会结束本轮请求。',
-      ].join('\n'),
-    });
+    messages.push({ role: 'system', content: '运行时硬约束：shortcut=ppt_svg，必须使用 legacy PPT SVG 直出链路；不要调用 render_ppt_from_specs。' });
   }
   if (catalog) messages.push({ role: 'system', content: catalog });
   messages.push({ role: 'user', content: `用户请求: ${userText}\n\n请按 new-ai skill_call/final 协议推进。` });
@@ -767,6 +884,23 @@ function reusedPrimaryDataResult(call: SkillCall, primaryDataContext: Record<str
     },
     files: [],
   };
+}
+
+function actionSpecModeForRequest(req: RunRequest): ActionSpecMode {
+  const shortcut = asShortcut(req.shortcut);
+  if (shortcut === 'overview') return 'overview';
+  if (shortcut === 'monthly') return 'monthly';
+  if (shortcut === 'ppt_svg') return 'ppt-svg';
+  return 'general';
+}
+
+function taskPromptAdditionsForRequest(req: RunRequest): string[] {
+  const shortcut = asShortcut(req.shortcut);
+  if (shortcut === 'overview') return [OVERVIEW_PROMPT];
+  if (shortcut === 'monthly') return [MONTHLY_PROMPT];
+  if (shortcut === 'ppt_svg') return [PPT_SVG_LEGACY_PROMPT];
+  // 普通输入仍保留轻量 data-qa/overview/monthly 规则，避免注入 PPT/SVG 大规则。
+  return [DATA_QA_PROMPT, OVERVIEW_PROMPT, MONTHLY_PROMPT];
 }
 
 const TASK_CONTRACT_SKILLS = new Set([
@@ -894,7 +1028,8 @@ function buildMonthlyInsightPrompt(current: PrefetchMetrics, previous: PrefetchM
   const context = {
     task: 'monthly_report_insight_generation',
     instruction: [
-      '你要写的是管理层月度复盘报告的“分析结论”，不是异常检测清单。',
+      '你要写的是月度复盘报告的“分析结论”，不是异常检测清单。',
+      '禁止在任何输出字段中出现用户明确排除的受众称谓；如需表达受众或用途，改用“业务团队”“运营复盘”“汇报决策”等表述。',
       '请同时分析成绩、变化、贡献结构、内容方法、原因判断、经营含义和下月策略。',
       '即使没有明显异常，也要说明本月表现说明了什么、哪些做法值得延续、哪些结构需要优化。',
       '不要只写“未发现异常/保持观察”；每个模块都要有复盘视角和运营动作指向。',
@@ -931,7 +1066,7 @@ function buildMonthlyInsightPrompt(current: PrefetchMetrics, previous: PrefetchM
   return [
     {
       role: 'system',
-      content: '你是资深患教内容运营负责人，正在为管理层写月度复盘报告。请写出“月报式”的分析：既讲结果，也讲变化、贡献、原因、策略和下月动作；不要只做异常判断。必须只输出一个合法 JSON 对象，字段为 executive_summary、kpi_insights、weekly_insights、project_insights、content_insights、highlights、diagnosis、risks、recommendations。不要输出 Markdown 或解释文字。',
+      content: '你是资深患教内容运营负责人，正在写月度复盘报告。请写出“月报式”的分析：既讲结果，也讲变化、贡献、原因、策略和下月动作；不要只做异常判断。禁止出现用户明确排除的受众称谓。必须只输出一个合法 JSON 对象，字段为 executive_summary、kpi_insights、weekly_insights、project_insights、content_insights、highlights、diagnosis、risks、recommendations。不要输出 Markdown 或解释文字。',
     },
     { role: 'user', content: JSON.stringify(context, null, 2) },
   ];
@@ -1037,6 +1172,143 @@ function parseInsightJson(raw: string): Record<string, unknown> | undefined {
   return SkillExecutor.parseJsonObject(raw);
 }
 
+function buildDirectPptModelContext(primaryDataContext: Record<string, unknown>): Record<string, unknown> {
+  const metrics = obj(primaryDataContext.primary_metrics);
+  return {
+    scope: primaryDataContext.scope,
+    core_metrics: metrics.coreKpi,
+    trend_summary: {
+      range: metrics.range,
+      monthlyTrend: Array.isArray(metrics.monthlyTrend) ? metrics.monthlyTrend.slice(-12) : [],
+      recent_30_days: metrics.recent_30_days,
+      previous_30_days: metrics.previous_30_days,
+      insights: metrics.insights,
+    },
+    top_content: Array.isArray(metrics.topContent) ? metrics.topContent.slice(0, 8) : [],
+    project_comparison: Array.isArray(metrics.projects) ? metrics.projects.slice(0, 8) : [],
+    disease_distribution: Array.isArray(metrics.diseases) ? metrics.diseases.slice(0, 6) : [],
+  };
+}
+
+function buildDirectPptMessages(userText: string, primaryDataContext: Record<string, unknown>, retryIssue = ''): ChatMessage[] {
+  const context = buildDirectPptModelContext(primaryDataContext);
+  const contract = {
+    task: 'direct_ppt_deck_spec_generation',
+    output: '只输出一个合法 JSON 对象，不要 markdown，不要 skill_call，不要解释文字',
+    deck_schema: {
+      title: 'PPT 标题',
+      subtitle: 'PPT 副标题',
+      theme: 'medical_green | executive_blue | warm_orange | dark_tech',
+      design_tokens: {
+        background: 'clean | soft_blobs | grid_dots | gradient_mesh',
+        card_style: 'soft | outlined | glass | solid_header',
+        chart_style: 'annotated | bold | minimal',
+        density: 'medium',
+        icon_style: 'circle | square | none',
+      },
+      data_display: { number_format: 'compact_cn', show_axis: true, show_grid: true, show_value_labels: true },
+      slides: [
+        {
+          slide_type: 'cover | executive_summary | kpi_dashboard | trend | comparison | ranking | diagnosis | roadmap | closing',
+          title: '页标题',
+          subtitle: '页副标题',
+          takeaway: '本页核心结论',
+          emphasis: 'hero_metric | chart | insight | ranking | timeline | balanced',
+          bullets: ['3-4 条分析，不要只复述数字'],
+          metrics: [{ label: '指标名', value: 123, unit: '单位', note: '解释', status: 'good | warn | risk | neutral' }],
+          chart: { type: 'line | area | bar | ranking | funnel | matrix', title: '图表标题', categories: ['类目'], values: [1, 2, 3], series: [{ name: '系列', values: [1, 2, 3] }] },
+          components: [{ type: 'insight_card | risk_card | action_card | chart_panel | ranking_list | funnel_panel | matrix | callout | metric_card', title: '组件标题', text: '组件正文', tone: 'good | warn | risk | neutral' }],
+          notes: '80-160 字可口播讲稿',
+        },
+      ],
+    },
+    hard_rules: [
+      '必须一次性输出完整 8 页 slides，不能只输出部分页面。',
+      '第 1 页必须是 cover，最后 1 页必须是 closing，中间 6 页必须覆盖 executive_summary/kpi_dashboard/trend/comparison 或 project_comparison/ranking 或 top_content/diagnosis/roadmap 中的至少 5 类。',
+      '除封面和结束页外，每页必须有 title、takeaway、3-6 个数据点或可渲染 chart、3-5 条 bullets 或 insight/action/risk components。',
+      'ranking/ranking_list 只能绑定同口径可比较指标；不同单位指标用 metric_card、insight_card 或 matrix。',
+      '严禁任何字段出现中文省略号、连续三个英文句点或省略号实体；放不下就改短、换行、拆条目。',
+      '只基于提供的数据生成结论，不得编造新指标、新项目、新内容。',
+    ],
+    user_request: userText,
+    retry_issue: retryIssue || undefined,
+    data_context: context,
+  };
+  return [
+    {
+      role: 'system',
+      content: '你是患教运营 PPT 策略顾问。你的任务是一次性生成完整 deck spec JSON，模型只负责内容、叙事、组件和数据绑定；后端负责布局、渲染和导出。必须只输出 JSON 对象。',
+    },
+    { role: 'user', content: JSON.stringify(contract, null, 2) },
+  ];
+}
+
+function normalizeDirectPptDeck(raw: string): Record<string, unknown> | undefined {
+  const parsed = SkillExecutor.parseJsonObject(raw);
+  if (!parsed) return undefined;
+  const deck = obj(parsed.deck || parsed.ppt || parsed.presentation || parsed);
+  return Array.isArray(deck.slides) ? deck : undefined;
+}
+
+function hasForbiddenEllipsis(value: unknown): boolean {
+  if (typeof value === 'string') return /(?:…+|⋯+|\.{3,}|。{3,}|&hellip;)/i.test(value);
+  if (Array.isArray(value)) return value.some(hasForbiddenEllipsis);
+  if (value && typeof value === 'object') return Object.values(value as Record<string, unknown>).some(hasForbiddenEllipsis);
+  return false;
+}
+
+function validateDirectPptDeck(deck: Record<string, unknown>): string[] {
+  const issues: string[] = [];
+  const slides = Array.isArray(deck.slides) ? deck.slides.map(obj) : [];
+  if (slides.length !== 8) issues.push(`slides 必须一次性完整输出 8 页，当前 ${slides.length} 页`);
+  if (hasForbiddenEllipsis(deck)) issues.push('deck spec 中包含省略号，违反硬性禁用规则');
+  const firstType = normalizeTypeForCheck(slides[0]?.slide_type);
+  const lastType = normalizeTypeForCheck(slides.at(-1)?.slide_type);
+  if (firstType !== 'cover') issues.push('第 1 页必须是 cover');
+  if (!['closing', 'thanks'].includes(lastType)) issues.push('最后 1 页必须是 closing');
+  const typeSet = new Set(slides.map((slide) => normalizeTypeForCheck(slide.slide_type)));
+  const requiredGroups = [
+    ['executive_summary', 'kpi_dashboard', 'overview'],
+    ['trend', 'monthly_trend'],
+    ['comparison', 'project_comparison'],
+    ['ranking', 'top_content', 'content_highlight'],
+    ['diagnosis', 'risk', 'issue'],
+    ['roadmap', 'next_steps'],
+  ];
+  const covered = requiredGroups.filter((group) => group.some((type) => typeSet.has(type))).length;
+  if (covered < 5) issues.push(`中间页主题覆盖不足，至少覆盖 5 类核心页面，当前 ${covered} 类`);
+  slides.slice(1, -1).forEach((slide, index) => {
+    const pageNo = index + 2;
+    if (!String(slide.title || '').trim()) issues.push(`第 ${pageNo} 页缺少 title`);
+    if (!String(slide.takeaway || '').trim()) issues.push(`第 ${pageNo} 页缺少 takeaway`);
+    const bullets = Array.isArray(slide.bullets) ? slide.bullets.filter(Boolean) : [];
+    const metrics = Array.isArray(slide.metrics) ? slide.metrics.filter(Boolean) : [];
+    const components = Array.isArray(slide.components) ? slide.components.filter(Boolean) : [];
+    if (!slide.chart && metrics.length < 3 && components.length < 2) issues.push(`第 ${pageNo} 页缺少足够数据点或组件`);
+    if (bullets.length < 2 && components.length < 2) issues.push(`第 ${pageNo} 页缺少分析 bullets 或洞察组件`);
+  });
+  return issues;
+}
+
+function normalizeTypeForCheck(value: unknown): string {
+  return String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function compactDeckForLog(deck: Record<string, unknown>): Record<string, unknown> {
+  const slides = Array.isArray(deck.slides) ? deck.slides.map((slide) => {
+    const row = obj(slide);
+    return {
+      slide_type: row.slide_type,
+      title: row.title,
+      component_count: Array.isArray(row.components) ? row.components.length : 0,
+      metric_count: Array.isArray(row.metrics) ? row.metrics.length : 0,
+      bullet_count: Array.isArray(row.bullets) ? row.bullets.length : 0,
+      has_chart: Boolean(row.chart),
+    };
+  }) : [];
+  return { title: deck.title, subtitle: deck.subtitle, theme: deck.theme, slide_count: slides.length, slides };
+}
+
 async function generateMonthlyInsights(req: RunRequest, rootDir: string, current: PrefetchMetrics, previous: PrefetchMetrics, dateRange: DateRange, compareRange: DateRange): Promise<MonthlyInsights> {
   const ai = new AIService({ model: 'qwen3.6-plus', timeoutMs: 45_000 });
   const messages = buildMonthlyInsightPrompt(current, previous, dateRange, compareRange);
@@ -1092,13 +1364,137 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
   const modelTimeoutRetries = Math.max(1, Number(process.env.AI_HELPER_MODEL_TIMEOUT_RETRIES || 3) || 3);
 
   const emit = (type: string, data: unknown): string => {
-    runtimeLog('stream_event', { type, data, rootDir, ...requestLog(req) });
-    return eventLine(type, data);
+    const safeData = sanitizeUserVisibleData(data);
+    runtimeLog('stream_event', { type, data: safeData, rootDir, ...requestLog(req) });
+    return eventLine(type, safeData);
   };
 
   runtimeLog('request_start', { mode: 'new-ai-ts', rootDir, runtime_log_path: RUNTIME_LOG_PATH, model_io_log_path: MODEL_IO_LOG_PATH, run_model_io_log_path: path.join(rootDir, 'model_io.md'), ...requestLog(req) });
   yield emit('status', '开始处理请求...');
   yield emit('progress', { phase: 'planning', message: '正在预取 PX 主数据并加载技能目录', step: 0 });
+
+  if (shortcut === 'ppt') {
+    try {
+      const userText = (req.message || req.command || '').trim() || SHORTCUT_PROMPTS['/ppt'] || '请生成患教运营趋势分析 PPT。';
+      const trace: AgentDonePayload['trace'] = [];
+      const skillsUsed = new Set<string>(['ppt-master']);
+
+      yield emit('progress', { phase: 'data', message: '正在聚合 PPT 所需核心指标、趋势、内容与项目数据', step: 1 });
+      const primaryDataContext = await buildPrimaryDataContext(req, rootDir);
+
+      const bootstrapCall: SkillCall = {
+        type: 'skill_call',
+        skill_id: 'ppt-master',
+        action: 'ppt_master_bootstrap',
+        params: { project_name: 'px_ai_ppt', format: 'ppt169' },
+        thought: '后端确定性流程自动创建 PPT 项目。',
+      };
+      yield emit('progress', { phase: 'file_generation', message: '正在初始化 PPT 项目', step: 2, skill_id: bootstrapCall.skill_id, action: bootstrapCall.action });
+      const bootstrapResult = await executor.execute(bootstrapCall);
+      trace.push({ step: 'auto_bootstrap', call: compactCallForTrace(bootstrapCall, bootstrapResult), result: bootstrapResult });
+      yield emit('skill_result', bootstrapResult);
+      if (bootstrapResult.ok === false) throw new Error(bootstrapResult.error || 'PPT 项目初始化失败');
+      const projectPath = String(bootstrapResult.project_path || obj(bootstrapResult.detail).project_path || '');
+      if (!projectPath) throw new Error('PPT 项目初始化成功但未返回 project_path');
+
+      const pptAi = new AIService({ timeoutMs: Math.max(45_000, Number(process.env.AI_HELPER_PPT_SPEC_TIMEOUT_MS || 90_000) || 90_000) });
+      let deck: Record<string, unknown> | undefined;
+      let retryIssue = '';
+      const maxSpecAttempts = Math.max(1, Math.min(3, Number(process.env.AI_HELPER_PPT_SPEC_RETRIES || 2) || 2));
+      for (let attempt = 1; attempt <= maxSpecAttempts; attempt += 1) {
+        const messages = buildDirectPptMessages(userText, primaryDataContext, retryIssue);
+        const modelStarted = Date.now();
+        yield emit('progress', { phase: 'analysis', message: attempt === 1 ? '正在一次性生成完整 PPT deck spec' : `deck spec 不完整，正在重试 ${attempt}/${maxSpecAttempts}`, step: 3, attempt, max_attempts: maxSpecAttempts });
+        runtimeLog('model_start', { step: 'direct_ppt_spec', attempt, max_attempts: maxSpecAttempts, rootDir, model: pptAi.modelName(), messages, ...requestLog(req) });
+        try {
+          const result = await pptAi.chatDetailed(messages);
+          const duration = Date.now() - modelStarted;
+          runtimeLog('model_end', { step: 'direct_ppt_spec', attempt, max_attempts: maxSpecAttempts, rootDir, duration_ms: duration, output: result.text, raw_response: result.rawResponse, request: result.request, cache_usage: result.cacheUsage, ...requestLog(req) });
+          modelIoLog({
+            step: attempt,
+            rootDir,
+            model: pptAi.modelName(),
+            duration_ms: duration,
+            messages,
+            output: result.text,
+            request: result.request,
+            meta: { ...requestLog(req), direct_pipeline: 'ppt_deck_spec', attempt, max_attempts: maxSpecAttempts },
+            cache_usage: result.cacheUsage,
+            recovered_from_reasoning_content: result.recoveredFromReasoningContent,
+          });
+          const candidate = normalizeDirectPptDeck(result.text);
+          const issues = candidate ? validateDirectPptDeck(candidate) : ['模型输出不是合法 deck spec JSON'];
+          if (!candidate || issues.length) {
+            retryIssue = issues.join('；');
+            if (attempt < maxSpecAttempts) continue;
+            throw new Error(`deck spec 校验失败：${retryIssue}`);
+          }
+          deck = candidate;
+          break;
+        } catch (err) {
+          const duration = Date.now() - modelStarted;
+          runtimeLog('model_error', { step: 'direct_ppt_spec', attempt, max_attempts: maxSpecAttempts, rootDir, duration_ms: duration, model: pptAi.modelName(), error: modelErrorLog(err), ...requestLog(req) });
+          modelIoLog({
+            step: attempt,
+            rootDir,
+            model: pptAi.modelName(),
+            duration_ms: duration,
+            messages,
+            error: modelErrorLog(err),
+            meta: { ...requestLog(req), direct_pipeline: 'ppt_deck_spec', attempt, max_attempts: maxSpecAttempts },
+          });
+          retryIssue = err instanceof Error ? err.message : String(err);
+          if (attempt >= maxSpecAttempts) throw err;
+        }
+      }
+      if (!deck) throw new Error('未能生成完整 PPT deck spec');
+
+      runtimeLog('direct_ppt_deck_spec_ready', { rootDir, deck: compactDeckForLog(deck), ...requestLog(req) });
+      const renderCall: SkillCall = {
+        type: 'skill_call',
+        skill_id: 'ppt-master',
+        action: 'render_ppt_from_specs',
+        params: { ...deck, project_path: projectPath },
+        thought: '后端确定性流程一次性渲染完整 PPT deck spec。',
+      };
+      yield emit('progress', { phase: 'file_generation', message: '正在渲染 SVG 页面并执行视觉 QA', step: 4, skill_id: renderCall.skill_id, action: renderCall.action });
+      const renderResult = await executor.execute(renderCall);
+      trace.push({ step: 'auto_render_specs', call: compactCallForTrace(renderCall, renderResult), result: renderResult });
+      yield emit('skill_result', renderResult);
+      if (renderResult.ok === false) throw new Error(renderResult.error || 'PPT SVG 渲染失败');
+      const renderFiles = collectFiles(trace);
+      if (renderFiles.length) yield emit('files', renderFiles);
+
+      const exportCall: SkillCall = {
+        type: 'skill_call',
+        skill_id: 'ppt-master',
+        action: 'ppt_master_export',
+        params: { project_path: projectPath },
+        thought: '后端确定性流程自动导出 PPTX。',
+      };
+      yield emit('progress', { phase: 'file_generation', message: '正在导出可编辑 PPTX', step: 5, skill_id: exportCall.skill_id, action: exportCall.action });
+      const exportResult = await executor.execute(exportCall);
+      trace.push({ step: 'auto_export', call: compactCallForTrace(exportCall, exportResult), result: exportResult });
+      yield emit('skill_result', exportResult);
+      if (exportResult.ok === false) throw new Error(exportResult.error || 'PPTX 导出失败');
+
+      const files = collectFiles(trace);
+      if (files.length) yield emit('files', files);
+      const finalAnswer = '趋势分析 PPT 已生成，页面预览和可编辑 PPTX 文件可在下方查看与下载。';
+      yield emit('text', finalAnswer);
+      yield emit('progress', { phase: 'complete', message: '趋势分析 PPT 生成完成', step: 6, ok: true });
+      yield emit('done', { text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: [] });
+      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: [], direct_ppt_pipeline: true, ...requestLog(req) });
+      return;
+    } catch (err) {
+      const text = `趋势分析 PPT 生成失败：${err instanceof Error ? err.message : String(err)}`;
+      yield emit('text', text);
+      yield emit('progress', { phase: 'error', message: '趋势分析 PPT 生成失败', step: 99, ok: false });
+      yield emit('done', { text, files: [], skills_used: ['ppt-master'], trace: [], background_jobs: [] });
+      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text, files: [], skills_used: ['ppt-master'], trace: [], background_jobs: [], direct_ppt_pipeline: true, error: modelErrorLog(err), ...requestLog(req) });
+      return;
+    }
+  }
 
   if (asShortcut(req.shortcut) === 'monthly') {
     // 原通用 agent 月报链路暂不走：它要求模型一次性生成完整 Markdown，容易慢/卡住。
@@ -1128,7 +1524,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
         { prefix: 'previous_period', label: '上月对比数据', metrics: previousMetrics },
       ]);
 
-      yield emit('progress', { phase: 'analysis', message: '正在调用 qwen3.6-plus 生成管理层结论', step: 2 });
+      yield emit('progress', { phase: 'analysis', message: '正在调用 qwen3.6-plus 生成复盘结论', step: 2 });
       const insights = await generateMonthlyInsights(req, rootDir, currentMetrics, previousMetrics, scope.dateRange, scope.compareRange);
       const markdown = buildMonthlyReportMarkdown(currentMetrics, previousMetrics, scope.dateRange, scope.compareRange, insights);
 
@@ -1141,14 +1537,14 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       };
       yield emit('progress', { phase: 'file_generation', message: '正在写入月报 Markdown', step: 3 });
       const mdResult = await executor.execute(mdCall);
-      trace.push({ step: 'template_md', call: mdCall, result: mdResult });
+      trace.push({ step: 'template_md', call: compactCallForTrace(mdCall, mdResult), result: mdResult });
       yield emit('skill_result', mdResult);
       if (mdResult.ok === false) throw new Error(mdResult.error || '月报 Markdown 写入失败');
 
       const pdfCall = monthlyPdfAutoCall();
       yield emit('progress', { phase: 'file_generation', message: '正在自动转换 PDF', step: 4 });
       const pdfResult = await executor.execute(pdfCall);
-      trace.push({ step: 'template_pdf', call: pdfCall, result: pdfResult });
+      trace.push({ step: 'template_pdf', call: compactCallForTrace(pdfCall, pdfResult), result: pdfResult });
       yield emit('skill_result', pdfResult);
 
       const files = collectFiles(trace);
@@ -1288,6 +1684,23 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
     }
 
     const call = parsed;
+
+    if (isLegacyPptSvg && !earlyTextEmitted && call.action !== 'emit_text') {
+      messages.push({ role: 'assistant', content: compactSkillCallForContext(raw) });
+      messages.push({
+        role: 'user',
+        content: [
+          'PPT_SVG_REQUIRES_EARLY_TEXT:',
+          '本快捷入口需要先输出用户可见文本，再慢慢生成 SVG/PPT。',
+          '请先调用 emit_text，content 写 300-800 字中文汇报摘要、页面大纲和生成计划。',
+          'emit_text 成功后再继续 ppt_master_bootstrap、写 SVG、导出 PPTX。',
+          '只输出一个 JSON 对象。',
+        ].join('\n'),
+      });
+      yield emit('progress', { phase: 'retry', message: 'PPT SVG 直出需先输出摘要，正在要求模型先输出文字', step, ok: false });
+      continue;
+    }
+
     skillsUsed.add(call.skill_id);
     yield emit('skills', [...skillsUsed]);
 
@@ -1315,7 +1728,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
         const pre = executor.pptMasterExportPrecheck((call.params || {}) as Record<string, unknown>);
         if (!pre.ok) {
           result = { ok: false, recoverable: true, summary: label, error: `ppt-master 导出前置条件未满足: ${pre.missing.join(', ')}`, detail: { kind: 'export_precheck', ...pre } };
-          trace.push({ step, call, result });
+          trace.push({ step, call: compactCallForTrace(call, result), result });
           yield emit('skill_result', result);
           messages.push({ role: 'assistant', content: compactSkillCallForContext(raw) });
           messages.push({ role: 'user', content: SkillExecutor.observation(result) });
@@ -1330,7 +1743,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       result = await executor.execute(call);
     }
 
-    trace.push({ step, call, result });
+    trace.push({ step, call: compactCallForTrace(call, result), result });
     if (call.action === 'read_skill_file' && result.ok !== false) injected.add(call.skill_id);
     yield emit('skill_result', result);
 
@@ -1340,7 +1753,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       yield emit('skills', [...skillsUsed]);
       yield emit('progress', { phase: 'file_generation', message: '月报正文已生成，后端正在自动转换 PDF', step, skill_id: pdfCall.skill_id, action: pdfCall.action, ok: true });
       const pdfResult = await executor.execute(pdfCall);
-      trace.push({ step: `${step}.auto_pdf`, call: pdfCall, result: pdfResult });
+      trace.push({ step: `${step}.auto_pdf`, call: compactCallForTrace(pdfCall, pdfResult), result: pdfResult });
       yield emit('skill_result', pdfResult);
 
       const files = collectFiles(trace);
@@ -1381,7 +1794,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs, auto_final_after_export: true, ...requestLog(req) });
       return;
     }
-    messages.push({ role: 'assistant', content: compactSkillCallForContext(raw) });
+    messages.push({ role: 'assistant', content: compactAssistantOutputForContext(raw, call, result) });
     messages.push({ role: 'user', content: SkillExecutor.observation(result) });
   }
 

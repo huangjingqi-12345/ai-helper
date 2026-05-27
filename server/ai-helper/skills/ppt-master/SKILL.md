@@ -54,24 +54,24 @@ Write project-level design context. Keep `spec_lock.md` about visual/technical e
 
 ### 3. Hand-author SVG pages
 
-Generate SVG pages in deck order. Key pages one at a time; ordinary supporting pages can be saved in small batches of 2–3 pages. A single `write_project_files` call should not write more than 3 `svg_output/*.svg` pages.
+Generate SVG pages in deck order. Prefer the narrow `write_ppt_svg_slide` action so the runtime can validate/repair the SVG and keep later context small. Write one slide per call.
 
 ```json
 {
   "type": "skill_call",
   "skill_id": "ppt-master",
-  "action": "write_project_files",
+  "action": "write_ppt_svg_slide",
   "params": {
     "project_path": "projects/...",
-    "files": [
-      {
-        "path": "svg_output/01_cover.svg",
-        "content": "<svg width=\"1280\" height=\"720\" viewBox=\"0 0 1280 720\" xmlns=\"http://www.w3.org/2000/svg\">...</svg>"
-      }
-    ]
+    "slide_no": 1,
+    "title": "封面",
+    "core_conclusion": "本页一句话核心结论，用于后续上下文和进度展示",
+    "svg": "<svg width=\"1280\" height=\"720\" viewBox=\"0 0 1280 720\" xmlns=\"http://www.w3.org/2000/svg\">...</svg>"
   }
 }
 ```
+
+`write_project_file` / `write_project_files` remain available for legacy compatibility, but `write_ppt_svg_slide` is preferred for SVG pages. It checks the SVG root, normalizes `width="1280" height="720" viewBox="0 0 1280 720"`, cleans illegal XML control characters/common HTML entities, and returns shorter failure details.
 
 Every SVG page must start with:
 
@@ -121,4 +121,4 @@ Then final answer with the exported PPTX path returned by `SKILL_RESULT`.
 
 ## Context handling
 
-When writing SVG files, the runtime records complete model output in logs, but the conversation context only receives compact summaries of file contents. Continue from file paths and summaries rather than re-sending full SVG content in later turns.
+After a successful SVG write, the conversation context only retains completed slide number, file path, page title and core conclusion. Continue from that compact state; do not re-send, summarize at length, or rewrite already successful SVG pages. If a write fails, use the short error message to fix only the failed slide.

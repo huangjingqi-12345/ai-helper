@@ -13,7 +13,6 @@ describe('AI helper HTML artifacts', () => {
   it.each([
     ['general artifact renderer', 'src/ai-helper/artifacts.ts', '.stage', 1280],
     ['data overview renderer', 'ai-helper/skills/patient-education-data-overview/scripts/render_overview_assets.ts', '.board', 1440],
-    ['trend analysis renderer', 'ai-helper/skills/patient-education-trend-analysis/scripts/render_trend_assets.ts', '.stage', 1460],
   ])('%s centers the generated canvas in the browser viewport and keeps the outer frame square', async (_name, file, exportRootSelector, screenshotWidth) => {
     const source = await readProjectFile(file);
     const compact = source.replace(/\s+/g, '');

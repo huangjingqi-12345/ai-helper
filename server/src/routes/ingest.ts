@@ -7,6 +7,17 @@ import { asyncRoute } from './asyncRoute.js';
 
 const router = Router();
 
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function requiredMetricDate(value: unknown, field: string): string {
+  const date = requiredString(value, field, 20).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new ValidationError(`${field} must be YYYY-MM-DD`);
+  if (date > todayIso()) throw new ValidationError(`${field} must not be in the future`);
+  return date;
+}
+
 function validateMetricRows(body: unknown): AggregateMetricInput[] {
   const data = asObject(body);
   const rows = Array.isArray(data.rows) ? data.rows : [];
@@ -19,7 +30,7 @@ function validateMetricRows(body: unknown): AggregateMetricInput[] {
       projectId: optionalString(row.projectId, `rows[${index}].projectId`, 80),
       contentId: optionalString(row.contentId, `rows[${index}].contentId`, 80),
       diseaseId: optionalString(row.diseaseId, `rows[${index}].diseaseId`, 80),
-      metricDate: requiredString(row.metricDate, `rows[${index}].metricDate`, 20),
+      metricDate: requiredMetricDate(row.metricDate, `rows[${index}].metricDate`),
       pushCount: optionalNumber(row.pushCount, `rows[${index}].pushCount`),
       deliveredCount: optionalNumber(row.deliveredCount, `rows[${index}].deliveredCount`),
       readUsers: optionalNumber(row.readUsers, `rows[${index}].readUsers`),

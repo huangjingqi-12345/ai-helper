@@ -55,7 +55,7 @@ CMD ["nginx", "-g", "daemon off;"]
 # ============================================
 FROM node:20-alpine AS backend
 
-RUN apk add --no-cache chromium nss freetype harfbuzz font-noto-cjk
+RUN apk add --no-cache ca-certificates tzdata python3 make g++ chromium nss freetype harfbuzz font-noto-cjk
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 WORKDIR /app
@@ -67,7 +67,12 @@ RUN addgroup -g 1001 -S nodejs && \
 # Copy backend compiled code and dependencies
 COPY --from=backend-build /app/server/dist ./dist
 COPY --from=backend-build /app/server/node_modules ./node_modules
+COPY --from=backend-build /app/server/ai-helper/skills ./ai-helper/skills
 COPY server/package.json ./
+
+# Runtime-writable directories for SQLite, logs, and AI helper artifacts.
+RUN mkdir -p /app/data /app/logs /app/ai-helper/generated /app/ai-helper/projects /app/ai-helper/logs && \
+    chown -R nodejs:nodejs /app/data /app/logs /app/ai-helper
 
 # Set environment
 ENV NODE_ENV=production

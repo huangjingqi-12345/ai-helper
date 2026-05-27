@@ -15,7 +15,7 @@ Write 3-5 bullets:
 | Section | Title | Key Message |
 |---|---|---|
 | 1 | 月度患教运营报告 | Report month and scope |
-| 2 | 管理层摘要 | Overall result and recommendation |
+| 2 | 执行摘要 | Overall result and recommendation |
 | 3 | 核心 KPI 概览 | Push, delivery, readers, reads, interactions |
 | 4 | 月内节奏变化 | Weekly reads and interactions rhythm |
 | 5 | 分发漏斗 | Push → delivery → read conversion |

@@ -80,6 +80,7 @@ function currentTime(): string {
 function PptSvgProgressPreview({ progress }: { progress: PptSvgProgress }): JSX.Element {
   const slides = progress.slides;
   const [activeIndex, setActiveIndex] = useState(0);
+  const title = progress.title || (progress.mode === 'spec' ? '趋势分析 PPT 页面预览' : 'SVG 直出进度');
 
   useEffect(() => {
     if (!slides.length) {
@@ -91,20 +92,21 @@ function PptSvgProgressPreview({ progress }: { progress: PptSvgProgress }): JSX.
 
   const safeIndex = slides.length ? Math.min(activeIndex, slides.length - 1) : 0;
   const activeSlide = slides[safeIndex];
-  const expectedLabel = `${progress.expectedMin}-${progress.expectedMax}`;
   const generatedRatio = progress.completed
     ? 100
-    : Math.min(96, Math.round((slides.length / Math.max(progress.expectedMax, 1)) * 100));
+    : slides.length
+      ? Math.min(92, 18 + slides.length * 9)
+      : 8;
 
   return (
     <div className="mt-3 overflow-hidden rounded-2xl border border-violet-300/25 bg-slate-950/35 shadow-[inset_0_1px_0_rgba(255,255,255,.05)]">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-300/15 bg-violet-300/10 px-3.5 py-2.5">
         <div className="inline-flex items-center gap-2 text-[12px] font-semibold text-violet-50">
           {progress.completed ? <CheckCircle2 className="h-4 w-4 text-emerald-200" /> : <Images className="h-4 w-4 text-violet-200" />}
-          SVG 直出进度
+          {title}
         </div>
         <span className="rounded-full border border-violet-200/25 bg-violet-200/10 px-2 py-0.5 text-[11px] text-violet-50">
-          {progress.completed ? '已导出 PPT' : `已生成 ${slides.length} / 预计 ${expectedLabel} 页`}
+          {progress.completed ? '已导出 PPT' : slides.length ? `已生成 ${slides.length} 页` : '正在生成页面'}
         </span>
       </div>
 
@@ -166,7 +168,7 @@ function PptSvgProgressPreview({ progress }: { progress: PptSvgProgress }): JSX.
           </>
         ) : (
           <div className="flex min-h-[140px] items-center justify-center rounded-xl border border-dashed border-violet-200/25 bg-slate-900/40 text-[12px] text-slate-200">
-            正在等待第一张 SVG 生成…
+            正在等待第一张页面预览生成…
           </div>
         )}
       </div>
@@ -277,7 +279,7 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
           </div>
         </header>
 
-        <div className="grid w-full gap-2.5 md:grid-cols-3">
+        <div className="grid w-full grid-cols-4 gap-2">
           {REPORT_ACTIONS.map((action) => {
             const Icon = action.icon;
             return (
@@ -286,21 +288,21 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
                 type="button"
                 disabled={streaming}
                 onClick={() => handleAction(action.cmd)}
-                className="group relative min-h-[72px] w-full overflow-hidden rounded-xl border border-slate-600/50 bg-slate-800/60 p-2.5 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.06),0_12px_30px_rgba(0,0,0,.10)] transition-all duration-200 before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-cyan-200/25 before:to-transparent hover:-translate-y-0.5 hover:border-cyan-200/30 hover:bg-slate-800/75 hover:shadow-[inset_0_1px_0_rgba(255,255,255,.08),0_16px_38px_rgba(8,145,178,.09)] disabled:opacity-60"
+                className="group relative min-h-[58px] w-full min-w-0 overflow-hidden rounded-xl border border-slate-600/50 bg-slate-800/60 p-2 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.06),0_10px_24px_rgba(0,0,0,.10)] transition-all duration-200 before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-cyan-200/25 before:to-transparent hover:-translate-y-0.5 hover:border-cyan-200/30 hover:bg-slate-800/75 hover:shadow-[inset_0_1px_0_rgba(255,255,255,.08),0_14px_32px_rgba(8,145,178,.09)] disabled:opacity-60"
               >
-                <div className="relative flex items-center gap-2.5">
-                  <div className={clsx('grid h-9 w-9 shrink-0 place-items-center rounded-lg border', action.accentClass)}>
-                    <Icon className="h-[18px] w-[18px]" />
+                <div className="relative flex min-w-0 items-center gap-2">
+                  <div className={clsx('grid h-8 w-8 shrink-0 place-items-center rounded-lg border', action.accentClass)}>
+                    <Icon className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="flex items-center gap-1.5 text-[15px] font-semibold text-foreground">
-                      {action.title}
-                      <ArrowRight className="h-3.5 w-3.5 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-cyan-100" />
+                    <p className="flex min-w-0 items-center gap-1 text-[13.5px] font-semibold text-foreground">
+                      <span className="truncate whitespace-nowrap">{action.title}</span>
+                      <ArrowRight className="h-3 w-3 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-cyan-100" />
                     </p>
-                    <p className="mt-1 text-[12px] leading-relaxed text-slate-200">{action.desc}</p>
+                    <p className="mt-0.5 truncate whitespace-nowrap text-[11px] leading-snug text-slate-200">{action.desc}</p>
                   </div>
-                  <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border border-cyan-200/25 bg-cyan-300/10 px-2 py-0.5 text-[11px] font-medium text-cyan-100">
-                    <Wand2 className="h-3 w-3" /> 一键生成
+                  <span className="ml-auto hidden shrink-0 items-center gap-1 rounded-full border border-cyan-200/25 bg-cyan-300/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-100 xl:inline-flex">
+                    <Wand2 className="h-3 w-3" /> 生成
                   </span>
                 </div>
               </button>
@@ -330,7 +332,7 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
 
           <div
             ref={chatScrollRef}
-            className="min-h-[260px] max-h-[380px] overflow-y-auto bg-[radial-gradient(circle_at_66%_42%,rgba(34,211,238,.07),transparent_30%),linear-gradient(180deg,rgba(15,23,42,.34),rgba(15,23,42,.18))] px-4 py-3"
+            className="min-h-[360px] max-h-[520px] overflow-y-auto bg-[radial-gradient(circle_at_66%_42%,rgba(34,211,238,.07),transparent_30%),linear-gradient(180deg,rgba(15,23,42,.34),rgba(15,23,42,.18))] px-4 py-3"
           >
             {messages.length === 0 && (
               <div className="mb-3 flex justify-start">
@@ -379,11 +381,6 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
                                 <span />
                                 <span />
                               </span>
-                              {typeof msg.loadingStep === 'number' && (
-                                <span className="rounded border border-cyan-200/25 bg-cyan-300/10 px-1 py-0.5 text-[10px] text-cyan-100">
-                                  第 {msg.loadingStep} 步
-                                </span>
-                              )}
                             </span>
                             <div className="space-y-0.5">
                               <p className="text-[12px] leading-snug">{msg.loadingStatus || '等待后端响应…'}</p>

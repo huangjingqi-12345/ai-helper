@@ -485,7 +485,7 @@ describe('Backend API Integration Tests', () => {
           rows: [{
             projectId: 'proj-hf',
             contentId: 'CNT-k-test',
-            metricDate: '2099-01-01',
+            metricDate: new Date().toISOString().slice(0, 10),
             readUsers: 10,
             readCount: 12,
           }],

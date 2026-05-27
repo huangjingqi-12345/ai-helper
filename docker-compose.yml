@@ -53,6 +53,13 @@ services:
       - CX_PHARMA_ACCESS_TOKEN=${CX_PHARMA_ACCESS_TOKEN:-}
       - CX_API_TIMEOUT_MS=${CX_API_TIMEOUT_MS:-10000}
       - CX_SYNC_HOUR=${CX_SYNC_HOUR:-2}
+      # AI helper model API. OPENAI_* can point to any OpenAI-compatible endpoint.
+      - POE_API_KEY=${POE_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.poe.com/v1}
+      - TEXT_MODEL=${TEXT_MODEL:-GPT-5.4}
+      - AI_HELPER_MODEL_TIMEOUT_MS=${AI_HELPER_MODEL_TIMEOUT_MS:-120000}
+      - AI_HELPER_MODEL_TIMEOUT_RETRIES=${AI_HELPER_MODEL_TIMEOUT_RETRIES:-3}
     volumes:
       - pxlite-db:/app/data
       - pxlite-logs:/app/logs

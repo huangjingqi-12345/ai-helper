@@ -1,6 +1,0 @@
-interface:
-  display_name: "患教趋势分析"
-  short_description: "生成患教趋势分析报告、HTML看板、PNG截图和PDF文档"
-  default_prompt: "Use $patient-education-trend-analysis to create a PX patient education trend analysis report with Markdown, HTML, PNG and PDF outputs."
-policy:
-  allow_implicit_invocation: true

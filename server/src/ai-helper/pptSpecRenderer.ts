@@ -240,6 +240,14 @@ function themeWithTokens(base: Theme, tokens: DeckDesignTokens): Theme {
   };
 }
 
+function sanitizeAudienceTerm(value: string): string {
+  return value.replace(/管理层/g, '业务团队');
+}
+
+function sanitizeDeckParams(params: DeckSpecParams): DeckSpecParams {
+  return JSON.parse(JSON.stringify(params), (_key, value) => (typeof value === 'string' ? sanitizeAudienceTerm(value) : value)) as DeckSpecParams;
+}
+
 function scaledSize(tokens: DeckDesignTokens, base: number, explicit?: number): number {
   const scale = Number(tokens.font_scale || 1);
   const size = explicit !== undefined ? explicit : base * scale;
@@ -1619,7 +1627,7 @@ function narrativeTemplateSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDesi
 function coverStatement(slide: DeckSlideSpec, deck: DeckSpecParams, t: Theme, idx: number, tokens: DeckDesignTokens = {}): string {
   const title = slide.title || deck.title || 'PX 患教运营汇报';
   const subtitle = slide.subtitle || deck.subtitle || deck.data_scope || 'Patient Education Operations Review';
-  return svg(`${bg(t, { ...tokens, background: tokens.background || 'diagonal_ribbon' })}${accentShape(t, { ...tokens, accent_shape: tokens.accent_shape || 'ribbon' })}<rect x="88" y="98" width="1104" height="524" rx="34" fill="${t.panel}" stroke="${t.grid}"/><rect x="124" y="134" width="1032" height="452" rx="28" fill="${t.primary}" opacity="0.05"/>${sectionKicker(150, 178, 'PX PATIENT EDUCATION REPORT', t)}${multiline(150, 302, title, { size: 54, fill: t.text, weight: 900, maxChars: 17, maxLines: 2, lineHeight: 70 })}${multiline(154, 452, subtitle, { size: 22, fill: t.subtext, weight: 600, maxChars: 38, maxLines: 2, lineHeight: 34 })}${pillStrip(slide.bullets || ['管理层汇报', '数据复盘', '行动建议'], 154, 530, t, 3)}${heroMetricBlock((slide.metrics || [])[0], 850, 214, 250, 240, t, '核心指标', tokens)}<rect x="1020" y="548" width="96" height="34" rx="17" fill="${t.grid}" opacity="0.45"/>${text(1068, 572, String(idx).padStart(2, '0'), 16, t.subtext, 850, 'middle')}`);
+  return svg(`${bg(t, { ...tokens, background: tokens.background || 'diagonal_ribbon' })}${accentShape(t, { ...tokens, accent_shape: tokens.accent_shape || 'ribbon' })}<rect x="88" y="98" width="1104" height="524" rx="34" fill="${t.panel}" stroke="${t.grid}"/><rect x="124" y="134" width="1032" height="452" rx="28" fill="${t.primary}" opacity="0.05"/>${sectionKicker(150, 178, 'PX PATIENT EDUCATION REPORT', t)}${multiline(150, 302, title, { size: 54, fill: t.text, weight: 900, maxChars: 17, maxLines: 2, lineHeight: 70 })}${multiline(154, 452, subtitle, { size: 22, fill: t.subtext, weight: 600, maxChars: 38, maxLines: 2, lineHeight: 34 })}${pillStrip(slide.bullets || ['业务汇报', '数据复盘', '行动建议'], 154, 530, t, 3)}${heroMetricBlock((slide.metrics || [])[0], 850, 214, 250, 240, t, '核心指标', tokens)}<rect x="1020" y="548" width="96" height="34" rx="17" fill="${t.grid}" opacity="0.45"/>${text(1068, 572, String(idx).padStart(2, '0'), 16, t.subtext, 850, 'middle')}`);
 }
 
 function executiveSplit(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens = {}): string {
@@ -1995,7 +2003,7 @@ function slug(value: unknown, fallback: string): string {
 }
 
 function designSpec(deck: DeckSpecParams, t: Theme): string {
-  return `# Design Specification\n\n## Audience\n${deck.audience || '管理层、内容运营和项目负责人'}\n\n## Objective\n用结构化数据叙事说明患教运营表现、问题和下一步行动。\n\n## Visual System\n- Theme: ${t.name}\n- Primary: ${t.primary}\n- Secondary: ${t.secondary}\n- Background: ${t.bg}\n- Font: ${FONT}\n- Design tokens: ${JSON.stringify(deck.design_tokens || {})}\n- Data display: ${JSON.stringify(deck.data_display || {})}\n\n## Four-layer Model Control\n1. 内容层：title/subtitle/takeaway/bullets/metrics/chart/table/notes/highlight_points。\n2. 结构层：slide_type/visual_intent/emphasis/density/components，renderer 接收页面目标、主视觉和组件关系；layout_variant 仅作弱偏好，不锁死模板。\n3. 视觉层：theme/design_tokens/style/data_display，包括字号、颜色、卡片风格、背景、图表轴线/标签策略。\n4. 组件层：components[] 声明 metric_card/hero_metric/insight_card/risk_card/action_card/chart_panel/ranking_list/funnel_panel/timeline/matrix/callout/takeaway_band 等组件及其数据。\n\n## Available Components\nhero_metric, metric_card, chart_panel, ranking_list, funnel_panel, insight_card, risk_card, action_card, timeline, matrix, callout, takeaway_band.\n\n## Content Richness Rules\n除封面/目录/结束页外，每页必须像咨询汇报页而不是数据陈列页：至少 1 条 takeaway、3～6 个数据点、3～5 条 bullets 或 insight/action/risk 组件，并覆盖数据、结论、归因/解释、影响判断、行动/风险/机会中的至少 4 类信息。图表表达要多样：趋势用 line/area/timeline，对比用 grouped bar/matrix，内容用 ranking/top cards，诊断用 funnel/risk matrix，行动用 roadmap/swimlane/timeline。ranking_list/ranking 只能绑定真实且同口径可比较的业务指标（阅读量、完读率、互动量、转化率、占比等），不得把 1/2/3/4 顺序号当作图表数值，也不得混合阅读量、平均互动、完读率等不同单位；模式、原因、动作应使用 insight_card/action_card/risk_card/matrix/callout。硬性禁用省略号，任何 PPT 文本不得包含中文省略号或三个连续英文句点；放不下就改短、换行、拆条目、拆组件或拆页。KPI/summary 页至少 5 个 metrics + 2 个 insight/action；trend 页必须有增长/波动归因；comparison 页必须有结构洞察和风险/机会；ranking 页必须有成功模式总结和可复用动作；diagnosis 页必须有问题、原因、影响、动作。如后端 QA 标记 content_insufficient，必须由模型基于已有数据补丰富页面 spec，不得引入新数据，也不得由后端凭空补业务判断。\n\n## Deck Rhythm\n封面/目录 → 核心结论 → 数据表现 → 结构洞察 → 问题诊断 → 行动建议；renderer 会在缺省 layout_variant 时自动选择不同页面节奏，避免连续同构。\n\n## Rendering Strategy\n模型提供页面语义、组件关系与数据绑定，后端使用约束式布局引擎生成可编辑 SVG 组件页面，再由 ppt-master 导出原生可编辑 PPTX；后端负责 safe area、坐标、轴线、文本测量/缩放/截断、内容缺失重排与空内容降级，避免空模板、重叠和缺坐标。\n`;
+  return `# Design Specification\n\n## Audience\n${deck.audience || '业务团队、内容运营和项目负责人'}\n\n## Objective\n用结构化数据叙事说明患教运营表现、问题和下一步行动。\n\n## Visual System\n- Theme: ${t.name}\n- Primary: ${t.primary}\n- Secondary: ${t.secondary}\n- Background: ${t.bg}\n- Font: ${FONT}\n- Design tokens: ${JSON.stringify(deck.design_tokens || {})}\n- Data display: ${JSON.stringify(deck.data_display || {})}\n\n## Four-layer Model Control\n1. 内容层：title/subtitle/takeaway/bullets/metrics/chart/table/notes/highlight_points。\n2. 结构层：slide_type/visual_intent/emphasis/density/components，renderer 接收页面目标、主视觉和组件关系；layout_variant 仅作弱偏好，不锁死模板。\n3. 视觉层：theme/design_tokens/style/data_display，包括字号、颜色、卡片风格、背景、图表轴线/标签策略。\n4. 组件层：components[] 声明 metric_card/hero_metric/insight_card/risk_card/action_card/chart_panel/ranking_list/funnel_panel/timeline/matrix/callout/takeaway_band 等组件及其数据。\n\n## Available Components\nhero_metric, metric_card, chart_panel, ranking_list, funnel_panel, insight_card, risk_card, action_card, timeline, matrix, callout, takeaway_band.\n\n## Content Richness Rules\n除封面/目录/结束页外，每页必须像咨询汇报页而不是数据陈列页：至少 1 条 takeaway、3～6 个数据点、3～5 条 bullets 或 insight/action/risk 组件，并覆盖数据、结论、归因/解释、影响判断、行动/风险/机会中的至少 4 类信息。图表表达要多样：趋势用 line/area/timeline，对比用 grouped bar/matrix，内容用 ranking/top cards，诊断用 funnel/risk matrix，行动用 roadmap/swimlane/timeline。ranking_list/ranking 只能绑定真实且同口径可比较的业务指标（阅读量、完读率、互动量、转化率、占比等），不得把 1/2/3/4 顺序号当作图表数值，也不得混合阅读量、平均互动、完读率等不同单位；模式、原因、动作应使用 insight_card/action_card/risk_card/matrix/callout。硬性禁用省略号，任何 PPT 文本不得包含中文省略号或三个连续英文句点；放不下就改短、换行、拆条目、拆组件或拆页。KPI/summary 页至少 5 个 metrics + 2 个 insight/action；trend 页必须有增长/波动归因；comparison 页必须有结构洞察和风险/机会；ranking 页必须有成功模式总结和可复用动作；diagnosis 页必须有问题、原因、影响、动作。如后端 QA 标记 content_insufficient，必须由模型基于已有数据补丰富页面 spec，不得引入新数据，也不得由后端凭空补业务判断。\n\n## Deck Rhythm\n封面/目录 → 核心结论 → 数据表现 → 结构洞察 → 问题诊断 → 行动建议；renderer 会在缺省 layout_variant 时自动选择不同页面节奏，避免连续同构。\n\n## Rendering Strategy\n模型提供页面语义、组件关系与数据绑定，后端使用约束式布局引擎生成可编辑 SVG 组件页面，再由 ppt-master 导出原生可编辑 PPTX；后端负责 safe area、坐标、轴线、文本测量/缩放/截断、内容缺失重排与空内容降级，避免空模板、重叠和缺坐标。\n`;
 }
 
 function specLock(t: Theme): string {
@@ -2011,6 +2019,7 @@ function notesTotal(slides: DeckSlideSpec[], deck: DeckSpecParams): string {
 }
 
 export async function renderPptDeckFromSpecs(projectRoot: string, projectRel: string, params: DeckSpecParams): Promise<RenderedDeckResult> {
+  params = sanitizeDeckParams(params);
   const theme = themeOf(params.theme);
   const slides = applyRhythm((Array.isArray(params.slides) && params.slides.length ? params.slides : defaultSlides(params)).slice(0, 16));
 

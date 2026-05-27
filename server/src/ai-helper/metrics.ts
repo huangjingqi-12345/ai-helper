@@ -30,6 +30,10 @@ function cleanDate(value: unknown): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : '';
 }
 
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function cleanId(value: unknown): string {
   return str(value).replace(/[^\w:.-]+/g, '').slice(0, 120);
 }
@@ -39,7 +43,11 @@ function metricFilters(params: PrefetchMetricsParams = {}, alias = 'b'): { where
   const values: unknown[] = [];
   const prefix = alias ? `${alias}.` : '';
   const start = cleanDate(params.dateRange?.start);
-  const end = cleanDate(params.dateRange?.end);
+  const requestedEnd = cleanDate(params.dateRange?.end);
+  const today = todayIso();
+  // 未来日期通常来自测试/误导入数据。默认指标和显式范围都不应让未来日期成为
+  // “最新日期”锚点，否则 /ppt、/ppt-svg 的 last_1_year 会被带到 2099 等异常窗口。
+  const end = requestedEnd && requestedEnd < today ? requestedEnd : today;
   const projectId = cleanId(params.projectId);
   const contentId = cleanId(params.contentId);
   const diseaseId = cleanId(params.diseaseId);
@@ -48,10 +56,8 @@ function metricFilters(params: PrefetchMetricsParams = {}, alias = 'b'): { where
     clauses.push(`${prefix}metric_date >= ?`);
     values.push(start);
   }
-  if (end) {
-    clauses.push(`${prefix}metric_date <= ?`);
-    values.push(end);
-  }
+  clauses.push(`${prefix}metric_date <= ?`);
+  values.push(end);
   if (projectId) {
     clauses.push(`${prefix}project_id = ?`);
     values.push(projectId);

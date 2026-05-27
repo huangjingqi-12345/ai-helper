@@ -1,6 +1,6 @@
 ---
 name: patient-education-monthly-report
-description: Generate PX monthly patient education operation reports from PX SQL metrics. Use for 月报/月度复盘/管理层报告 requests.
+description: Generate PX monthly patient education operation reports from PX SQL metrics. Use for 月报/月度复盘/业务复盘报告 requests.
 ---
 
 # Patient Education Monthly Report

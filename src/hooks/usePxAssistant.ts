@@ -111,9 +111,11 @@ export function usePxAssistant() {
       const userMsg: ChatMessage = { id: newId('user'), role: 'user', text };
       const assistantId = newId('assistant');
       const startedAt = Date.now();
-      const isPptSvgShortcut = options.shortcut === 'ppt_svg';
-      const initialPptSvgProgress: PptSvgProgress | undefined = isPptSvgShortcut
-        ? { slides: [], expectedMin: 6, expectedMax: 8, completed: false }
+      const isPptPreviewShortcut = options.shortcut === 'ppt_svg' || options.shortcut === 'ppt';
+      const initialPptSvgProgress: PptSvgProgress | undefined = isPptPreviewShortcut
+        ? options.shortcut === 'ppt_svg'
+          ? { slides: [], completed: false, mode: 'svg', title: 'SVG 直出进度' }
+          : { slides: [], completed: false, mode: 'spec', title: '趋势分析 PPT 页面预览' }
         : undefined;
       const assistantMsg: ChatMessage = {
         id: assistantId,
@@ -146,8 +148,12 @@ export function usePxAssistant() {
       };
 
       const updatePptSvgProgress = (patch: Partial<PptSvgProgress>) => {
-        if (!isPptSvgShortcut) return;
-        const base = pptSvgProgress || { slides: [], expectedMin: 6, expectedMax: 8, completed: false };
+        if (!isPptPreviewShortcut) return;
+        const base = pptSvgProgress || (
+          options.shortcut === 'ppt_svg'
+            ? { slides: [], completed: false, mode: 'svg' as const, title: 'SVG 直出进度' }
+            : { slides: [], completed: false, mode: 'spec' as const, title: '趋势分析 PPT 页面预览' }
+        );
         pptSvgProgress = {
           ...base,
           ...patch,
@@ -156,7 +162,33 @@ export function usePxAssistant() {
         updateAssistant(assistantId, { pptSvgProgress });
       };
 
+      const pptSpecificStatus = (evt: { type: string; data: unknown }): string | undefined => {
+        if (!isPptPreviewShortcut || evt.type !== 'progress' || !evt.data || typeof evt.data !== 'object') return undefined;
+        const payload = evt.data as { phase?: string; action?: string; detail?: string };
+        if (payload.phase !== 'skill_call') return undefined;
+        const action = String(payload.action || '');
+        const detail = String(payload.detail || '');
+        if (action === 'write_ppt_svg_slide') {
+          return `正在生成第 ${(pptSvgProgress?.slides.length || 0) + 1} 页`;
+        }
+        if (action === 'write_project_file' || action === 'write_project_files') {
+          return '正在整理 PPT 结构与备注';
+        }
+        if (action === 'render_ppt_from_specs') {
+          return '正在批量生成 PPT 页面预览';
+        }
+        if (action === 'ppt_master_export' || /export/i.test(detail)) {
+          return '正在导出 PPT 文件';
+        }
+        return undefined;
+      };
+
       const applyStreamEvent = (evt: { type: string; data: unknown }) => {
+        const pptStatus = pptSpecificStatus(evt);
+        if (pptStatus) {
+          pushLoadingStatus(pptStatus);
+          return;
+        }
         const mapped = statusFromStreamEvent(evt);
         if (mapped?.text) {
           pushLoadingStatus(mapped.text, mapped.step);
@@ -201,23 +233,30 @@ export function usePxAssistant() {
             await appendTextStreaming(piece);
           } else {
             applyStreamEvent(evt);
-            if (isPptSvgShortcut && evt.type === 'skill_result') {
+            if (isPptPreviewShortcut && evt.type === 'skill_result') {
               const newSlides = extractPptSvgSlides(evt.data);
               if (newSlides.length) {
                 const slides = sortedUnique([...(pptSvgProgress?.slides || []), ...newSlides]);
                 updatePptSvgProgress({ slides, completed: false });
-                pushLoadingStatus(`SVG 直出：已生成 ${slides.length} 张，正在继续生成`, undefined);
+                pushLoadingStatus(
+                  options.shortcut === 'ppt_svg'
+                    ? `第 ${slides.length} 页已生成，正在继续生成`
+                    : `已生成 ${slides.length} 页预览，正在继续处理`,
+                  undefined,
+                );
               }
               const exported = extractPptxFiles(evt.data)[0];
               if (exported) {
                 updatePptSvgProgress({ completed: true, exportedPpt: exported });
-                pushLoadingStatus('SVG 直出：PPT 已导出', undefined);
+                pushLoadingStatus('PPT 已导出，正在整理结果', undefined);
               }
             }
             if (evt.type === 'files') {
               const files = Array.isArray(evt.data) ? (evt.data as string[]) : [];
               turnFiles = filterVisibleDeliverables([...turnFiles, ...files]);
-              const exported = isPptSvgShortcut ? extractPptxFiles(files)[0] : undefined;
+              const slides = isPptPreviewShortcut ? extractPptSvgSlides(files) : [];
+              if (slides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...slides]) });
+              const exported = isPptPreviewShortcut ? extractPptxFiles(files)[0] : undefined;
               if (exported) updatePptSvgProgress({ completed: true, exportedPpt: exported });
               updateAssistant(assistantId, { files: turnFiles });
             } else if (evt.type === 'done') {
@@ -225,7 +264,9 @@ export function usePxAssistant() {
               const done = (evt.data || {}) as { files?: string[]; text?: string };
               if (Array.isArray(done.files) && done.files.length) {
                 turnFiles = filterVisibleDeliverables(done.files);
-                const exported = isPptSvgShortcut ? extractPptxFiles(done.files)[0] : undefined;
+                const slides = isPptPreviewShortcut ? extractPptSvgSlides(done.files) : [];
+                if (slides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...slides]) });
+                const exported = isPptPreviewShortcut ? extractPptxFiles(done.files)[0] : undefined;
                 if (exported) updatePptSvgProgress({ completed: true, exportedPpt: exported });
               }
               if (done.text) {

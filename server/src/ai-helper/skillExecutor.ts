@@ -30,6 +30,12 @@ export interface SkillExecutorOptions {
   allowManualPptSvg?: boolean;
 }
 
+export type ActionSpecMode = 'general' | 'data-qa' | 'overview' | 'monthly' | 'ppt-svg';
+
+export interface ActionSpecOptions {
+  mode?: ActionSpecMode;
+}
+
 type ScriptRun = { stdout: string; stderr: string; command: string; duration_ms: number };
 
 const __filename = fileURLToPath(import.meta.url);
@@ -39,11 +45,21 @@ const WORKSPACE_ROOT = path.resolve(SERVER_ROOT, '..');
 const SKILLS_DIR = path.join(AI_HELPER_ROOT, 'skills');
 const PPT_MANUAL_EXPORT_SCRIPTS = new Set(['total_md_split.py', 'finalize_svg.py', 'svg_to_pptx.py', 'validate_editable_pptx.py']);
 const BINARY_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.pdf', '.ppt', '.pptx', '.xlsx', '.xls']);
-const RUN_OUTPUT_DIR_SKILLS = new Set(['html-to-png', 'patient-education-data-overview']);
+const RUN_OUTPUT_DIR_SKILLS = new Set(['patient-education-data-overview']);
 const PPT_SVG_BATCH_MAX_PAGES = Math.max(1, Number(process.env.PPT_SVG_BATCH_MAX_PAGES || 1) || 1);
 const PPT_MANUAL_SVG_ENABLED = process.env.AI_HELPER_PPT_MANUAL_SVG === 'true';
+const DEFAULT_HIDDEN_SKILL_IDS = new Set(['data-autoload-from-data-dir', 'sql-pro']);
 
 function str(value: unknown): string { return String(value ?? '').trim(); }
+function sanitizeUserContent(value: string): string { return value.replace(/管理层/g, '业务团队'); }
+function sanitizeUserContentDeep<T>(value: T): T {
+  if (typeof value === 'string') return sanitizeUserContent(value) as T;
+  if (Array.isArray(value)) return value.map((item) => sanitizeUserContentDeep(item)) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, sanitizeUserContentDeep(item)])) as T;
+  }
+  return value;
+}
 function basenameOnly(value: string): string { return path.basename(value.replace(/\\/g, '/')); }
 function jsonResult(summary: string, detail: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): SkillResult {
   return { ok: true, summary, detail, ...extra };
@@ -187,13 +203,42 @@ function normalizeGeneratedName(raw: unknown): string {
   return name;
 }
 
+function safePptSlideFileName(rawName: unknown, slideNo: number, title: string): string {
+  const raw = str(rawName);
+  const baseInput = raw ? basenameOnly(raw) : title;
+  const withoutExt = baseInput.replace(/\.svg$/i, '');
+  const safeBase = withoutExt
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9_\-.]+/g, '_')
+    .replace(/^[_\-.]+|[_\-.]+$/g, '')
+    .slice(0, 64) || 'slide';
+  const prefix = String(slideNo).padStart(2, '0');
+  const named = /^\d{2}_/.test(safeBase) ? safeBase : `${prefix}_${safeBase}`;
+  return `${named}.svg`;
+}
+
 function compactParamsForError(params: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  const compactValue = (item: unknown): unknown => {
+    if (typeof item === 'string') return item.length > 800 ? `${item.slice(0, 800)}...[truncated ${item.length - 800} chars]` : item;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+    const obj = { ...(item as Record<string, unknown>) };
+    for (const key of ['svg', 'content']) {
+      if (typeof obj[key] === 'string' && (key === 'svg' || /<svg\b/i.test(obj[key] as string))) {
+        obj[key] = `[svg omitted from error detail; chars=${(obj[key] as string).length}]`;
+      }
+    }
+    return obj;
+  };
   for (const [key, value] of Object.entries(params)) {
-    if (typeof value === 'string' && value.length > 800) {
+    if (key === 'svg' && typeof value === 'string') {
+      out[key] = `[svg omitted from error detail; chars=${value.length}]`;
+    } else if (key === 'content' && typeof value === 'string' && /<svg\b/i.test(value)) {
+      out[key] = `[svg content omitted from error detail; chars=${value.length}]`;
+    } else if (typeof value === 'string' && value.length > 800) {
       out[key] = `${value.slice(0, 800)}...[truncated ${value.length - 800} chars]`;
     } else if (Array.isArray(value)) {
-      out[key] = value.map((item) => (typeof item === 'string' && item.length > 800 ? `${item.slice(0, 800)}...[truncated ${item.length - 800} chars]` : item));
+      out[key] = value.map(compactValue);
     } else {
       out[key] = value;
     }
@@ -267,6 +312,56 @@ function stripCodeFence(content: string): string {
   return match ? match[1].trim() : content;
 }
 
+function cleanIllegalSvgChars(content: string): string {
+  const namedEntities: Record<string, string> = {
+    '&nbsp;': ' ',
+    '&ensp;': ' ',
+    '&emsp;': ' ',
+    '&thinsp;': ' ',
+    '&mdash;': '—',
+    '&ndash;': '–',
+    '&hellip;': '…',
+    '&ldquo;': '“',
+    '&rdquo;': '”',
+    '&lsquo;': '‘',
+    '&rsquo;': '’',
+    '&copy;': '©',
+  };
+  return content
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/&(nbsp|ensp|emsp|thinsp|mdash|ndash|hellip|ldquo|rdquo|lsquo|rsquo|copy);/gi, (m) => namedEntities[m.toLowerCase()] || '')
+    .replace(/(?:…+|⋯+|\.{3,}|。{3,})/g, ' ')
+    .replace(/&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)/g, '&amp;');
+}
+
+function normalizePptSvgRootForSlide(rawContent: string): { content: string; repaired: boolean } {
+  let content = cleanIllegalSvgChars(stripCodeFence(rawContent)).trim();
+  let repaired = false;
+  const start = content.search(/<svg\b/i);
+  const end = content.toLowerCase().lastIndexOf('</svg>');
+  if (start >= 0 && end >= 0 && end > start) {
+    content = content.slice(start, end + '</svg>'.length).trim();
+  } else if (start >= 0 || end >= 0) {
+    throw new SkillExecutionError('PPT SVG 根标签不完整');
+  } else {
+    const hasSvgChildren = /<(?:defs|g|rect|circle|ellipse|line|polyline|polygon|path|text|tspan|linearGradient|radialGradient|clipPath|mask)\b/i.test(content);
+    const looksLikeTextOnly = !/[<>]/.test(content) || /^#+\s|^[-*]\s|\b(svg|页面|幻灯片|这里|以下)\b/i.test(content.slice(0, 120));
+    if (!hasSvgChildren || looksLikeTextOnly) throw new SkillExecutionError('PPT SVG 缺少根 <svg> 标签');
+    content = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">\n${content}\n</svg>`;
+    repaired = true;
+  }
+  const root = content.match(/<svg\b[^>]*>/i)?.[0] || '';
+  if (!root) throw new SkillExecutionError('PPT SVG 缺少根 <svg> 标签');
+  const normalizedRoot = '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">';
+  if (root !== normalizedRoot) {
+    content = content.replace(/<svg\b[^>]*>/i, normalizedRoot);
+    repaired = true;
+  }
+  return { content, repaired };
+}
+
 function normalizePptSvgCanvas(target: string, rawContent: string): { content: string; repaired: boolean } {
   if (!target.includes('/svg_output/') || !target.endsWith('.svg')) return { content: rawContent, repaired: false };
   let content = stripCodeFence(rawContent).trim();
@@ -328,14 +423,26 @@ function validatePptSvgLint(content: string): void {
  * Excludes internal ppt-master export scripts (called via ppt_master_export)
  * and px-data scripts (called via dedicated prefetch_metrics / prefetch_data_qa_context actions).
  */
-function scanSkillScripts(): Record<string, string[]> {
+function hiddenSkillIds(): Set<string> {
+  const hidden = new Set(DEFAULT_HIDDEN_SKILL_IDS);
+  for (const id of (process.env.HIDDEN_SKILL_IDS || '').split(',')) {
+    const value = id.trim();
+    if (value) hidden.add(value);
+  }
+  return hidden;
+}
+
+function scanSkillScripts(allowedSkillIds?: Set<string>): Record<string, string[]> {
   const result: Record<string, string[]> = {};
   if (!fs.existsSync(SKILLS_DIR)) return result;
   const pptInternal = new Set([...PPT_MANUAL_EXPORT_SCRIPTS, 'project_manager.py', 'svg_text_wrap.py']);
   const dedicatedActionSkills = new Set(['px-data']);
+  const hidden = hiddenSkillIds();
   for (const skillEntry of fs.readdirSync(SKILLS_DIR, { withFileTypes: true })) {
     if (!skillEntry.isDirectory()) continue;
     const skillId = skillEntry.name;
+    if (hidden.has(skillId)) continue;
+    if (allowedSkillIds && !allowedSkillIds.has(skillId)) continue;
     if (dedicatedActionSkills.has(skillId)) continue;
     const scriptsDir = path.join(SKILLS_DIR, skillId, 'scripts');
     if (!fs.existsSync(scriptsDir)) continue;
@@ -358,87 +465,116 @@ export class SkillExecutor {
   }
 
   // actionSpec() is injected into the LLM system prompt.
-  // If you rename or move skill scripts, update scanSkillScripts() exclusions accordingly.
-  actionSpec(): Record<string, unknown> {
-    return {
-      actions: ['emit_text', 'read_skill_file', 'read_metric_file', 'run_skill_script', 'write_text_deliverable', 'write_project_file', 'write_project_files', 'render_ppt_from_specs', 'ppt_master_bootstrap', 'ppt_master_export', 'prefetch_metrics', 'prefetch_data_qa_context'],
-      final_shape: { type: 'final', answer: '<业务用户可读中文回答>', deliverable_files: [] },
-      skill_call_shape: { type: 'skill_call', skill_id: 'px-data | patient-education-data-overview | patient-education-monthly-report | ppt-master | ...', action: '<action>', params: {}, thought: '<reason>' },
-      params: {
-        emit_text: { content: '先展示给用户的中文正文/摘要；不会结束任务，后续继续生成文件' },
-        read_metric_file: { path: 'available_metric_stores[].path 中的 /generated/.../_metrics/*.json', max_chars: '可选，默认 12000' },
-        write_text_deliverable: { file_name: '纯文件名；概览/月报会按 skill 固定为 overview_report.md / monthly_report.md', content: '完整 Markdown 正文' },
-        run_skill_script: { script: 'skill_id 目录下的脚本相对路径', available_scripts: scanSkillScripts(), args: ['可选命令行参数'] },
-        write_project_file: { project_path: 'projects/...', path: 'svg_output/01_cover.svg 或 notes/total.md 等项目内路径', content: '完整文件内容' },
-        write_project_files: { project_path: 'projects/...', files: [{ path: 'svg_output/01_cover.svg', content: '<svg ...>...</svg>' }] },
-        render_ppt_from_specs: {
-          project_path: 'projects/...',
-          title: 'PPT 标题',
-          subtitle: 'PPT 副标题',
-          theme: 'executive_blue | medical_green | warm_orange | dark_tech',
-          style: { font_scale: 0.95, title_size: 30, body_size: 15, number_size: 30, accent_color: '#007A6C', risk_color: '#D54941', warning_color: '#D97706', panel_fill: '#FFFFFF', panel_alt_fill: '#E8F7F2', background_color: '#F5FBF9', text_color: '#10231F', card_fill: '#FFFFFF', card_border: '#D8E7E2', corner_radius: 18 },
-          design_tokens: { background: 'clean | soft_blobs | grid_dots | gradient_mesh | diagonal_ribbon', accent_shape: 'ribbon | corner_blob | vertical_rule | orbit | none', card_style: 'soft | outlined | glass | solid_header', chart_style: 'minimal | annotated | bold | sparkline', number_style: 'hero | compact | badge | plain', density: 'low | medium | high', icon_style: 'circle | square | badge | none', chart_palette: ['#007A6C', '#1A56DB'] },
-          data_display: { number_format: 'raw | compact_cn', sort: 'none | asc | desc', top_n: 5, highlight_max: true, show_axis: true, show_grid: true, show_legend: true, show_value_labels: true },
-          slides: [{
-            slide_type: 'cover | executive_summary | kpi_dashboard | trend | comparison | ranking | diagnosis | roadmap | closing',
-            layout_variant: '可选弱偏好；后端不会按固定模板硬套，而会用约束式布局根据 components/chart/metrics 自动排版',
-            title: '页标题',
-            subtitle: '可选副标题',
-            takeaway: '本页核心结论',
-            emphasis: 'hero_metric | chart | insight | ranking | timeline | balanced',
-            style: { font_scale: 0.95, title_size: 30, body_size: 15, number_size: 34, accent_color: '#007A6C', risk_color: '#D54941', card_fill: '#FFFFFF' },
-            design_tokens: { background: 'clean', card_style: 'soft', chart_style: 'annotated', number_style: 'badge', density: 'medium', icon_style: 'circle' },
-            data_display: { number_format: 'compact_cn', sort: 'desc', top_n: 5, highlight_max: true, show_axis: true, show_grid: true, show_value_labels: true },
-            bullets: ['要点1', '要点2'],
-            metrics: [{ label: '指标名', value: '指标值', unit: '单位', delta: '变化', note: '说明', status: 'good | warn | risk | neutral' }],
-            chart: { type: 'line | area | bar | ranking | funnel | matrix', title: '图表标题', x_label: '横轴', y_label: '纵轴', value_suffix: '次', categories: ['类目'], values: [1, 2, 3], series: [{ name: '系列', values: [1, 2, 3], color: '#007A6C' }] },
-            components: [{
-              type: 'metric_card | hero_metric | insight_card | risk_card | action_card | chart_panel | ranking_list | funnel_panel | timeline | matrix | callout | takeaway_band',
-              layout_variant: '可选组件内部呈现，如 line | area | bar | ranking | funnel',
-              title: '组件标题',
-              subtitle: '组件副标题',
-              text: '组件正文',
-              value: '可选数值',
-              unit: '单位',
-              tone: 'good | warn | risk | neutral',
-              icon: 'warning | growth | target | users | content | search | action | read | interaction',
-              style: { body_size: 14, number_size: 32, card_fill: '#FFFFFF', card_border: '#D8E7E2' },
-              data_display: { number_format: 'compact_cn', show_axis: true, show_value_labels: true },
-              chart: { type: 'line | area | bar | ranking | funnel', categories: ['类目'], values: [1, 2, 3] },
-              metrics: [{ label: '指标名', value: 123, unit: '次' }],
-              items: ['时间线/矩阵/要点条目'],
-            }],
-            notes: '演讲备注',
-          }],
-          content_richness_rules: [
-            '除封面/目录/结束页外，每页必须像咨询汇报页：有结论、有数据、有归因、有影响判断、有行动/风险/机会',
-            '每页至少 1 条 takeaway、3～6 个数据点、3～5 条 bullets 或 insight/action/risk 组件，notes 写成 80～160 字可口播讲稿',
-            '不要只复述数字；每页至少回答 2 个问题：发生了什么、为什么重要、由什么驱动、意味着什么、下一步做什么、风险/机会在哪里',
-            '图表/组件要多样：趋势用 line/area/timeline，对比用 grouped bar/matrix，内容用 ranking/top cards，诊断用 funnel/risk matrix，行动用 roadmap/swimlane/timeline',
-            'ranking_list/ranking 必须绑定真实且同口径可比较的业务指标（同为阅读量/完读率/互动量/转化率/占比等）；不要把 1/2/3/4 顺序号当数值，也不要把阅读量、平均互动、完读率混在一个条形排行里。若表达模式/原因/动作或混合口径指标，用 insight_card/action_card/risk_card/matrix/callout/metric_card',
-            '标题、小标题、表头、图例和标签要可读；右侧说明用无序列表或真正有序步骤，不要用没有信息含义的装饰编号',
-            '硬性禁用省略号：任何 PPT slide spec 文本不得包含中文省略号或三个连续英文句点；放不下就改短、换行、拆 bullet、拆组件或拆页',
-            'KPI/summary 页至少 5 个 metrics + 2 个 insight/action 组件；trend 页 chart + 增长/波动归因 + 观察点；comparison 页 chart + 结构洞察 + 风险/机会',
-            'ranking 页必须有 top 内容数据 + 成功模式总结 + 可复用动作；diagnosis 页必须有问题、原因、影响、动作；roadmap 页至少 3 个可执行 action_card',
-            '如果后端返回 content_insufficient/内容不足，需要由模型基于已有数据补充该页 spec；不得引入新数据，不能让后端凭空补业务判断',
-          ],
-        },
-        ppt_master_sequence: [
-          'ppt_master_bootstrap → 得到 project_path',
-          '推荐快路径：render_ppt_from_specs 一次写入 slide specs，由后端约束式布局引擎生成 design/spec/notes 与全部 svg_output/*.svg；模型决定内容/组件/主视觉，后端决定坐标与重排',
-          this.options.allowManualPptSvg
-            ? `当前快捷入口已启用 legacy 手写 SVG：允许 write_project_file/write_project_files 写 svg_output/*.svg；每次最多 ${PPT_SVG_BATCH_MAX_PAGES} 页；不要调用 render_ppt_from_specs`
-            : '当前默认禁用模型手写 SVG；write_project_file/write_project_files 只用于非 SVG 项目文件。必须优先使用 render_ppt_from_specs 生成 PPT 页面',
-          `保留手写 SVG 兼容能力：仅当快捷入口启用或后端开启 AI_HELPER_PPT_MANUAL_SVG=true 时，write_project_file/write_project_files 才可写 svg_output/*.svg；每次最多 ${PPT_SVG_BATCH_MAX_PAGES} 页`,
-          '不要重复写已成功生成的文件；若文件路径写错，后端会规范化/移动到正确位置，请继续生成缺失文件而不是重写已有文件',
-          'ppt_master_export(project_path) 导出可编辑 PPTX',
-        ],
-        ppt_svg_rules: {
-          canvas: '<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">',
-          editable_primitives: ['rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'path', 'text', 'tspan'],
-          notes_file: 'notes/total.md',
-        },
+  // Keep it narrow by task mode; broad specs slow the model down and make it pick obsolete tools.
+  actionSpec(options: ActionSpecOptions = {}): Record<string, unknown> {
+    const mode = options.mode || 'general';
+    const finalShape = { type: 'final', answer: '<业务用户可读中文回答>', deliverable_files: [] };
+    const pxMetricParams = {
+      prefetch_metrics: {
+        skill_id: 'px-data',
+        dateRange: { start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' },
+        compareRange: { start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' },
+        projectId: '可选',
+        contentId: '可选',
+        diseaseId: '可选',
+        tenantId: '可选',
+        granularity: 'day|week|month',
+        limit: 20,
       },
+      read_metric_file: { skill_id: 'px-data', path: 'available_metric_stores[].path 中的 /generated/.../_metrics/*.json', max_chars: '可选，默认 12000' },
+    };
+    const overviewScripts = { 'patient-education-data-overview': ['scripts/render_overview_assets.ts'] };
+
+    if (mode === 'data-qa') {
+      return {
+        mode,
+        actions: ['prefetch_data_qa_context', 'prefetch_metrics', 'read_metric_file'],
+        final_shape: finalShape,
+        skill_call_shape: { type: 'skill_call', skill_id: 'px-data', action: '<prefetch_data_qa_context|prefetch_metrics|read_metric_file>', params: {}, thought: '<reason>' },
+        params: {
+          ...pxMetricParams,
+          prefetch_data_qa_context: { skill_id: 'px-data', params: '无需参数；用于指标定义、表计数、数据状态和空值诊断' },
+        },
+      };
+    }
+
+    if (mode === 'overview') {
+      return {
+        mode,
+        actions: ['run_skill_script', 'prefetch_metrics', 'read_metric_file'],
+        final_shape: finalShape,
+        skill_call_shape: { type: 'skill_call', skill_id: 'patient-education-data-overview | px-data', action: '<run_skill_script|prefetch_metrics|read_metric_file>', params: {}, thought: '<reason>' },
+        params: {
+          ...pxMetricParams,
+          run_skill_script: {
+            skill_id: 'patient-education-data-overview',
+            script: 'scripts/render_overview_assets.ts',
+            available_scripts: overviewScripts,
+            args: ['--visual-plan', '{"title":"患教内容运营数据概览","insights":["核心表现","结构贡献","行动建议"],"top_content_count":5,"breakdown_count":5}'],
+            timeout_sec: 120,
+          },
+        },
+      };
+    }
+
+    if (mode === 'monthly') {
+      return {
+        mode,
+        actions: ['write_text_deliverable', 'prefetch_metrics', 'read_metric_file'],
+        final_shape: finalShape,
+        skill_call_shape: { type: 'skill_call', skill_id: 'patient-education-monthly-report | px-data', action: '<write_text_deliverable|prefetch_metrics|read_metric_file>', params: {}, thought: '<reason>' },
+        params: {
+          ...pxMetricParams,
+          write_text_deliverable: { skill_id: 'patient-education-monthly-report', file_name: 'monthly_report.md', content: '完整 Markdown 正文；后端会自动转 PDF' },
+        },
+      };
+    }
+
+    if (mode === 'ppt-svg') {
+      return {
+        mode,
+        actions: ['emit_text', 'prefetch_metrics', 'read_metric_file', 'write_project_file', 'write_project_files', 'write_ppt_svg_slide', 'ppt_master_bootstrap', 'ppt_master_export'],
+        final_shape: finalShape,
+        skill_call_shape: { type: 'skill_call', skill_id: 'ppt-master | px-data', action: '<action>', params: {}, thought: '<reason>' },
+        params: {
+          emit_text: { content: '先展示给用户的 300-800 字中文正文/摘要；不会结束任务，后续继续生成文件' },
+          ...pxMetricParams,
+          ppt_master_bootstrap: { skill_id: 'ppt-master', project_name: 'px_ai_ppt', format: 'ppt169' },
+          write_project_file: { skill_id: 'ppt-master', project_path: 'projects/...', path: 'design_spec.md 或 spec_lock.md 或 notes/total.md', content: '完整文件内容' },
+          write_project_files: { skill_id: 'ppt-master', project_path: 'projects/...', files: [{ path: 'design_spec.md', content: '...' }] },
+          write_ppt_svg_slide: {
+            skill_id: 'ppt-master',
+            project_path: 'projects/...',
+            slide_no: 1,
+            title: '本页标题',
+            core_conclusion: '本页核心结论/一句话 takeaway（用于压缩上下文与进度展示）',
+            svg: '<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">...</svg>',
+            file_name: '可选；默认按 slide_no 生成 svg_output/NN_slide.svg',
+            backend_repairs: ['校验/抽取 SVG 根标签', '自动补齐 width/height/viewBox/xmlns', '清理 XML 非法控制字符和常见 HTML 实体', '成功后上下文只保留页码/路径/标题/结论'],
+          },
+          ppt_master_export: { skill_id: 'ppt-master', project_path: 'projects/...' },
+          ppt_svg_rules: {
+            canvas: '<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">',
+            editable_primitives: ['rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'path', 'text', 'tspan'],
+            notes_file: 'notes/total.md',
+            max_svg_pages_per_call: PPT_SVG_BATCH_MAX_PAGES,
+          },
+        },
+      };
+    }
+
+    return {
+      mode,
+      actions: ['prefetch_data_qa_context', 'prefetch_metrics', 'read_metric_file', 'run_skill_script', 'write_text_deliverable'],
+      final_shape: finalShape,
+      skill_call_shape: { type: 'skill_call', skill_id: 'px-data | patient-education-data-overview | patient-education-monthly-report', action: '<action>', params: {}, thought: '<reason>' },
+      params: {
+        ...pxMetricParams,
+        prefetch_data_qa_context: { skill_id: 'px-data', params: '无需参数；用于指标定义、表计数、数据状态和空值诊断' },
+        run_skill_script: { script: 'skill_id 目录下的脚本相对路径', available_scripts: overviewScripts, args: ['可选命令行参数'] },
+        write_text_deliverable: { file_name: '纯文件名；概览/月报会按 skill 固定为 overview_report.md / monthly_report.md', content: '完整 Markdown 正文' },
+      },
+      note: '普通对话不暴露 PPT/SVG 大 schema；PPT 快捷入口使用后端专门的结构化快路径。',
     };
   }
 
@@ -479,6 +615,7 @@ export class SkillExecutor {
     if (action === 'write_text_deliverable') return this.writeTextDeliverable(skillId, params);
     if (action === 'write_project_file') return this.writeProjectFile(skillId, params);
     if (action === 'write_project_files') return this.writeProjectFiles(skillId, params);
+    if (action === 'write_ppt_svg_slide') return this.writePptSvgSlide(skillId, params);
     if (action === 'render_ppt_from_specs') return this.renderPptFromSpecs(skillId, params);
     if (action === 'read_project_file') return this.readProjectFile(params);
     if (action === 'ppt_master_bootstrap') return this.pptMasterBootstrap(params);
@@ -493,7 +630,7 @@ export class SkillExecutor {
   }
 
   private emitText(params: Record<string, unknown>): SkillResult {
-    const text = str(params.content || params.text || params.markdown || params.answer);
+    const text = sanitizeUserContent(str(params.content || params.text || params.markdown || params.answer));
     if (!text) throw new SkillExecutionError('emit_text requires params.content');
     return jsonResult('已输出用户可见文字，继续生成文件', { kind: 'emit_text', chars: text.length }, { text });
   }
@@ -537,7 +674,7 @@ export class SkillExecutor {
       finalArgs.push('--output-dir', this.outputDir);
     }
     if (skillId === 'md-to-pdf') this.resolveMdToPdfArgs(finalArgs);
-    if (['html-to-png', 'md-to-pdf'].includes(skillId)) {
+    if (skillId === 'md-to-pdf') {
       const input = this.argValue(finalArgs, ['--input', '-i']);
       const output = this.argValue(finalArgs, ['--output', '-o']);
       if (!input || !output) throw new SkillExecutionError(`${skillId} requires --input and --output`);
@@ -597,7 +734,7 @@ export class SkillExecutor {
       'patient-education-monthly-report': 'monthly_report.md',
     };
     const fileName = canonical[skillId] || normalizeGeneratedName(params.file_name || 'report.md');
-    const content = str(params.content || params.markdown || params.text);
+    const content = sanitizeUserContent(str(params.content || params.markdown || params.text));
     if (!content) throw new SkillExecutionError('write_text_deliverable requires params.content');
     const out = safeGeneratedPath(this.outputDir, fileName);
     await fsp.writeFile(out, content, 'utf8');
@@ -615,7 +752,7 @@ export class SkillExecutor {
     const project = str(params.project_path).replace(/^\/+/, '');
     if (!project) throw new SkillExecutionError('params.project_path is required');
     const inputRel = str(params.path);
-    let content = str(params.content);
+    let content = sanitizeUserContent(str(params.content));
     if (!inputRel || !content) throw new SkillExecutionError('write_project_file requires params.path and params.content');
     const normalizedRel = normalizePptProjectRel(project, inputRel);
     const rel = normalizedRel.rel;
@@ -655,6 +792,37 @@ export class SkillExecutor {
     );
   }
 
+  private async writePptSvgSlide(skillId: string, params: Record<string, unknown>): Promise<SkillResult> {
+    if (skillId !== 'ppt-master') throw new SkillExecutionError('write_ppt_svg_slide requires skill_id ppt-master');
+    const slideNo = Number(params.slide_no || params.slideNo);
+    if (!Number.isInteger(slideNo) || slideNo < 1 || slideNo > 99) throw new SkillExecutionError('write_ppt_svg_slide requires params.slide_no 1-99');
+    const title = sanitizeUserContent(str(params.title) || `第 ${slideNo} 页`);
+    const coreConclusion = sanitizeUserContent(str(params.core_conclusion || params.takeaway || params.conclusion || params.objective));
+    const rawSvg = sanitizeUserContent(str(params.svg || params.content));
+    if (!rawSvg) throw new SkillExecutionError('write_ppt_svg_slide requires params.svg');
+    const normalizedSvg = normalizePptSvgRootForSlide(rawSvg);
+    validatePptSvgLint(normalizedSvg.content);
+
+    const fileName = safePptSlideFileName(params.file_name || params.path, slideNo, title);
+    const rel = `svg_output/${fileName}`;
+    const result = await this.writeProjectFile(skillId, { ...params, path: rel, content: normalizedSvg.content });
+    const detail = result.detail && typeof result.detail === 'object' ? result.detail as Record<string, unknown> : {};
+    const file = typeof result.file === 'string' ? result.file : String(detail.path || '');
+    return jsonResult(
+      `写入第 ${slideNo} 页 SVG ${file || rel}`,
+      {
+        kind: 'write_ppt_svg_slide',
+        slide_no: slideNo,
+        title,
+        core_conclusion: coreConclusion,
+        path: file || detail.path || rel,
+        repaired_svg_root: normalizedSvg.repaired || Boolean(detail.repaired_svg_root),
+        reused_existing: Boolean(detail.reused_existing),
+      },
+      { file: file || undefined, files: result.files || (file ? [file] : []) },
+    );
+  }
+
   private async writeProjectFiles(skillId: string, params: Record<string, unknown>): Promise<SkillResult> {
     if (skillId !== 'ppt-master') throw new SkillExecutionError('write_project_files requires skill_id ppt-master');
     const files = params.files;
@@ -679,7 +847,12 @@ export class SkillExecutor {
     if (!project) throw new SkillExecutionError('render_ppt_from_specs requires params.project_path');
     if (!Array.isArray(params.slides) || params.slides.length < 1) throw new SkillExecutionError('render_ppt_from_specs requires params.slides');
     const root = safeUnder(AI_HELPER_ROOT, project);
-    const rendered = await renderPptDeckFromSpecs(root, project, params);
+    const svgDir = path.join(root, 'svg_output');
+    const existingSvgs = fs.existsSync(svgDir) ? fs.readdirSync(svgDir).filter((name) => name.toLowerCase().endsWith('.svg')) : [];
+    if (fs.existsSync(path.join(root, 'renderer_meta.json')) || existingSvgs.length) {
+      throw new SkillExecutionError('render_ppt_from_specs 必须一次性输出完整 slides；当前项目已渲染过 SVG，禁止再次追加或覆盖。请新建项目后一次性提交完整 deck spec。');
+    }
+    const rendered = await renderPptDeckFromSpecs(root, project, sanitizeUserContentDeep(params));
     return jsonResult(
       `根据 slide spec 渲染 ${rendered.svg_count} 页 PPT SVG，并生成 design/spec/notes`,
       { kind: 'ppt_spec_render', project_path: rendered.project_path, svg_count: rendered.svg_count, rendering: 'programmatic_svg_from_slide_specs' },

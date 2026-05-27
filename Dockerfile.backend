@@ -31,11 +31,14 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+# Runtime AI helper skills/scripts are loaded from /app/ai-helper/skills.
+# Generated artifacts, project workdirs, and logs are created at runtime and are
+# intentionally not copied from the build context.
+COPY --from=build /app/ai-helper/skills ./ai-helper/skills
 
-# Create data directory for SQLite
-RUN mkdir -p /app/data && chown -R nodejs:nodejs /app/data
-# Create logs directory
-RUN mkdir -p /app/logs && chown -R nodejs:nodejs /app/logs
+# Create writable runtime directories for SQLite, backend logs, and AI helper outputs.
+RUN mkdir -p /app/data /app/logs /app/ai-helper/generated /app/ai-helper/projects /app/ai-helper/logs && \
+    chown -R nodejs:nodejs /app/data /app/logs /app/ai-helper
 
 USER nodejs
 

@@ -12,7 +12,7 @@ export interface SkillDoc {
 export class SkillRegistry {
   readonly skillsDir: string;
   private skills: SkillDoc[] = [];
-  private hidden = new Set(['html-to-png', 'data-autoload-from-data-dir', 'patient-education-trend-analysis', 'sql-pro']);
+  private hidden = new Set(['data-autoload-from-data-dir', 'sql-pro']);
 
   constructor(skillsDir = path.join(AI_HELPER_ROOT, 'skills')) {
     this.skillsDir = skillsDir;

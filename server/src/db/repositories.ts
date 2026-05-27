@@ -76,6 +76,17 @@ function asText(value: unknown, fallback = ''): string {
   return fallback;
 }
 
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeMetricDate(value: unknown): string {
+  const date = asText(value).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('metricDate must be YYYY-MM-DD');
+  if (date > todayIso()) throw new Error('metricDate must not be in the future');
+  return date;
+}
+
 function colorForProject(projectId: unknown): string {
   const palette = ['blue', 'cyan', 'purple', 'yellow', 'red', 'green'];
   const value = String(projectId || '');
@@ -2881,12 +2892,13 @@ export async function ingestAggregateMetrics(rows: AggregateMetricInput[], scope
   let inserted = 0;
 
   for (const row of rows) {
+    const metricDate = normalizeMetricDate(row.metricDate);
     // PM 确认：互动数（正向）= 点赞 + 收藏，不含 dislikes/shares
     const interactionCount = asNumber(row.likeCount) + asNumber(row.bookmarkCount);
     await dbRun(`
       DELETE FROM behavior_daily_metrics
       WHERE tenant_id = ? AND metric_date = ? AND COALESCE(project_id, '') = COALESCE(?, '') AND COALESCE(content_id, '') = COALESCE(?, '')
-    `, [scope.tenantId, row.metricDate, row.projectId ?? null, row.contentId ?? null]);
+    `, [scope.tenantId, metricDate, row.projectId ?? null, row.contentId ?? null]);
 
     await dbRun(`
       INSERT INTO behavior_daily_metrics (
@@ -2900,7 +2912,7 @@ export async function ingestAggregateMetrics(rows: AggregateMetricInput[], scope
       row.projectId ?? null,
       row.contentId ?? null,
       row.diseaseId ?? null,
-      row.metricDate,
+      metricDate,
       asNumber(row.pushCount),
       asNumber(row.deliveredCount),
       asNumber(row.readUsers),

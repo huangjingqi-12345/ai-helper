@@ -3,9 +3,15 @@ server/node_modules
 dist
 server/dist
 server/logs
+server/ai-helper/generated/
+server/ai-helper/projects/
+server/ai-helper/logs/
+server/ai-helper/**/__pycache__/
+server/ai-helper/**/*.pyc
 .git
 .gitignore
 *.md
+!server/ai-helper/skills/**/SKILL.md
 docs/
 coverage/
 test-results/
