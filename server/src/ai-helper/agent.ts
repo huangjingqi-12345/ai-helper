@@ -349,10 +349,6 @@ function collectFiles(trace: AgentDonePayload['trace'], explicit: string[] = [])
   return visibleDeliverables(out);
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function projectSvgOutputFiles(projectPath: string): string[] {
   const project = projectPath.replace(/\\/g, '/').replace(/^\/+/, '');
   if (!project) return [];
@@ -423,6 +419,7 @@ function callWritesSvgFileDirectly(call: SkillCall): boolean {
 
 function premiumPptStageInstruction(call: SkillCall, trace: AgentDonePayload['trace']): string | undefined {
   if (call.skill_id !== 'ppt-master') return undefined;
+  if (call.action === 'emit_text') return undefined;
   const bootstrapped = hasSuccessfulBootstrap(trace);
   if (!bootstrapped && call.action !== 'ppt_master_bootstrap') {
     return [
@@ -564,7 +561,7 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string): Promis
   const userText = (req.message || req.command || '').trim();
   if (!userText) return undefined;
   const ai = new AIService({
-    model: process.env.AI_HELPER_INTENT_MODEL || 'qwen3.6-plus',
+    model: process.env.AI_HELPER_INTENT_MODEL || 'qwen3.7-max',
     timeoutMs: Math.max(8_000, Math.min(30_000, Number(process.env.AI_HELPER_INTENT_TIMEOUT_MS || 15_000) || 15_000)),
   });
   const messages: ChatMessage[] = [
@@ -1608,8 +1605,28 @@ function buildDirectPptMessages(userText: string, primaryDataContext: Record<str
       shape: '{title,subtitle,theme,design_tokens,data_display,slides:[...]}',
       slide_fields: 'slide_no, slide_type, title, subtitle, takeaway, emphasis, bullets, metrics, chart, components, notes',
       slide_types: 'cover | executive_summary | kpi_dashboard | trend | comparison | ranking | diagnosis | roadmap | closing',
+      theme_values: 'executive_blue | medical_green | warm_orange | dark_tech',
+      layout_variant_values: {
+        cover: 'hero_split | statement_cover | title_wall',
+        executive_summary: 'board_summary | insight_split',
+        kpi_dashboard: 'metric_wall | hero_metric | scorecard',
+        trend: 'chart_plus_insights | full_bleed_chart | timeline_band',
+        comparison: 'bar_with_insights | matrix',
+        ranking: 'leaderboard | content_cards',
+        diagnosis: 'quadrant | funnel_focus',
+        roadmap: 'timeline | swimlane',
+      },
       component_types: 'metric_card | insight_card | risk_card | action_card | chart_panel | ranking_list | matrix | callout',
-      chart_types: 'line | area | bar | ranking | funnel | matrix',
+      chart_types: 'line | area | bar | ranking | funnel | matrix | donut | heatmap | treemap | scatter | gauge',
+      design_tokens: {
+        background: 'soft_blobs | gradient_mesh | diagonal_ribbon | grid_dots | clean',
+        card_style: 'soft | outlined | glass | solid_header',
+        chart_style: 'minimal | annotated | bold | sparkline',
+        number_style: 'hero | compact | badge | plain',
+        accent_shape: 'ribbon | corner_blob | vertical_rule | orbit | none',
+        density: 'low | medium | high',
+        colors: '可用 accent_color / primary_color / secondary_color / background_color / card_fill / chart_palette',
+      },
       notes: '30-60 字，便于快速口播',
     },
     hard_rules: [
@@ -1618,6 +1635,9 @@ function buildDirectPptMessages(userText: string, primaryDataContext: Record<str
       `这是 PPT 快速版，完整 deck 固定生成 ${options.totalSlides} 页，目标 2-3 分钟内稳定产出；第 1 页必须是 cover，第 ${options.totalSlides} 页必须是 closing；当前批次若不包含第 ${options.totalSlides} 页，不要提前输出 closing。`,
       `中间 ${middleCount} 页优先覆盖核心结论、关键指标、趋势变化、内容/项目表现、行动建议；如页面有限，不要为了凑类型牺牲可读性。`,
       '除封面和结束页外，每页必须有 title、takeaway、2-4 个数据点或可渲染 chart、2 条 bullets 或 insight/action/risk components。',
+      '必须为每页设置 layout_variant、visual_intent、emphasis、design_tokens 中至少 2 类字段，让后端可按语义选择更丰富模板。',
+      'theme 必须使用枚举值，不要输出 medical_professional 这类未知 theme；如需医疗专业风格，用 medical_green 或 executive_blue。',
+      'chart.type 不要全部使用 bar/ranking；趋势优先 line/area，结构可用 donut/treemap/matrix，诊断用 funnel/matrix，行动用 timeline/swimlane。',
       'ranking/ranking_list 只能绑定同口径可比较指标；不同单位指标用 metric_card、insight_card 或 matrix。',
       '严禁任何字段出现中文省略号、连续三个英文句点或省略号实体；放不下就改短、换行、拆条目。',
       '只基于提供的数据生成结论，不得编造新指标、新项目、新内容。',
@@ -1662,39 +1682,126 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
   const recentReadDelta = Number(previous30Kpi.readCount || 0)
     ? (Number(recent30Kpi.readCount || 0) - Number(previous30Kpi.readCount || 0)) / Number(previous30Kpi.readCount || 0)
     : 0;
+  const recentInteractionDelta = Number(previous30Kpi.interactionCount || 0)
+    ? (Number(recent30Kpi.interactionCount || 0) - Number(previous30Kpi.interactionCount || 0)) / Number(previous30Kpi.interactionCount || 0)
+    : 0;
+  const top3Read = topContent.slice(0, 3).reduce((sum, item) => sum + Number(item.readCount || 0), 0);
+  const top3Share = safeRate(top3Read, kpi.readCount);
+  const bestFinish = [...topContent].filter((item) => Number(item.readCount || 0) > 0).sort((a, b) => Number(b.finishRate || 0) - Number(a.finishRate || 0))[0];
+  const lowFinish = [...topContent].filter((item) => Number(item.readCount || 0) > 0).sort((a, b) => Number(a.finishRate || 0) - Number(b.finishRate || 0))[0];
+  const projectTotalReads = projects.reduce((sum, item) => sum + Number(item.readCount || 0), 0);
+  const topProjectShare = safeRate(topProject?.readCount, projectTotalReads || kpi.readCount);
+  const projectMatrixItems = projects.slice(0, 3).map((item) => `${String(item.name || '项目')}：阅读 ${fmtCnInt(item.readCount)}，互动 ${fmtCnInt(item.interactionCount)}，内容 ${fmtCnInt(item.contentCount)} 篇`);
+  const contentPatternItems = [
+    topItem ? `标杆：${String(topItem.title)}，阅读 ${fmtCnInt(topItem.readCount)}，完读率 ${fmtCnPct(topItem.finishRate)}` : '',
+    bestFinish ? `高完读：${String(bestFinish.title)}，完读率 ${fmtCnPct(bestFinish.finishRate)}` : '',
+    lowFinish ? `待优化：${String(lowFinish.title)}，完读率 ${fmtCnPct(lowFinish.finishRate)}` : '',
+    `TOP3 内容贡献 ${fmtCnPct(top3Share)} 阅读，适合沉淀选题模板`,
+  ].filter(Boolean);
+  const actionItems = [
+    '模板沉淀：将实操指南、问答卡、红旗信号图解纳入内容 SOP',
+    '质量优化：低完读内容重构为场景清单、图解步骤和明确行动提示',
+    '触达策略：按活跃时段与项目人群分层推送，跟踪阅读到互动转化',
+    '项目组合：巩固糖尿病和高血压基本盘，同时补强肿瘤随访连续主题',
+  ];
   const notes = (text: string) => text.slice(0, 60);
-  const metric = (label: string, value: unknown, unit = '', note = '', status: string = 'neutral') => ({ label, value, unit, note, status });
+  const metric = (label: string, value: unknown, unit = '', note = '', status: string = 'neutral', delta?: string) => ({ label, value, unit, note, status, delta });
   const defaultDeck: Record<string, unknown> = {
     title: '患教运营数据阶段性汇报',
     subtitle: `${String(scope.label || '当前周期')}｜${rangeText}`,
     theme: 'executive_blue',
-    design_tokens: { background: 'clean', card_style: 'soft', chart_style: 'annotated', density: 'medium', icon_style: 'circle' },
-    data_display: { number_format: 'compact_cn', show_axis: true, show_grid: true, show_value_labels: true },
+    design_tokens: {
+      background: 'soft_blobs',
+      card_style: 'glass',
+      chart_style: 'bold',
+      density: 'medium',
+      icon_style: 'circle',
+      accent_shape: 'orbit',
+      number_style: 'hero',
+      accent_color: '#2563EB',
+      panel_alt_fill: '#EEF6FF',
+      corner_radius: 20,
+      gap: 18,
+    },
+    data_display: { number_format: 'compact_cn', show_axis: true, show_grid: true, show_value_labels: true, show_legend: true, highlight_max: true },
   };
   const trendCategories = monthlyTrend.map((item) => String(item.month || '').replace(/^2026-/, ''));
   const trendValues = monthlyTrend.map((item) => Number(item.readCount || 0));
   const rankingItems = topContent.map((item) => ({ label: String(item.title || '未命名内容'), value: Number(item.readCount || 0), note: `完读率 ${fmtCnPct(item.finishRate)}` }));
   const projectItems = projects.map((item) => ({ label: String(item.name || '未命名项目'), value: Number(item.readCount || 0), note: `互动 ${fmtCnInt(item.interactionCount)}` }));
+  const kpiTable = [
+    { 指标: '推送量', 数值: fmtCnInt(kpi.pushCount), 口径: '内容触达入口', 判断: '规模基础' },
+    { 指标: '送达量', 数值: fmtCnInt(kpi.deliveredCount), 口径: `送达率 ${fmtCnPct(deliveryRate)}`, 判断: '触达稳定' },
+    { 指标: '阅读用户', 数值: fmtCnInt(kpi.readUsers), 口径: `送达后阅读 ${fmtCnPct(readConversion)}`, 判断: '转化空间' },
+    { 指标: '阅读次数', 数值: fmtCnInt(kpi.readCount), 口径: '内容消费规模', 判断: '核心结果' },
+    { 指标: '互动次数', 数值: fmtCnInt(kpi.interactionCount), 口径: `互动/阅读 ${fmtCnPct(interactionRate)}`, 判断: '深度转化' },
+    { 指标: '完读率', 数值: fmtCnPct(kpi.finishRate), 口径: `平均 ${Number(kpi.avgReadSec || 0).toFixed(0)} 秒`, 判断: '质量基线' },
+  ];
+  const monthlyTable = monthlyTrend.slice(-4).map((item) => ({
+    月份: String(item.month || ''),
+    阅读: fmtCnInt(item.readCount),
+    互动: fmtCnInt(item.interactionCount),
+    推送: fmtCnInt(item.pushCount),
+    阅读用户: fmtCnInt(item.readUsers),
+  }));
+  const contentTable = topContent.slice(0, 5).map((item, index) => ({
+    排名: index + 1,
+    内容: String(item.title || '').slice(0, 18),
+    阅读: fmtCnInt(item.readCount),
+    互动: fmtCnInt(item.interactionCount),
+    完读率: fmtCnPct(item.finishRate),
+  }));
+  const projectTable = projects.slice(0, 4).map((item) => ({
+    项目: String(item.name || '').slice(0, 16),
+    疾病: String(item.disease || ''),
+    内容: fmtCnInt(item.contentCount),
+    阅读: fmtCnInt(item.readCount),
+    互动: fmtCnInt(item.interactionCount),
+  }));
+  const diagnosisTable = [
+    { 问题: '头部集中', 数据证据: `TOP3 内容占比 ${fmtCnPct(top3Share)}`, 原因判断: '高表现主题可复制但依赖度高', 动作: '沉淀模板并扩展相邻主题' },
+    { 问题: '低完读内容', 数据证据: lowFinish ? `${String(lowFinish.title || '').slice(0, 12)} ${fmtCnPct(lowFinish.finishRate)}` : '暂无低完读样本', 原因判断: '场景切入与结构分层不足', 动作: '改成清单、图解和步骤化表达' },
+    { 问题: '互动转化', 数据证据: `互动/阅读 ${fmtCnPct(interactionRate)}`, 原因判断: '阅读后行动引导仍可加强', 动作: '增加问答、收藏和提醒 CTA' },
+    { 问题: '项目组合', 数据证据: topProject ? `头部项目阅读 ${fmtCnInt(topProject.readCount)}` : '项目数据不足', 原因判断: '慢病项目是基本盘，长尾需补强', 动作: '补齐肿瘤随访等连续主题' },
+  ];
+  const actionTable = [
+    { 优先级: 'P0', 动作: '沉淀爆款模板', 负责人: '内容运营', 衡量指标: 'TOP 内容复用数、完读率' },
+    { 优先级: 'P0', 动作: '低完读内容改版', 负责人: '编辑与医学审核', 衡量指标: '完读率、平均阅读时长' },
+    { 优先级: 'P1', 动作: '分层推送实验', 负责人: '运营策略', 衡量指标: '送达后阅读、互动/阅读' },
+    { 优先级: 'P1', 动作: '补强病种矩阵', 负责人: '项目负责人', 衡量指标: '项目阅读占比、互动次数' },
+  ];
   const slides: Array<Record<string, unknown>> = [
     {
       slide_no: 1,
       slide_type: 'cover',
+      visual_intent: 'growth_story',
+      layout_variant: 'statement_cover',
       title: '患教运营数据阶段性汇报',
       subtitle: rangeText,
       takeaway: `累计阅读 ${fmtCnInt(kpi.readCount)} 次，互动 ${fmtCnInt(kpi.interactionCount)} 次，完读率 ${fmtCnPct(kpi.finishRate)}`,
       emphasis: 'hero_metric',
-      bullets: ['聚焦阅读与互动趋势', '识别内容与项目贡献', '沉淀下一步行动建议'],
+      bullets: [
+        `覆盖 ${fmtCnInt(kpi.projectCount)} 个项目、${fmtCnInt(kpi.contentCount)} 篇内容、${fmtCnInt(kpi.activeDays)} 个活跃日`,
+        `最近 30 天阅读 ${fmtCnInt(recent30Kpi.readCount || kpi.readCount)} 次，互动 ${fmtCnInt(recent30Kpi.interactionCount || kpi.interactionCount)} 次`,
+        topItem ? `头部内容「${String(topItem.title)}」是当前可复用样本` : '聚焦阅读、互动、完读和项目贡献的复盘闭环',
+      ],
       metrics: [
         metric('阅读次数', kpi.readCount, '次', '累计内容消费规模', 'good'),
         metric('互动次数', kpi.interactionCount, '次', '互动深度表现', 'neutral'),
         metric('完读率', fmtCnPct(kpi.finishRate), '', '内容质量指标', 'good'),
       ],
-      components: [{ type: 'callout', title: '汇报目标', text: '用核心数据快速判断运营表现、内容机会和后续动作。', tone: 'neutral' }],
+      components: [
+        { type: 'hero_metric', title: '阅读规模', value: fmtCnInt(kpi.readCount), unit: '次', note: `互动 ${fmtCnInt(kpi.interactionCount)} 次`, tone: 'good' },
+        { type: 'metric_card', title: '完读率', value: fmtCnPct(kpi.finishRate), note: `平均阅读 ${Number(kpi.avgReadSec || 0).toFixed(0)} 秒`, tone: 'good' },
+        { type: 'callout', title: '汇报目标', text: '用核心数据判断运营表现、内容机会和下一步动作。', tone: 'neutral' },
+      ],
       notes: notes('本页说明报告周期、核心指标和汇报目标，帮助业务团队快速建立全局判断。'),
     },
     {
       slide_no: 2,
       slide_type: 'executive_summary',
+      visual_intent: 'executive_summary',
+      layout_variant: 'hero_metric',
       title: '核心结论',
       subtitle: '规模增长、质量稳定、头部内容可复制',
       takeaway: `最近 30 天阅读 ${fmtCnInt(recent30Kpi.readCount || kpi.readCount)} 次，较前 30 天${recentReadDelta >= 0 ? '提升' : '回落'} ${Math.abs(recentReadDelta * 100).toFixed(1)}%`,
@@ -1705,93 +1812,187 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
         topItem ? `头部内容「${String(topItem.title)}」贡献最高阅读` : '头部内容贡献仍需继续观察',
       ],
       metrics: [
-        metric('推送量', kpi.pushCount, '次', '内容触达规模', 'neutral'),
-        metric('阅读用户', kpi.readUsers, '人', '覆盖到达用户', 'good'),
-        metric('互动率', fmtCnPct(interactionRate), '', '互动除以阅读', 'neutral'),
+        metric('近 30 天阅读', recent30Kpi.readCount || kpi.readCount, '次', '短周期消费规模', 'good', `${recentReadDelta >= 0 ? '+' : ''}${(recentReadDelta * 100).toFixed(1)}%`),
+        metric('近 30 天互动', recent30Kpi.interactionCount || kpi.interactionCount, '次', '短周期互动深度', 'good', `${recentInteractionDelta >= 0 ? '+' : ''}${(recentInteractionDelta * 100).toFixed(1)}%`),
+        metric('送达后阅读', fmtCnPct(readConversion), '', '阅读用户/送达量', 'neutral'),
+        metric('互动/阅读', fmtCnPct(interactionRate), '', '互动转化效率', 'neutral'),
       ],
       components: [
-        { type: 'insight_card', title: '增长判断', text: '近 30 天阅读与触达保持活跃，是当前复盘的主线。', tone: 'good' },
-        { type: 'action_card', title: '运营抓手', text: '优先复制头部内容结构，并提升低完读内容的开头和行动指引。', tone: 'neutral' },
+        { type: 'matrix', title: '核心判断表', table: [
+          { 维度: '规模', 数据: `阅读 ${fmtCnInt(kpi.readCount)} 次`, 结论: '内容消费已形成基本盘' },
+          { 维度: '转化', 数据: `送达后阅读 ${fmtCnPct(readConversion)}`, 结论: '人群分层仍有提升空间' },
+          { 维度: '质量', 数据: `完读率 ${fmtCnPct(kpi.finishRate)}`, 结论: '质量基线稳定' },
+          { 维度: '内容', 数据: topItem ? `TOP 内容 ${fmtCnInt(topItem.readCount)} 次` : '暂无头部样本', 结论: '可沉淀选题模板' },
+        ], tone: 'neutral' },
+        { type: 'action_card', title: '运营抓手', text: '复制头部内容结构，提升低完读内容的场景切入和行动指引。', tone: 'good' },
+        { type: 'risk_card', title: '关注风险', text: '如果持续依赖少数慢病项目，需要补足长尾病种内容连续性。', tone: 'warn' },
       ],
       notes: notes('本页先给出整体判断，强调近 30 天表现、头部内容和后续优化抓手。'),
     },
     {
       slide_no: 3,
       slide_type: 'kpi_dashboard',
+      visual_intent: 'growth_story',
+      layout_variant: 'dashboard',
       title: '关键指标',
       subtitle: '触达、阅读、互动和质量四类指标',
       takeaway: `累计推送 ${fmtCnInt(kpi.pushCount)} 次，带来 ${fmtCnInt(kpi.readCount)} 次阅读`,
       emphasis: 'hero_metric',
-      bullets: ['触达规模已形成稳定基础', '阅读质量需结合完读率和阅读时长判断'],
+      bullets: [
+        `送达率 ${fmtCnPct(deliveryRate)}，说明触达基础稳定`,
+        `送达后阅读转化 ${fmtCnPct(readConversion)}，仍有分层推送优化空间`,
+        `互动/阅读 ${fmtCnPct(interactionRate)}，需要通过 CTA 与问答机制继续放大`,
+      ],
       metrics: [
         metric('推送量', kpi.pushCount, '次', '触达规模', 'neutral'),
         metric('送达量', kpi.deliveredCount, '次', `送达率 ${fmtCnPct(deliveryRate)}`, 'good'),
         metric('阅读次数', kpi.readCount, '次', '消费规模', 'good'),
+        metric('阅读用户', kpi.readUsers, '人', `阅读转化 ${fmtCnPct(readConversion)}`, 'good'),
+        metric('互动次数', kpi.interactionCount, '次', `互动率 ${fmtCnPct(interactionRate)}`, 'neutral'),
         metric('平均阅读', Number(kpi.avgReadSec || 0).toFixed(0), '秒', '内容停留', 'neutral'),
       ],
-      components: [{ type: 'metric_card', title: '完读率', value: fmtCnPct(kpi.finishRate), note: '衡量内容完整消费', tone: 'good' }],
+      chart: {
+        type: 'funnel',
+        title: '触达转化漏斗',
+        items: [
+          { label: '推送', value: Number(kpi.pushCount || 0), note: '触达入口' },
+          { label: '送达', value: Number(kpi.deliveredCount || 0), note: fmtCnPct(deliveryRate) },
+          { label: '阅读用户', value: Number(kpi.readUsers || 0), note: fmtCnPct(readConversion) },
+          { label: '互动', value: Number(kpi.interactionCount || 0), note: fmtCnPct(interactionRate) },
+        ],
+      },
+      components: [
+        { type: 'matrix', title: '核心 KPI 明细表', table: kpiTable, tone: 'neutral' },
+        { type: 'funnel_panel', title: '触达转化漏斗', metrics: [
+          metric('推送', kpi.pushCount, '次', '触达入口'),
+          metric('送达', kpi.deliveredCount, '次', fmtCnPct(deliveryRate)),
+          metric('阅读用户', kpi.readUsers, '人', fmtCnPct(readConversion)),
+          metric('互动', kpi.interactionCount, '次', fmtCnPct(interactionRate)),
+        ] },
+        { type: 'insight_card', title: '指标解读', text: '规模指标已形成基本盘，后续重点是阅读到互动的深度转化。', tone: 'neutral' },
+      ],
       notes: notes('本页用四类 KPI 建立仪表盘，重点关注阅读规模和阅读质量是否同步提升。'),
     },
     {
       slide_no: 4,
       slide_type: 'trend',
+      visual_intent: 'growth_story',
+      layout_variant: 'chart_plus_insights',
       title: '阅读与互动趋势',
       subtitle: '按月观察运营节奏变化',
       takeaway: monthlyTrend.length ? `${String(monthlyTrend.at(-1)?.month || '最新月')}阅读 ${fmtCnInt(monthlyTrend.at(-1)?.readCount)} 次` : '近期阅读与互动保持活跃',
       emphasis: 'chart',
-      bullets: ['月度趋势用于判断内容触达是否连续', '阅读与互动同步变化代表内容有效承接'],
+      bullets: [
+        '3 月到 5 月阅读规模快速放大，说明触达和内容供给共同拉动',
+        '互动量随阅读同步上升，内容不仅被打开，也能承接后续动作',
+        '5 月阅读继续增长，应关注推送频次与用户疲劳之间的平衡',
+      ],
       metrics: [
         metric('最近 30 天阅读', recent30Kpi.readCount || kpi.readCount, '次', '短周期表现', 'good'),
         metric('最近 30 天互动', recent30Kpi.interactionCount || kpi.interactionCount, '次', '短周期互动', 'neutral'),
       ],
-      chart: { type: 'line', title: '月度阅读趋势', categories: trendCategories, values: trendValues, value_suffix: '次' },
-      components: [{ type: 'chart_panel', title: '趋势判断', text: '阅读增长后，需要继续观察互动和完读是否同步改善。', tone: 'neutral' }],
+      chart: {
+        type: 'area',
+        title: '月度阅读与互动趋势',
+        categories: trendCategories,
+        series: [
+          { name: '阅读次数', values: trendValues },
+          { name: '互动次数', values: monthlyTrend.map((item) => Number(item.interactionCount || 0)) },
+        ],
+        value_suffix: '次',
+      },
+      components: [
+        { type: 'chart_panel', title: '月度阅读与互动趋势', chart: {
+          type: 'area',
+          categories: trendCategories,
+          series: [
+            { name: '阅读次数', values: trendValues },
+            { name: '互动次数', values: monthlyTrend.map((item) => Number(item.interactionCount || 0)) },
+          ],
+        } },
+        { type: 'matrix', title: '月度数据表', table: monthlyTable, tone: 'neutral' },
+        { type: 'insight_card', title: '趋势判断', text: '阅读与互动同步抬升，说明内容主题与用户需求匹配；后续需控制触达疲劳。', tone: 'good' },
+      ],
       notes: notes('本页从月度趋势看节奏，说明阅读规模增长后仍要跟踪互动和完读质量。'),
     },
     {
       slide_no: 5,
       slide_type: 'comparison',
+      visual_intent: 'comparison',
+      layout_variant: 'split_chart',
       title: '内容与项目表现',
       subtitle: '识别可复制内容和主力项目',
       takeaway: topProject ? `主力项目「${String(topProject.name)}」贡献阅读 ${fmtCnInt(topProject.readCount)} 次` : '内容与项目贡献需要持续积累',
       emphasis: 'ranking',
       bullets: [
+        topProject ? `头部项目贡献阅读占比 ${fmtCnPct(topProjectShare)}，慢病随访是当前基本盘` : '项目贡献仍需继续积累',
         topItem ? `头部内容「${String(topItem.title)}」完读率 ${fmtCnPct(topItem.finishRate)}` : '头部内容样本仍需继续沉淀',
         '排行仅比较同口径阅读次数，质量指标单独观察',
       ],
       metrics: [
         metric('TOP 内容数', topContent.length, '篇', '参与本页排名', 'neutral'),
         metric('活跃项目数', projects.length, '个', '有阅读或推送项目', 'neutral'),
+        metric('TOP3 内容占比', fmtCnPct(top3Share), '', '阅读集中度', 'neutral'),
       ],
       chart: { type: 'ranking', title: '内容阅读 TOP5', items: rankingItems },
       components: [
-        { type: 'ranking_list', title: '项目阅读贡献', chart: { type: 'ranking', items: projectItems }, tone: 'neutral' },
+        { type: 'matrix', title: '内容 TOP5 明细表', table: contentTable, tone: 'neutral' },
+        { type: 'matrix', title: '项目贡献表', table: projectTable, tone: 'neutral' },
+        { type: 'insight_card', title: '内容方法', items: contentPatternItems.slice(0, 3), tone: 'good' },
       ],
       notes: notes('本页比较内容和项目贡献，重点识别可复制主题和需要进一步优化的内容类型。'),
     },
     {
       slide_no: 6,
+      slide_type: 'diagnosis',
+      visual_intent: 'diagnosis',
+      layout_variant: 'risk_matrix',
+      title: '问题诊断与机会判断',
+      subtitle: '把数据证据转成可执行的优化方向',
+      takeaway: '当前不是单一数据异常，而是内容集中度、低完读样本和互动转化的结构优化问题',
+      emphasis: 'balanced',
+      bullets: [
+        `TOP3 内容贡献 ${fmtCnPct(top3Share)} 阅读，说明方法可复制但集中度需要控制`,
+        lowFinish ? `低完读样本「${String(lowFinish.title || '').slice(0, 18)}」完读率 ${fmtCnPct(lowFinish.finishRate)}` : '低完读样本需要持续监控',
+        `互动/阅读 ${fmtCnPct(interactionRate)}，后续要用 CTA 与服务承接提升行动转化`,
+      ],
+      metrics: [
+        metric('TOP3 内容占比', fmtCnPct(top3Share), '', '阅读集中度', 'neutral'),
+        metric('最低完读率', lowFinish ? fmtCnPct(lowFinish.finishRate) : '暂无', '', '优化样本', 'warn'),
+        metric('互动/阅读', fmtCnPct(interactionRate), '', '深度转化', 'neutral'),
+      ],
+      components: [
+        { type: 'matrix', title: '诊断表', table: diagnosisTable, tone: 'warn' },
+        { type: 'risk_card', title: '核心风险', text: '如果只放大推送量而不优化内容结构，阅读增长可能无法稳定转化为互动和长期留存。', tone: 'warn' },
+        { type: 'action_card', title: '优先机会', text: '从头部内容中提炼标题、结构、图解和行动指引模板，优先复制到相邻疾病场景。', tone: 'good' },
+      ],
+      notes: notes('本页把表现数据转成问题诊断，明确后续优先优化方向。'),
+    },
+    {
+      slide_no: 7,
       slide_type: 'closing',
+      visual_intent: 'action_plan',
+      layout_variant: 'timeline',
       title: '下一步行动建议',
       subtitle: '围绕内容复制、质量优化和项目拓展推进',
       takeaway: '沉淀高表现内容模板，优化低完读内容，强化分层触达和互动引导',
       emphasis: 'timeline',
-      bullets: ['复制头部内容的场景化标题和清单结构', '优化基础科普内容的开头密度和行动指引', '按项目人群分层推送，提高阅读到互动转化'],
+      bullets: actionItems,
       metrics: [
         metric('优先模板', topItem ? String(topItem.title) : '高阅读内容', '', '作为复盘样本', 'good'),
         metric('优化方向', '完读率与互动率', '', '质量提升重点', 'neutral'),
       ],
       components: [
-        { type: 'action_card', title: '内容模板', text: '沉淀实操指南、问答卡和红旗信号图解等高表现形式。', tone: 'good' },
-        { type: 'action_card', title: '推送策略', text: '结合活跃时段和人群标签优化频次，提升打开和互动。', tone: 'neutral' },
-        { type: 'action_card', title: '项目拓展', text: '围绕糖尿病、高血压和肿瘤随访扩展连续主题。', tone: 'neutral' },
+        { type: 'matrix', title: '行动计划表', table: actionTable, tone: 'good' },
+        { type: 'timeline', title: '推进节奏', items: actionItems, tone: 'good' },
+        { type: 'takeaway_band', title: '目标', text: '从规模增长转向内容资产沉淀与精细化转化。', tone: 'good' },
       ],
       notes: notes('本页收束为三类行动：复制模板、优化质量、按人群和项目提升转化。'),
     },
   ];
   const selectedSlides = totalSlides >= slides.length
     ? slides.slice(0, totalSlides)
-    : [...slides.slice(0, Math.max(1, totalSlides - 1)), { ...slides[5], slide_no: totalSlides }];
+    : [...slides.slice(0, Math.max(1, totalSlides - 1)), { ...slides[slides.length - 1], slide_no: totalSlides }];
   defaultDeck.slides = selectedSlides;
   return sanitizeDirectPptDeck(defaultDeck);
 }
@@ -2076,7 +2277,7 @@ async function generateMonthlyInsights(req: RunRequest, rootDir: string, current
     Math.min(60_000, Number(process.env.AI_HELPER_MONTHLY_INSIGHT_TIMEOUT_MS || 55_000) || 55_000),
   );
   const ai = new AIService({
-    model: process.env.AI_HELPER_MONTHLY_INSIGHT_MODEL || 'qwen3.6-plus',
+    model: process.env.AI_HELPER_MONTHLY_INSIGHT_MODEL || 'qwen3.7-max',
     timeoutMs: monthlyInsightTimeoutMs,
   });
   const messages = buildMonthlyInsightPrompt(current, previous, dateRange, compareRange);
@@ -2243,7 +2444,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
 
       yield emit('progress', { phase: 'data', message: '正在聚合 PPT 快速版所需核心指标、趋势、内容与项目数据', step: 1 });
       const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir);
-      const totalSlides = Math.max(5, Math.min(6, Number(process.env.AI_HELPER_PPT_FAST_SLIDES || 6) || 6));
+      const totalSlides = Math.max(6, Math.min(8, Number(process.env.AI_HELPER_PPT_FAST_SLIDES || 7) || 7));
       const earlySummaryText = buildDirectPptEarlySummaryText(primaryDataContext, totalSlides);
       yield emit('text', earlySummaryText);
       yield emit('progress', { phase: 'analysis', message: '已输出数据摘要，继续生成 PPT 文件', step: 1, ok: true });
@@ -2264,7 +2465,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       if (!projectPath) throw new Error('PPT 项目初始化成功但未返回 project_path');
 
       const pptAi = new AIService({
-        model: process.env.AI_HELPER_PPT_SPEC_MODEL || 'qwen3.6-plus',
+        model: process.env.AI_HELPER_PPT_SPEC_MODEL || 'qwen3.7-max',
         timeoutMs: Math.max(20_000, Number(process.env.AI_HELPER_PPT_SPEC_TIMEOUT_MS || 45_000) || 45_000),
       });
       const specBatchSize = Math.max(1, Math.min(totalSlides, Number(process.env.AI_HELPER_PPT_SPEC_BATCH_SIZE || 2) || 2));
@@ -2478,35 +2679,34 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
         if (fallbackIssues.length) throw new Error(`模板 deck spec 校验失败：${fallbackIssues.join('；')}`);
       }
 
-      runtimeLog('direct_ppt_deck_spec_ready', { rootDir, deck: compactDeckForLog(deck), ...requestLog(effectiveReq) });
+      const finalPreview = await renderPreview(totalSlides);
+      if (finalPreview.fresh.length) yield emit('files', finalPreview.fresh);
+      if (finalPreview.count) yield emit('progress', { phase: 'file_generation', message: `已生成 ${finalPreview.count} 页预览`, step: 4, generated_slides: finalPreview.count, ok: true });
+
+      runtimeLog('direct_ppt_deck_spec_ready', { rootDir, deck: compactDeckForLog(deck), pre_rendered: true, ...requestLog(effectiveReq) });
       const renderCall: SkillCall = {
         type: 'skill_call',
         skill_id: 'ppt-master',
         action: 'render_ppt_from_specs',
         params: { ...deck, project_path: projectPath },
-        thought: '后端确定性流程一次性渲染完整 PPT deck spec。',
+        thought: 'PPT 页面已按批次预渲染完成，记录渲染结果并继续导出。',
       };
-      yield emit('progress', { phase: 'file_generation', message: '正在渲染 SVG 页面并执行视觉 QA', step: 4, skill_id: renderCall.skill_id, action: renderCall.action });
-      const streamedRenderSvgs = new Set<string>();
-      let renderDone = false;
-      const renderPromise = executor.execute(renderCall).finally(() => { renderDone = true; });
-      while (!renderDone) {
-        await Promise.race([renderPromise, delay(400)]);
-        const svgs = projectSvgOutputFiles(projectPath);
-        const fresh = svgs.filter((file) => !streamedRenderSvgs.has(file));
-        if (fresh.length) {
-          fresh.forEach((file) => streamedRenderSvgs.add(file));
-          yield emit('files', fresh);
-          yield emit('progress', { phase: 'file_generation', message: `已渲染 ${streamedRenderSvgs.size} 页预览`, step: 4, generated_slides: streamedRenderSvgs.size, ok: true });
-        }
-      }
-      const renderResult = await renderPromise;
+      const projectRootAbs = safeProjectRoot(projectPath);
+      const renderFiles = [
+        `/${projectPath}/design_spec.md`,
+        `/${projectPath}/spec_lock.md`,
+        ...projectSvgOutputFiles(projectPath),
+        `/${projectPath}/notes/total.md`,
+        `/${projectPath}/visual_qa.json`,
+      ].filter((file) => fs.existsSync(path.join(AI_HELPER_ROOT, file.replace(/^\/+/, ''))));
+      const renderResult: SkillResult = {
+        ok: true,
+        summary: `已生成 ${projectSvgOutputFiles(projectPath).length} 页 PPT SVG 预览`,
+        detail: { kind: 'ppt_spec_render', project_path: projectPath, svg_count: projectSvgOutputFiles(projectPath).length, rendering: 'programmatic_svg_from_slide_specs', pre_rendered: true, project_root: projectRootAbs },
+        files: renderFiles,
+      };
       trace.push({ step: 'auto_render_specs', call: compactCallForTrace(renderCall, renderResult), result: renderResult });
       yield emit('skill_result', renderResult);
-      if (renderResult.ok === false) throw new Error(renderResult.error || 'PPT SVG 渲染失败');
-      const finalRenderSvgs = projectSvgOutputFiles(projectPath).filter((file) => !streamedRenderSvgs.has(file));
-      if (finalRenderSvgs.length) yield emit('files', finalRenderSvgs);
-      const renderFiles = collectFiles(trace);
       if (renderFiles.length) yield emit('files', renderFiles);
 
       const exportCall: SkillCall = {

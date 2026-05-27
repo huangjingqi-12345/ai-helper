@@ -15,7 +15,7 @@ export interface DeckMetric {
 }
 
 export interface DeckChart {
-  type?: 'line' | 'area' | 'bar' | 'ranking' | 'funnel' | 'matrix';
+  type?: 'line' | 'area' | 'bar' | 'ranking' | 'funnel' | 'matrix' | 'donut' | 'stacked' | 'heatmap' | 'treemap' | 'scatter' | 'gauge' | string;
   title?: string;
   x_label?: string;
   y_label?: string;
@@ -46,6 +46,8 @@ export interface DeckDesignTokens {
   body_size?: number;
   number_size?: number;
   accent_color?: string;
+  primary_color?: string;
+  secondary_color?: string;
   risk_color?: string;
   warning_color?: string;
   panel_fill?: string;
@@ -196,7 +198,16 @@ const THEMES: Record<string, Theme> = {
 };
 
 function themeOf(raw: unknown): Theme {
-  const key = String(raw || '').trim();
+  const input = String(raw || '').trim();
+  const key = ({
+    medical_professional: 'medical_green',
+    medical_blue: 'executive_blue',
+    executive: 'executive_blue',
+    professional: 'executive_blue',
+    green: 'medical_green',
+    orange: 'warm_orange',
+    dark: 'dark_tech',
+  } as Record<string, string>)[input.toLowerCase()] || input;
   return THEMES[key] || THEMES.executive_blue;
 }
 
@@ -228,7 +239,9 @@ function safeColor(value: unknown): string | undefined {
 function themeWithTokens(base: Theme, tokens: DeckDesignTokens): Theme {
   return {
     ...base,
-    primary: safeColor(tokens.accent_color) || base.primary,
+    primary: safeColor(tokens.primary_color) || safeColor(tokens.accent_color) || base.primary,
+    secondary: safeColor(tokens.secondary_color) || base.secondary,
+    accent: safeColor(tokens.accent_color) || base.accent,
     danger: safeColor(tokens.risk_color) || base.danger,
     warning: safeColor(tokens.warning_color) || base.warning,
     bg: safeColor(tokens.background_color) || base.bg,
@@ -618,6 +631,18 @@ function insightCards(items: string[], x: number, y: number, w: number, h: numbe
   }).join('');
 }
 
+function miniInsightRow(items: string[], x: number, y: number, w: number, h: number, t: Theme, max = 3): string {
+  const list = items.map(cleanText).filter(Boolean).slice(0, max);
+  if (!list.length) return '';
+  const gap = 16;
+  const cw = (w - gap * (list.length - 1)) / Math.max(1, list.length);
+  return list.map((item, i) => {
+    const cx = x + i * (cw + gap);
+    const color = palette(t, i);
+    return `<g>${panel(cx, y, cw, h, t, 16)}<rect x="${cx}" y="${y}" width="8" height="${h}" rx="4" fill="${color}"/>${text(cx + 28, y + 28, ['结论', '证据', '动作'][i] || `要点 ${i + 1}`, 12, color, 850)}${multiline(cx + 28, y + 58, item, { size: 14, fill: t.text, weight: 700, maxChars: Math.max(12, Math.floor((cw - 56) / 14)), maxLines: h > 92 ? 2 : 1, lineHeight: 20 })}</g>`;
+  }).join('');
+}
+
 function compactBulletList(items: string[], x: number, y: number, w: number, h: number, t: Theme, max = 4): string {
   if (!items.length) return '';
   const gap = 12;
@@ -833,7 +858,7 @@ function componentsFromSlide(slide: DeckSlideSpec): DeckComponentSpec[] {
     if (existingAction) {
       out.push({
         type: 'action_card',
-        title: '管理关注',
+        title: '运营关注',
         text: existingAction,
         tone: 'good',
         icon: 'action',
@@ -1365,32 +1390,191 @@ function barChart(chart: DeckChart | undefined, x: number, y: number, w: number,
   return out + '</g>';
 }
 
-function dataTable(rows: Array<Record<string, string | number>>, x: number, y: number, w: number, h: number, t: Theme): string {
+function donutChart(items: DeckMetric[], x: number, y: number, w: number, h: number, t: Theme, tokens: DeckDesignTokens = {}): string {
+  const list = items.filter((m) => num(m.value) > 0).slice(0, 5);
+  if (!list.length) return '';
+  const total = list.reduce((sum, m) => sum + num(m.value), 0) || 1;
+  const cx = x + Math.min(w * 0.34, 190);
+  const cy = y + h / 2 + 12;
+  const r = Math.min(88, h * 0.28, w * 0.18);
+  const c = 2 * Math.PI * r;
+  let offset = 0;
+  let out = `<g>${panel(x, y, w, h, t, tokens.corner_radius || 16)}${text(x + 24, y + 34, '结构占比', 16, t.primary, 850)}`;
+  list.forEach((m, i) => {
+    const color = tokenPalette(t, tokens, i);
+    const len = c * pct(num(m.value), total);
+    out += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="28" stroke-dasharray="${len} ${c - len}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="butt"/>`;
+    offset += len;
+  });
+  out += `<circle cx="${cx}" cy="${cy}" r="${r - 22}" fill="${t.panel}"/>${text(cx, cy - 4, compactCn(total), 28, t.text, 900, 'middle')}${text(cx, cy + 22, '合计', 13, t.subtext, 700, 'middle')}`;
+  const lx = x + Math.min(w * 0.56, 380);
+  list.forEach((m, i) => {
+    const yy = y + 78 + i * 44;
+    const color = tokenPalette(t, tokens, i);
+    out += `<circle cx="${lx}" cy="${yy - 5}" r="6" fill="${color}"/>${multiline(lx + 18, yy, m.label || '', { size: 13, fill: t.text, weight: 750, maxChars: Math.max(10, Math.floor((w - (lx - x) - 96) / 13)), maxLines: 1 })}${text(x + w - 28, yy, `${Math.round(pct(num(m.value), total) * 100)}%`, 13, color, 850, 'end')}`;
+  });
+  return out + '</g>';
+}
+
+function heatmapChart(items: DeckMetric[], x: number, y: number, w: number, h: number, t: Theme, tokens: DeckDesignTokens = {}): string {
+  const list = items.slice(0, 14);
+  if (!list.length) return '';
+  const max = Math.max(...list.map((m) => num(m.value)), 1);
+  const cols = list.length > 7 ? 7 : Math.max(1, list.length);
+  const rows = Math.ceil(list.length / cols);
+  const gap = 10;
+  const titleH = 48;
+  const cellW = (w - 48 - gap * (cols - 1)) / cols;
+  const cellH = Math.min(74, (h - titleH - 28 - gap * (rows - 1)) / rows);
+  let out = `<g>${panel(x, y, w, h, t, tokens.corner_radius || 16)}${text(x + 24, y + 34, '热力分布', 16, t.primary, 850)}`;
+  list.forEach((m, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const cx = x + 24 + col * (cellW + gap);
+    const cy = y + titleH + row * (cellH + gap);
+    const color = tokenPalette(t, tokens, i);
+    const opacity = 0.14 + pct(num(m.value), max) * 0.52;
+    out += `<rect x="${cx}" y="${cy}" width="${cellW}" height="${cellH}" rx="14" fill="${color}" opacity="${opacity}"/><rect x="${cx}" y="${cy + cellH - 6}" width="${cellW * pct(num(m.value), max)}" height="6" rx="3" fill="${color}" opacity="0.8"/>${multiline(cx + 10, cy + 22, m.label || '', { size: 11, fill: t.text, weight: 800, maxChars: Math.max(4, Math.floor((cellW - 20) / 11)), maxLines: 1 })}${text(cx + 10, cy + 50, compactCn(m.value), 18, t.text, 900)}`;
+  });
+  return out + '</g>';
+}
+
+function treemapChart(items: DeckMetric[], x: number, y: number, w: number, h: number, t: Theme, tokens: DeckDesignTokens = {}): string {
+  const list = items.filter((m) => num(m.value) >= 0).slice(0, 6);
+  if (!list.length) return '';
+  const total = list.reduce((sum, m) => sum + Math.max(0, num(m.value)), 0) || 1;
+  const bodyX = x + 24;
+  const bodyY = y + 56;
+  const bodyW = w - 48;
+  const bodyH = h - 82;
+  let out = `<g>${panel(x, y, w, h, t, tokens.corner_radius || 16)}${text(x + 24, y + 34, '版图贡献', 16, t.primary, 850)}`;
+  let cursorX = bodyX;
+  let cursorY = bodyY;
+  const top = list.slice(0, 2);
+  const rest = list.slice(2);
+  top.forEach((m, i) => {
+    const cw = bodyW * clamp(pct(num(m.value), total), 0.24, 0.54);
+    const color = tokenPalette(t, tokens, i);
+    out += `<rect x="${cursorX}" y="${cursorY}" width="${cw - 8}" height="${bodyH * 0.52}" rx="18" fill="${color}" opacity="0.24" stroke="${color}" stroke-opacity="0.22"/>${multiline(cursorX + 18, cursorY + 32, m.label || '', { size: 15, fill: t.text, weight: 850, maxChars: Math.max(8, Math.floor((cw - 42) / 15)), maxLines: 2 })}${text(cursorX + 18, cursorY + bodyH * 0.52 - 22, compactCn(m.value), 26, color, 900)}`;
+    cursorX += cw;
+  });
+  cursorX = bodyX;
+  cursorY = bodyY + bodyH * 0.52 + 10;
+  rest.forEach((m, i) => {
+    const cw = (bodyW - 10 * Math.max(0, rest.length - 1)) / Math.max(1, rest.length);
+    const color = tokenPalette(t, tokens, i + 2);
+    out += `<rect x="${cursorX}" y="${cursorY}" width="${cw}" height="${bodyH * 0.48 - 10}" rx="16" fill="${color}" opacity="0.20" stroke="${color}" stroke-opacity="0.22"/>${multiline(cursorX + 14, cursorY + 30, m.label || '', { size: 13, fill: t.text, weight: 800, maxChars: Math.max(6, Math.floor((cw - 28) / 13)), maxLines: 2 })}${text(cursorX + 14, cursorY + bodyH * 0.48 - 28, compactCn(m.value), 21, color, 900)}`;
+    cursorX += cw + 10;
+  });
+  return out + '</g>';
+}
+
+function gaugeChart(items: DeckMetric[], x: number, y: number, w: number, h: number, t: Theme, tokens: DeckDesignTokens = {}): string {
+  const list = items.slice(0, 4);
+  if (!list.length) return '';
+  const gap = 14;
+  const cols = Math.min(4, list.length);
+  const cw = (w - 48 - gap * (cols - 1)) / cols;
+  const r = Math.min(44, cw * 0.28, (h - 76) * 0.34);
+  const c = 2 * Math.PI * r;
+  let out = `<g>${panel(x, y, w, h, t, tokens.corner_radius || 16)}${text(x + 24, y + 34, '健康度仪表', 16, t.primary, 850)}`;
+  list.forEach((m, i) => {
+    const cx = x + 24 + i * (cw + gap) + cw / 2;
+    const cy = y + 98;
+    const color = metricColor(m, t, i);
+    const raw = num(m.value);
+    const value = /%/.test(metricValue(m)) || raw <= 1 ? clamp(raw <= 1 ? raw : raw / 100, 0, 1) : pct(raw, Math.max(100, raw));
+    out += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${t.panel2}" stroke-width="16"/><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="16" stroke-dasharray="${c * value} ${c * (1 - value)}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="round"/><text x="${cx}" y="${cy + 6}" font-family="${FONT}" font-size="17" font-weight="900" fill="${t.text}" text-anchor="middle">${esc(metricValue(m))}</text>${multiline(cx, y + 164, m.label || '', { size: 12, fill: t.subtext, weight: 800, maxChars: Math.max(5, Math.floor(cw / 12)), maxLines: 2, anchor: 'middle' })}`;
+  });
+  return out + '</g>';
+}
+
+function matrixChart(items: DeckMetric[], x: number, y: number, w: number, h: number, t: Theme, tokens: DeckDesignTokens = {}): string {
+  const list = items.slice(0, 4);
+  if (!list.length) return '';
+  const labels = ['高价值', '待优化', '可放大', '需观察'];
+  let out = `<g>${panel(x, y, w, h, t, tokens.corner_radius || 16)}${text(x + 24, y + 34, '四象限判断', 16, t.primary, 850)}`;
+  const cellW = (w - 58) / 2;
+  const cellH = (h - 86) / 2;
+  list.forEach((m, i) => {
+    const cx = x + 24 + (i % 2) * (cellW + 10);
+    const cy = y + 58 + Math.floor(i / 2) * (cellH + 10);
+    const color = tokenPalette(t, tokens, i);
+    out += `<rect x="${cx}" y="${cy}" width="${cellW}" height="${cellH}" rx="16" fill="${color}" opacity="0.10" stroke="${color}" stroke-opacity="0.22"/><text x="${cx + 16}" y="${cy + 28}" font-family="${FONT}" font-size="12" font-weight="850" fill="${color}">${esc(labels[i] || `象限${i + 1}`)}</text>${multiline(cx + 16, cy + 58, m.label || '', { size: 14, fill: t.text, weight: 800, maxChars: Math.max(8, Math.floor((cellW - 32) / 14)), maxLines: 2 })}${text(cx + 16, cy + cellH - 18, metricValue(m), 18, color, 900)}`;
+  });
+  return out + '</g>';
+}
+
+function chartBlock(chart: DeckChart | undefined, metrics: DeckMetric[], x: number, y: number, w: number, h: number, t: Theme, display: DeckDataDisplay = {}, tokens: DeckDesignTokens = {}): string {
+  const type = canonicalVariant(chart?.type || '');
+  const source = metrics.length ? metrics : chartAsMetrics(chart);
+  if (type === 'line' || type === 'area') return lineChart(chart, x, y, w, h, t, display, tokens);
+  if (type === 'ranking') return rankingList(source, x, y, w, h, t);
+  if (type === 'funnel') return funnel(source, x, y, w, h, t);
+  if (type === 'matrix') return matrixChart(source, x, y, w, h, t, tokens);
+  if (type === 'donut' || type === 'stacked') return donutChart(source, x, y, w, h, t, tokens);
+  if (type === 'heatmap') return heatmapChart(source, x, y, w, h, t, tokens);
+  if (type === 'treemap') return treemapChart(source, x, y, w, h, t, tokens);
+  if (type === 'gauge') return gaugeChart(source, x, y, w, h, t, tokens);
+  return barChart(chart, x, y, w, h, t, display, tokens);
+}
+
+function reportTable(rows: Array<Record<string, string | number>>, x: number, y: number, w: number, h: number, t: Theme, title = ''): string {
   const first = rows[0];
   if (!first) return '';
-  const keys = Object.keys(first).slice(0, 4);
+  const maxCols = w >= 620 ? 5 : 4;
+  const keys = Object.keys(first).slice(0, maxCols);
   if (!keys.length) return '';
-  const maxRows = Math.max(1, Math.min(rows.length, Math.floor((h - 42) / 38)));
+  const titleH = title ? 44 : 0;
+  const tableY = y + titleH;
+  const tableH = Math.max(80, h - titleH);
+  const maxRows = Math.max(1, Math.min(rows.length, Math.floor((tableH - 42) / 36)));
   const shown = rows.slice(0, maxRows);
-  const colW = w / keys.length;
   const headerH = 36;
-  const rowH = Math.max(32, Math.min(44, (h - headerH - 10) / shown.length));
-  let out = `<g>${panel(x, y, w, h, t, 16)}<rect x="${x}" y="${y}" width="${w}" height="${headerH}" rx="16" fill="${t.primary}" opacity="0.08"/><rect x="${x}" y="${y + headerH - 12}" width="${w}" height="12" fill="${t.primary}" opacity="0.08"/>`;
+  const rowH = Math.max(32, Math.min(52, (tableH - headerH - 10) / shown.length));
+  const weights = keys.map((key, index) => {
+    const k = plain(key);
+    if (/内容|动作|原因|结论|证据|指标|衡量/.test(k)) return index === 0 ? 1.15 : 1.55;
+    if (/疾病|排名|优先级/.test(k)) return 0.72;
+    if (/数值|阅读|互动|推送|完读率|内容/.test(k)) return 0.95;
+    return 1;
+  });
+  const totalWeight = weights.reduce((sum, item) => sum + item, 0) || 1;
+  const colWidths = weights.map((weight) => (w - 2) * weight / totalWeight);
+  const colXs = colWidths.reduce<number[]>((acc, cw, index) => {
+    acc.push(index ? acc[index - 1] + colWidths[index - 1] : x);
+    return acc;
+  }, []);
+  let out = `<g>${panel(x, y, w, h, t, 16)}`;
+  if (title) {
+    out += `${sectionKicker(x + 22, y + 30, title, t, 0)}`;
+  }
+  out += `<rect x="${x}" y="${tableY}" width="${w}" height="${headerH}" rx="16" fill="${t.primary}" opacity="0.08"/><rect x="${x}" y="${tableY + headerH - 12}" width="${w}" height="12" fill="${t.primary}" opacity="0.08"/>`;
   keys.forEach((key, i) => {
-    const cx = x + i * colW;
-    if (i) out += `<line x1="${cx}" y1="${y + 10}" x2="${cx}" y2="${y + h - 10}" stroke="${t.grid}" stroke-width="1"/>`;
-    out += multiline(cx + 12, y + 24, key, { size: 13, fill: t.primary, weight: 850, maxChars: Math.max(4, Math.floor((colW - 24) / 13)), maxLines: 1 });
+    const cx = colXs[i];
+    const colW = colWidths[i];
+    if (i) out += `<line x1="${cx}" y1="${tableY + 10}" x2="${cx}" y2="${y + h - 10}" stroke="${t.grid}" stroke-width="1"/>`;
+    out += multiline(cx + 12, tableY + 24, key, { size: 12.5, fill: t.primary, weight: 850, maxChars: Math.max(3, Math.floor((colW - 24) / 12.5)), maxLines: 1 });
   });
   shown.forEach((row, ri) => {
-    const ry = y + headerH + ri * rowH;
-    out += `<line x1="${x + 10}" y1="${ry}" x2="${x + w - 10}" y2="${ry}" stroke="${t.grid}" stroke-width="1" opacity="0.8"/>`;
+    const ry = tableY + headerH + ri * rowH;
+    if (ri % 2 === 1) out += `<rect x="${x + 8}" y="${ry + 2}" width="${w - 16}" height="${Math.max(0, rowH - 4)}" rx="10" fill="${t.panel2}" opacity="0.48"/>`;
+    out += `<line x1="${x + 10}" y1="${ry}" x2="${x + w - 10}" y2="${ry}" stroke="${t.grid}" stroke-width="1" opacity="0.75"/>`;
     keys.forEach((key, ci) => {
       const value = plain(row[key]);
-      const cx = x + ci * colW;
-      out += multiline(cx + 12, ry + 24, value, { size: ci === 0 ? 14 : 13, fill: ci === 0 ? t.text : t.subtext, weight: ci === 0 ? 750 : 650, maxChars: Math.max(4, Math.floor((colW - 24) / (ci === 0 ? 14 : 13))), maxLines: 1 });
+      const cx = colXs[ci];
+      const colW = colWidths[ci];
+      const isTextCol = /内容|动作|原因|结论|证据|衡量|指标/.test(plain(key));
+      const fontSize = ci === 0 ? 13 : 12.2;
+      const maxLines = isTextCol && rowH >= 44 ? 2 : 1;
+      out += multiline(cx + 12, ry + 23, value, { size: fontSize, fill: ci === 0 ? t.text : t.subtext, weight: ci === 0 ? 760 : 650, maxChars: Math.max(4, Math.floor((colW - 24) / fontSize)), maxLines, lineHeight: 17 });
     });
   });
   return out + '</g>';
+}
+
+function dataTable(rows: Array<Record<string, string | number>>, x: number, y: number, w: number, h: number, t: Theme): string {
+  return reportTable(rows, x, y, w, h, t);
 }
 
 function metricUnitSignature(metric: DeckMetric): string {
@@ -1474,15 +1658,15 @@ function funnel(items: DeckMetric[], x: number, y: number, w: number, h: number,
   const list = items.slice(0, 5);
   const max = Math.max(...list.map((m) => num(m.value)), 1);
   let out = `<g>${panel(x, y, w, h, t, 16)}`;
-  const rowH = Math.min(54, (h - 50) / Math.max(1, list.length));
+  const rowH = Math.min(48, (h - 24) / Math.max(1, list.length));
   list.forEach((m, i) => {
-    const yy = y + 38 + i * rowH;
+    const yy = y + 14 + i * rowH;
     const labelW = Math.min(120, Math.max(76, w * 0.28));
     const barX = x + labelW + 30;
     const barW = w - labelW - 64;
     const bw = barW * (0.18 + 0.82 * pct(num(m.value), max));
     const color = [t.primary, t.secondary, t.accent, t.warning, t.danger][i % 5];
-    out += `${multiline(x + 20, yy + 29, m.label || '', { size: 13, fill: t.text, weight: 700, maxChars: Math.floor(labelW / 13), maxLines: 1 })}<rect x="${barX}" y="${yy + 8}" width="${barW}" height="26" rx="13" fill="${t.panel2}"/><rect x="${barX}" y="${yy + 8}" width="${bw}" height="26" rx="13" fill="${color}" opacity="0.88"/>${text(x + w - 22, yy + 28, metricValue(m), 13, t.text, 850, 'end')}`;
+    out += `${multiline(x + 20, yy + 27, m.label || '', { size: 13, fill: t.text, weight: 700, maxChars: Math.floor(labelW / 13), maxLines: 1 })}<rect x="${barX}" y="${yy + 6}" width="${barW}" height="26" rx="13" fill="${t.panel2}"/><rect x="${barX}" y="${yy + 6}" width="${bw}" height="26" rx="13" fill="${color}" opacity="0.88"/>${text(x + w - 22, yy + 26, metricValue(m), 13, t.text, 850, 'end')}`;
   });
   return out + '</g>';
 }
@@ -1532,7 +1716,7 @@ function kpiDashboard(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens =
   return svg(frame(slide.title || '关键指标总览', slide.subtitle || 'KEY PERFORMANCE INDICATORS', t, tokens)
     + metricCards(metrics, 80, 150, 690, 276, t, 6, tokens)
     + `<g>${panel(800, 150, 400, 276, t, 20)}${text(828, 198, '运营漏斗 / 结构参考', 20, t.primary, 850)}${funnel(metrics.slice(0, 5), 830, 216, 340, 184, t)}</g>`
-    + `${lineChart(slide.chart, 80, 456, 690, 154, t, slide.data_display, tokens)}`
+    + `${chartBlock(slide.chart, metrics, 80, 456, 690, 154, t, slide.data_display, tokens)}`
     + `<g>${panel(800, 456, 400, 154, t, 18)}${text(828, 500, '本页解读', 20, t.primary, 850)}${bulletList(bullets, 838, 546, t, 2, 22)}</g>`
     + takeawayBand(slide, 80, 630, 1120, t));
 }
@@ -1542,7 +1726,7 @@ function trendSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens = {
   const callouts = (slide.metrics || []).slice(0, 3);
   if (!slide.chart && !callouts.length) return narrativeTemplateSlide(slide, t, tokens);
   return svg(frame(slide.title || '趋势分析', slide.subtitle || 'TREND VIEW', t, tokens)
-    + `${lineChart(slide.chart, 78, 154, 760, 410, t, slide.data_display, tokens)}`
+    + `${chartBlock(slide.chart, chartAsMetrics(slide.chart), 78, 154, 760, 410, t, slide.data_display, tokens)}`
     + `<g>${panel(870, 154, 330, 410, t, 20)}${text(898, 204, '趋势解读', 22, t.primary, 850)}${compactBulletList(bullets, 898, 232, 274, 188, t, 3)}${callouts.map((m, i) => `<g><rect x="${898 + i * 92}" y="466" width="78" height="58" rx="14" fill="${palette(t, i)}" opacity="0.10"/>${text(937 + i * 92, 491, metricValue(m), 15, palette(t, i), 850, 'middle')}${multiline(937 + i * 92, 514, m.label || '', { size: 10, fill: t.subtext, weight: 600, anchor: 'middle', maxChars: 6, maxLines: 1 })}</g>`).join('')}</g>`
     + takeawayBand(slide, 80, 610, 1120, t));
 }
@@ -1552,7 +1736,7 @@ function comparisonSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignToken
   const metrics = (slide.metrics?.length ? slide.metrics : chartAsMetrics(slide.chart)).slice(0, 2);
   if (!slide.chart && !metrics.length) return narrativeTemplateSlide(slide, t, tokens);
   return svg(frame(slide.title || '结构对比', slide.subtitle || 'COMPARISON', t, tokens)
-    + `${barChart(slide.chart, 80, 154, 646, 418, t, slide.data_display, tokens)}`
+    + `${chartBlock(slide.chart, metrics, 80, 154, 646, 418, t, slide.data_display, tokens)}`
     + `<g>${panel(760, 154, 440, 418, t, 20)}${text(792, 206, '结构洞察', 22, t.primary, 850)}${metricCards(metrics, 792, 234, 376, 142, t, 2, tokens)}${compactBulletList(bullets, 792, 404, 376, 126, t, 2)}</g>`
     + takeawayBand(slide, 80, 612, 1120, t));
 }
@@ -1604,7 +1788,7 @@ function closingSlide(slide: DeckSlideSpec, deck: DeckSpecParams, t: Theme, toke
 }
 
 function genericSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens = {}): string {
-  const chart = barChart(slide.chart, 650, 386, 520, 154, t, slide.data_display, tokens);
+  const chart = chartBlock(slide.chart, slide.metrics || [], 650, 386, 520, 154, t, slide.data_display, tokens);
   const metrics = metricCards(slide.metrics || [], 650, 202, 520, 156, t, 4, tokens);
   return svg(frame(slide.title || '分析页', slide.subtitle || plain(slide.slide_type).toUpperCase(), t, tokens)
     + `<g>${panel(80, 154, 500, 420, t, 20)}${text(112, 206, '核心信息', 22, t.primary, 850)}${bulletList(slide.bullets || (slide.takeaway ? [slide.takeaway] : []), 122, 268, t, 5, 27)}</g>`
@@ -1644,8 +1828,8 @@ function kpiHeroMetric(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens 
   return svg(frame(slide.title || '关键指标总览', slide.subtitle || 'KEY PERFORMANCE INDICATORS', t, { ...tokens, background: tokens.background || 'gradient_mesh' })
     + heroMetricBlock(metrics[0], 80, 154, 360, 360, t, '核心 KPI', tokens)
     + metricCards(metrics.slice(1), 474, 154, 726, 176, t, 6, tokens)
-    + lineChart(slide.chart, 474, 358, 726, 156, t, slide.data_display, tokens)
-    + `<g>${panel(80, 548, 1120, 76, t, 18)}${text(112, 594, '管理提示', 20, t.primary, 850)}${bulletList(slide.bullets || (slide.takeaway ? [slide.takeaway] : []), 274, 594, t, 1, 52)}</g>`);
+    + chartBlock(slide.chart, metrics.slice(1), 474, 358, 726, 156, t, slide.data_display, tokens)
+    + `<g>${panel(80, 548, 1120, 76, t, 18)}${text(112, 594, '运营提示', 20, t.primary, 850)}${bulletList(slide.bullets || (slide.takeaway ? [slide.takeaway] : []), 274, 594, t, 1, 52)}</g>`);
 }
 
 function kpiScorecard(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens = {}): string {
@@ -1653,7 +1837,7 @@ function kpiScorecard(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens =
   return svg(frame(slide.title || '关键指标总览', slide.subtitle || 'EXECUTIVE SCORECARD', t, { ...tokens, background: tokens.background || 'grid_dots' })
     + metricRibbon(slide.metrics || [], 80, 150, 1120, 96, t, 6)
     + `<g>${panel(80, 282, 540, 284, t, 20)}${text(112, 330, '指标结构', 22, t.primary, 850)}${funnel(slide.metrics || [], 112, 352, 476, 174, t)}</g>`
-    + `<g>${panel(660, 282, 540, 284, t, 20)}${text(692, 330, '趋势与解释', 22, t.primary, 850)}${lineChart(slide.chart, 692, 352, 476, 112, t, slide.data_display, tokens)}${bulletList(slide.bullets || (slide.takeaway ? [slide.takeaway] : []), 702, 514, t, 1, 30)}</g>`
+    + `<g>${panel(660, 282, 540, 284, t, 20)}${text(692, 330, '趋势与解释', 22, t.primary, 850)}${chartBlock(slide.chart, slide.metrics || [], 692, 352, 476, 112, t, slide.data_display, tokens)}${bulletList(slide.bullets || (slide.takeaway ? [slide.takeaway] : []), 702, 514, t, 1, 30)}</g>`
     + takeawayBand(slide, 80, 612, 1120, t));
 }
 
@@ -1661,7 +1845,7 @@ function trendFullBleed(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens
   if (!slide.chart) return narrativeTemplateSlide(slide, t, tokens);
   const points = slide.highlight_points?.length ? slide.highlight_points : autoHighlightPoints(slide.chart);
   return svg(frame(slide.title || '趋势分析', slide.subtitle || 'FULL BLEED TREND', t, { ...tokens, background: tokens.background || 'clean' })
-    + lineChart(slide.chart, 80, 152, 1120, 360, t, slide.data_display, tokens)
+    + chartBlock(slide.chart, chartAsMetrics(slide.chart), 80, 152, 1120, 360, t, slide.data_display, tokens)
     + highlightBadges(points, 100, 534, 640, t, 3)
     + `<g>${panel(782, 534, 418, 82, t, 16)}${text(812, 574, '趋势判断', 20, t.primary, 850)}${compactBulletList(slide.bullets || (slide.takeaway ? [slide.takeaway] : []), 944, 552, 218, 42, t, 1)}</g>`);
 }
@@ -1670,7 +1854,7 @@ function trendTimeline(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens 
   const timeline = (slide.highlight_points || []).map((p) => p.label || p.reason || '').filter(Boolean);
   if (!slide.chart && !timeline.length) return narrativeTemplateSlide(slide, t, tokens);
   return svg(frame(slide.title || '趋势分析', slide.subtitle || 'TIMELINE BAND', t, tokens)
-    + lineChart(slide.chart, 80, 150, 730, 288, t, slide.data_display, tokens)
+    + chartBlock(slide.chart, chartAsMetrics(slide.chart), 80, 150, 730, 288, t, slide.data_display, tokens)
     + `<g>${panel(842, 150, 358, 288, t, 20)}${text(872, 198, '变化解释', 22, t.primary, 850)}${compactBulletList(slide.bullets || (slide.takeaway ? [slide.takeaway] : []), 872, 226, 296, 172, t, 3)}</g>`
     + `<g>${panel(80, 476, 1120, 128, t, 20)}${timelineBand(timeline.length ? timeline : (slide.bullets || []), 160, 522, 960, t, 5)}</g>`
     + takeawayBand(slide, 80, 626, 1120, t));
@@ -1681,7 +1865,7 @@ function comparisonMatrix(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignToke
   const chart = slide.chart || chartFromMetrics(slide.metrics, 'bar');
   if (!chart && !bullets.length && !slide.metrics?.length) return narrativeTemplateSlide(slide, t, tokens);
   return svg(frame(slide.title || '结构对比', slide.subtitle || 'COMPARISON MATRIX', t, { ...tokens, background: tokens.background || 'grid_dots' })
-    + barChart(chart, 80, 154, 650, 420, t, slide.data_display, tokens)
+    + chartBlock(chart, slide.metrics || [], 80, 154, 650, 420, t, slide.data_display, tokens)
     + `<g>${panel(764, 154, 436, 420, t, 20)}${text(794, 204, '结构洞察', 22, t.primary, 850)}${metricCards((slide.metrics || chartAsMetrics(chart)).slice(0, 2), 794, 232, 376, 132, t, 2, tokens)}${insightCards(bullets.length ? bullets : (slide.metrics || []).map((m) => `${m.label}：${metricValue(m)}`), 794, 394, 376, 136, t, 2)}</g>`
     + takeawayBand(slide, 80, 612, 1120, t));
 }
@@ -1749,18 +1933,118 @@ function componentDashboardSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDes
   if (!chart && !metrics.length && !bullets.length) return componentGridSlide(slide, t, tokens);
   const display = slide.data_display || {};
   const chartType = canonicalVariant(chart?.type || chartComponent?.layout_variant || chartComponent?.type || '');
-  const chartSvg = chartType === 'line' || chartType === 'area'
-    ? lineChart(chart, 80, 154, 704, 360, t, display, tokens)
-    : chartType === 'ranking' || chartType === 'ranking_list'
-      ? rankingList(chartAsMetrics(chart), 80, 154, 704, 360, t)
-      : chartType === 'funnel' || chartType === 'funnel_panel'
-        ? funnel(chartAsMetrics(chart), 80, 154, 704, 360, t)
-        : barChart(chart, 80, 154, 704, 360, t, display, tokens);
+  const normalizedChart = chart && !chart.type && chartType ? { ...chart, type: chartType } : chart;
+  const chartSvg = chartBlock(normalizedChart, chartAsMetrics(normalizedChart), 80, 154, 704, 360, t, display, tokens);
   return svg(frame(slide.title || '组件化看板', slide.subtitle || 'MODEL CONTROLLED DASHBOARD', t, tokens)
     + chartSvg
     + metricCards(metrics, 820, 154, 380, 170, t, 4, tokens)
     + `<g>${panel(820, 354, 380, 160, t, 18)}${text(848, 400, '洞察 / 动作', 20, t.primary, 850)}${compactBulletList(bullets.length ? bullets : (slide.takeaway ? [slide.takeaway] : []), 848, 426, 314, 64, t, 2)}</g>`
     + takeawayBand(slide, 80, 612, 1120, t));
+}
+
+function tableComponents(slide: DeckSlideSpec): DeckComponentSpec[] {
+  return (slide.components || []).filter((component) => component.table?.length);
+}
+
+function firstTable(slide: DeckSlideSpec, titlePattern?: RegExp): DeckComponentSpec | undefined {
+  const tables = tableComponents(slide);
+  if (!titlePattern) return tables[0];
+  return tables.find((component) => titlePattern.test(plain(component.title))) || tables[0];
+}
+
+function componentInsightText(component: DeckComponentSpec): string {
+  const items = componentItems(component);
+  if (items.length) return items.join('；');
+  return componentText(component);
+}
+
+function reportInsights(slide: DeckSlideSpec, extra: Array<unknown> = [], max = 3): string[] {
+  return uniqueTexts([
+    ...(slide.bullets || []),
+    ...(slide.components || []).filter((component) => !component.table?.length).map(componentInsightText),
+    ...extra,
+    slide.takeaway,
+  ], [], max);
+}
+
+function renderExecutiveReportSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens): string | undefined {
+  const table = firstTable(slide);
+  if (!table?.table?.length) return undefined;
+  const insights = reportInsights(slide, [], 3);
+  return svg(frame(slide.title || '核心结论', slide.subtitle || 'EXECUTIVE SUMMARY', t, { ...tokens, background: tokens.background || 'clean' })
+    + metricRibbon(slide.metrics || [], 80, 150, 1120, 88, t, 4)
+    + reportTable(table.table, 80, 268, 720, 302, t, table.title || '核心判断表')
+    + `<g>${panel(832, 268, 368, 302, t, 18)}${text(862, 316, '关键判断', 22, t.primary, 850)}${insightCards(insights, 862, 340, 300, 184, t, 3)}</g>`
+    + takeawayBand(slide, 80, 612, 1120, t));
+}
+
+function renderKpiReportSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens): string | undefined {
+  const table = firstTable(slide, /KPI|指标|明细/);
+  if (!table?.table?.length && !slide.metrics?.length) return undefined;
+  const funnelComponent = (slide.components || []).find((component) => canonicalVariant(component.type || '') === 'funnel_panel');
+  const funnelMetrics = funnelComponent ? componentMetrics(funnelComponent) : (slide.chart ? chartAsMetrics(slide.chart) : (slide.metrics || []));
+  return svg(frame(slide.title || '关键指标', slide.subtitle || 'KPI DASHBOARD', t, { ...tokens, background: tokens.background || 'grid_dots' })
+    + metricRibbon(slide.metrics || [], 80, 148, 1120, 92, t, 6)
+    + (table?.table?.length ? reportTable(table.table, 80, 270, 662, 300, t, table.title || '核心 KPI 明细') : '')
+    + `<g>${panel(772, 270, 428, 300, t, 18)}${text(802, 318, '触达转化漏斗', 22, t.primary, 850)}${funnel(funnelMetrics, 812, 346, 348, 162, t)}${compactBulletList(reportInsights(slide, [], 2), 802, 518, 348, 36, t, 1)}</g>`
+    + takeawayBand(slide, 80, 612, 1120, t));
+}
+
+function renderTrendReportSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens): string | undefined {
+  const table = firstTable(slide, /月度|趋势|数据/);
+  if (!slide.chart && !table?.table?.length) return undefined;
+  return svg(frame(slide.title || '阅读与互动趋势', slide.subtitle || 'TREND', t, { ...tokens, background: tokens.background || 'clean' })
+    + lineChart(slide.chart, 80, 154, 728, 330, t, { ...(slide.data_display || {}), show_value_labels: false, show_legend: false }, tokens)
+    + (table?.table?.length ? reportTable(table.table, 838, 154, 362, 330, t, table.title || '月度数据表') : '')
+    + miniInsightRow(reportInsights(slide, [], 3), 80, 512, 1120, 76, t, 3)
+    + takeawayBand(slide, 80, 612, 1120, t));
+}
+
+function renderComparisonReportSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens): string | undefined {
+  const tables = tableComponents(slide);
+  if (!tables.length) return undefined;
+  const contentTable = tables.find((component) => /内容|TOP/.test(plain(component.title))) || tables[0];
+  const projectTable = tables.find((component) => /项目/.test(plain(component.title))) || tables[1];
+  const insights = reportInsights(slide, [], 3);
+  return svg(frame(slide.title || '内容与项目表现', slide.subtitle || 'CONTENT & PROJECTS', t, { ...tokens, background: tokens.background || 'gradient_mesh' })
+    + reportTable(contentTable.table || [], 80, 154, projectTable ? 650 : 1120, 314, t, contentTable.title || '内容 TOP 明细')
+    + (projectTable?.table?.length ? reportTable(projectTable.table, 760, 154, 440, 314, t, projectTable.title || '项目贡献表') : '')
+    + miniInsightRow(insights, 80, 502, 1120, 86, t, 3)
+    + takeawayBand(slide, 80, 612, 1120, t));
+}
+
+function renderDiagnosisReportSlide(slide: DeckSlideSpec, t: Theme, tokens: DeckDesignTokens): string | undefined {
+  const table = firstTable(slide, /诊断|问题/);
+  if (!table?.table?.length) return undefined;
+  const metricTexts = (slide.metrics || []).slice(0, 3).map((m) => `${m.label || '指标'}：${metricValue(m)}${m.note ? `，${m.note}` : ''}`);
+  const insights = reportInsights(slide, metricTexts, 3);
+  return svg(frame(slide.title || '问题诊断与机会判断', slide.subtitle || 'DIAGNOSIS', t, { ...tokens, background: tokens.background || 'clean' })
+    + reportTable(table.table, 80, 154, 1120, 324, t, table.title || '诊断表')
+    + miniInsightRow(insights, 80, 508, 1120, 80, t, 3)
+    + takeawayBand(slide, 80, 612, 1120, t));
+}
+
+function renderClosingReportSlide(slide: DeckSlideSpec, deck: DeckSpecParams, t: Theme, tokens: DeckDesignTokens): string | undefined {
+  const table = firstTable(slide, /行动|计划/);
+  if (!table?.table?.length) return undefined;
+  const timelineItems = (slide.components || []).find((component) => canonicalVariant(component.type || '') === 'timeline')?.items || slide.bullets || [];
+  return svg(frame(slide.title || deck.title || '下一步行动建议', slide.subtitle || 'ACTION PLAN', t, { ...tokens, background: tokens.background || 'grid_dots' })
+    + reportTable(table.table, 80, 154, 720, 360, t, table.title || '行动计划表')
+    + `<g>${panel(832, 154, 368, 360, t, 20)}${text(862, 204, '推进节奏', 22, t.primary, 850)}${compactBulletList(timelineItems, 862, 238, 300, 212, t, 4)}<rect x="862" y="472" width="300" height="30" rx="15" fill="${t.secondary}" opacity="0.10"/>${text(1012, 493, '按周复盘 · 按月优化', 13, t.secondary, 850, 'middle')}</g>`
+    + miniInsightRow(reportInsights(slide, [], 3), 80, 542, 1120, 52, t, 3)
+    + takeawayBand(slide, 80, 612, 1120, t));
+}
+
+function renderReportLayoutSlide(slide: DeckSlideSpec, deck: DeckSpecParams, t: Theme, tokens: DeckDesignTokens): string | undefined {
+  const type = normalizeType(slide);
+  if (!tableComponents(slide).length) return undefined;
+  if (type === 'executive_summary' || slide.visual_intent === 'executive_summary') return renderExecutiveReportSlide(slide, t, tokens);
+  if (type === 'kpi_dashboard' || type === 'overview') return renderKpiReportSlide(slide, t, tokens);
+  if (type === 'trend' || type === 'monthly_trend') return renderTrendReportSlide(slide, t, tokens);
+  if (type === 'comparison' || type === 'project_comparison') return renderComparisonReportSlide(slide, t, tokens);
+  if (type === 'diagnosis' || type === 'risk') return renderDiagnosisReportSlide(slide, t, tokens);
+  if (type === 'closing' || type === 'thanks' || type === 'roadmap' || type === 'next_steps') return renderClosingReportSlide(slide, deck, t, tokens);
+  return undefined;
 }
 
 function svg(inner: string): string {
@@ -1961,9 +2245,18 @@ function variantFor(slide: DeckSlideSpec, index: number, previous?: string): str
   const pool = AUTO_VARIANTS[type] || ['default'];
   let variant = pool[(index - 1) % pool.length];
   if (previous && variant === previous && pool.length > 1) variant = pool[index % pool.length];
+  const visualIntent = canonicalVariant(slide.visual_intent || '');
+  const chartType = canonicalVariant(slide.chart?.type || '');
+  const slideTokens = { ...(slide.design_tokens || {}), ...(slide.style || {}) };
+  const chartStyle = canonicalVariant(slideTokens.chart_style || '');
   if (slide.emphasis === 'hero_metric' && pool.includes('hero_metric')) return 'hero_metric';
   if (slide.emphasis === 'chart' && pool.includes('full_bleed_chart')) return 'full_bleed_chart';
   if (slide.emphasis === 'timeline' && pool.includes('timeline_band')) return 'timeline_band';
+  if ((visualIntent.includes('diagnosis') || visualIntent.includes('risk')) && pool.includes('funnel_focus')) return 'funnel_focus';
+  if ((visualIntent.includes('action') || visualIntent.includes('roadmap')) && pool.includes('swimlane')) return 'swimlane';
+  if ((visualIntent.includes('growth') || chartStyle === 'bold') && pool.includes('full_bleed_chart')) return 'full_bleed_chart';
+  if (['donut', 'treemap', 'matrix'].includes(chartType) && pool.includes('matrix')) return 'matrix';
+  if (chartType === 'ranking' && pool.includes('content_cards') && slideTokens.card_style !== 'outlined') return 'content_cards';
   return variant;
 }
 
@@ -1976,6 +2269,36 @@ function applyRhythm(slides: DeckSlideSpec[]): DeckSlideSpec[] {
   });
 }
 
+function renderDesignedVariantSlide(slide: DeckSlideSpec, deck: DeckSpecParams, t: Theme, tokens: DeckDesignTokens, type: string, variant: string): string | undefined {
+  if (type === 'executive_summary') return variant === 'insight_split' ? executiveSplit(slide, t, tokens) : executiveSummary(slide, t, tokens);
+  if (type === 'kpi_dashboard' || type === 'overview') {
+    if (variant === 'hero_metric') return kpiHeroMetric(slide, t, tokens);
+    if (variant === 'scorecard') return kpiScorecard(slide, t, tokens);
+    return kpiDashboard(slide, t, tokens);
+  }
+  if (type === 'trend' || type === 'monthly_trend') {
+    if (variant === 'full_bleed_chart') return trendFullBleed(slide, t, tokens);
+    if (variant === 'timeline_band') return trendTimeline(slide, t, tokens);
+    return trendSlide(slide, t, tokens);
+  }
+  if (type === 'comparison' || type === 'project_comparison' || type === 'bar_chart') {
+    return variant === 'matrix' ? comparisonMatrix(slide, t, tokens) : comparisonSlide(slide, t, tokens);
+  }
+  if (type === 'ranking' || type === 'top_content' || type === 'content_highlight') {
+    return variant === 'content_cards' ? rankingCards(slide, t, tokens) : rankingSlide(slide, t, tokens);
+  }
+  if (type === 'diagnosis' || type === 'risk') {
+    return variant === 'funnel_focus' ? diagnosisFunnelFocus(slide, t, tokens) : diagnosisSlide(slide, t, tokens);
+  }
+  if (type === 'roadmap' || type === 'next_steps') {
+    return variant === 'swimlane' ? roadmapSwimlane(slide, t, tokens) : roadmapSlide(slide, t, tokens);
+  }
+  if (type === 'components') return variant === 'component_dashboard' ? componentDashboardSlide(slide, t, tokens) : componentGridSlide(slide, t, tokens);
+  if (variant === 'component_dashboard') return componentDashboardSlide(slide, t, tokens);
+  if (variant === 'component_grid') return componentGridSlide(slide, t, tokens);
+  return undefined;
+}
+
 function renderSlide(slide: DeckSlideSpec, deck: DeckSpecParams, t: Theme, index: number): string {
   const hydrated = { ...hydrateSlide(slide, deck.data_display), data_display: { ...(deck.data_display || {}), ...(slide.data_display || {}) } };
   const type = normalizeType(hydrated);
@@ -1985,7 +2308,11 @@ function renderSlide(slide: DeckSlideSpec, deck: DeckSpecParams, t: Theme, index
   const theme = themeWithTokens(t, tokens);
   if (index === 1 || type === 'cover') return variant === 'statement_cover' || variant === 'title_wall' ? coverStatement(hydrated, deck, theme, index, tokens) : cover(hydrated, deck, theme, index, tokens);
   if (type === 'toc' || type === 'agenda') return toc(hydrated, deck, theme, tokens);
+  const reportLayout = renderReportLayoutSlide(hydrated, deck, theme, tokens);
+  if (reportLayout) return reportLayout;
   if (type === 'closing' || type === 'thanks') return closingSlide(hydrated, deck, theme, tokens);
+  const designed = renderDesignedVariantSlide(hydrated, deck, theme, tokens, type, variant);
+  if (designed) return designed;
   return renderConstraintLayout(hydrated, theme, tokens);
 }
 
