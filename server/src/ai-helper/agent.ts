@@ -1006,22 +1006,26 @@ function buildTaskMetrics(shortcut: AiShortcut | undefined, primaryMetrics: Pref
   };
 }
 
-async function buildPrimaryDataContext(req: RunRequest, rootDir: string): Promise<Record<string, unknown>> {
-  const defaultMetrics = await prefetchMetrics();
+function tenantScopedParams(params: PrefetchMetricsParams = {}, tenantId?: string): PrefetchMetricsParams {
+  return tenantId ? { ...params, tenantId } : params;
+}
+
+async function buildPrimaryDataContext(req: RunRequest, rootDir: string, tenantId?: string): Promise<Record<string, unknown>> {
+  const defaultMetrics = await prefetchMetrics(tenantScopedParams({}, tenantId));
   const scope = resolvePrimaryDataScope(req, defaultMetrics.range.end);
-  const primaryMetrics = scope.params.dateRange ? await prefetchMetrics(scope.params) : defaultMetrics;
+  const primaryMetrics = scope.params.dateRange ? await prefetchMetrics(tenantScopedParams(scope.params, tenantId)) : defaultMetrics;
   const supplemental: Record<string, unknown> = {};
   const storeGroups: Array<{ prefix: string; label: string; metrics: PrefetchMetrics }> = [
     { prefix: 'primary', label: '主数据', metrics: primaryMetrics },
   ];
 
   if (scope.data_scope === 'latest_complete_month' && scope.compareRange) {
-    const previousMetrics = await prefetchMetrics({
+    const previousMetrics = await prefetchMetrics(tenantScopedParams({
       dateRange: scope.compareRange,
       granularity: 'week',
       limit: 40,
       purpose: '月报环比对比',
-    });
+    }, tenantId));
     supplemental.previous_period = {
       label: '前一个完整自然月',
       dateRange: scope.compareRange,
@@ -1036,18 +1040,18 @@ async function buildPrimaryDataContext(req: RunRequest, rootDir: string): Promis
     const previous30 = range(addDays(latest, -59), addDays(latest, -30));
     const recent30Label = directPptRangeLabel(recent30, '重点观察期');
     const previous30Label = directPptRangeLabel(previous30, '对比观察期');
-    const recent30Metrics = await prefetchMetrics({
+    const recent30Metrics = await prefetchMetrics(tenantScopedParams({
       dateRange: recent30,
       granularity: 'day',
       limit: 40,
       purpose: `PPT 核心结论重点观察期数据：${recent30Label}`,
-    });
-    const previous30Metrics = await prefetchMetrics({
+    }, tenantId));
+    const previous30Metrics = await prefetchMetrics(tenantScopedParams({
       dateRange: previous30,
       granularity: 'day',
       limit: 40,
       purpose: `PPT 核心结论对比观察期数据：${previous30Label}`,
-    });
+    }, tenantId));
     supplemental.recent_30_days = {
       label: recent30Label,
       dateRange: recent30,
@@ -1086,10 +1090,10 @@ async function buildMessages(
   rootDir: string,
   registry: SkillRegistry,
   executor: SkillExecutor,
-  options: { includePreviousTurn?: boolean } = {},
+  options: { includePreviousTurn?: boolean; tenantId?: string } = {},
 ): Promise<{ messages: ChatMessage[]; initialSkills: string[]; primaryDataContext: Record<string, unknown> }> {
   const userText = (req.message || req.command || '').trim() || '请根据我的需求完成分析并交付。';
-  const primaryDataContext = await buildPrimaryDataContext(req, rootDir);
+  const primaryDataContext = await buildPrimaryDataContext(req, rootDir, options.tenantId);
   const catalog = registry.buildPromptContext();
   const primaryDataStr = `primary_data_context（本轮快捷入口默认主数据；可按需调用 px-data 补取）：\n${JSON.stringify(primaryDataContext, null, 2)}`;
   const actionSpecMode = actionSpecModeForRequest(req);
@@ -1156,7 +1160,7 @@ function sameRange(a: unknown, b: unknown): boolean {
 }
 
 function hasExtraPxFilters(params: Record<string, unknown>): boolean {
-  return ['projectId', 'contentId', 'diseaseId', 'tenantId', 'compareRange'].some((key) => params[key] !== undefined && params[key] !== '');
+  return ['projectId', 'contentId', 'diseaseId', 'compareRange'].some((key) => params[key] !== undefined && params[key] !== '');
 }
 
 function isPrimaryDataDuplicate(call: SkillCall, primaryDataContext: Record<string, unknown>): boolean {
@@ -2652,7 +2656,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     }
     return files.map((file) => publishedFileCache.get(file) || file);
   };
-  const executor = new SkillExecutor(rootDir, { allowManualPptSvg: isPremiumPptSvg, signal, publishFiles });
+  const executor = new SkillExecutor(rootDir, { allowManualPptSvg: isPremiumPptSvg, signal, publishFiles, tenantId: options.tenantId });
   const trace: AgentDonePayload['trace'] = [];
   const backgroundJobs: BackgroundJob[] = [];
   const injected = new Set<string>();
@@ -2697,7 +2701,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     const skillsUsed = new Set<string>(['patient-education-data-overview', 'md-to-pdf']);
     try {
       yield emit('progress', { phase: 'data', message: '正在聚合最近 7 天核心指标、项目贡献与内容表现', step: 1 });
-      const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir);
+      const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir, options.tenantId);
       const summaryText = buildOverviewSummaryText(primaryDataContext);
       const emitTextResult = await executor.execute({
         type: 'skill_call',
@@ -2761,7 +2765,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   if (isPptLocalEdit) {
     const trace: AgentDonePayload['trace'] = [];
     const skillsUsed = new Set<string>(['ppt-master']);
-    const editExecutor = new SkillExecutor(rootDir, { allowManualPptSvg: true, signal, publishFiles });
+    const editExecutor = new SkillExecutor(rootDir, { allowManualPptSvg: true, signal, publishFiles, tenantId: options.tenantId });
     const isPremiumLocalEdit = shortcut === 'ppt_svg' || classifiedIntent?.ppt_mode === 'premium';
     let expectedEditPages: number[] = [];
     const writtenEditPages = new Set<number>();
@@ -2984,7 +2988,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       const skillsUsed = new Set<string>(['ppt-master']);
 
       yield emit('progress', { phase: 'data', message: '正在聚合 PPT 快速版所需核心指标、趋势、内容与项目数据', step: 1 });
-      const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir);
+      const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir, options.tenantId);
       const totalSlides = Math.max(6, Math.min(8, Number(process.env.AI_HELPER_PPT_FAST_SLIDES || 7) || 7));
       const earlySummaryText = buildDirectPptEarlySummaryText(primaryDataContext, totalSlides);
       yield emit('text', earlySummaryText);
@@ -3291,22 +3295,22 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     const skillsUsed = new Set<string>(['monthly-template', 'md-to-pdf']);
     try {
       yield emit('progress', { phase: 'data', message: '正在聚合本月与上月指标', step: 1 });
-      const defaultMetrics = await prefetchMetrics();
+      const defaultMetrics = await prefetchMetrics(tenantScopedParams({}, options.tenantId));
       const scope = resolvePrimaryDataScope(effectiveReq, defaultMetrics.range.end);
       if (!scope.dateRange || !scope.compareRange) throw new Error('无法解析月报周期或对比周期');
-      const currentMetrics = await prefetchMetrics({
+      const currentMetrics = await prefetchMetrics(tenantScopedParams({
         dateRange: scope.dateRange,
         compareRange: scope.compareRange,
         granularity: 'week',
         limit: 70,
         purpose: '后端模板月报：本月主数据',
-      });
-      const previousMetrics = await prefetchMetrics({
+      }, options.tenantId));
+      const previousMetrics = await prefetchMetrics(tenantScopedParams({
         dateRange: scope.compareRange,
         granularity: 'week',
         limit: 70,
         purpose: '后端模板月报：上月对比数据',
-      });
+      }, options.tenantId));
       writeMetricStores(rootDir, [
         { prefix: 'primary', label: '本月主数据', metrics: currentMetrics },
         { prefix: 'previous_period', label: '上月对比数据', metrics: previousMetrics },
@@ -3368,7 +3372,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   let messages: ChatMessage[];
   let primaryDataContext: Record<string, unknown>;
   try {
-    ({ messages, primaryDataContext } = await buildMessages(effectiveReq, rootDir, registry, executor, { includePreviousTurn }));
+    ({ messages, primaryDataContext } = await buildMessages(effectiveReq, rootDir, registry, executor, { includePreviousTurn, tenantId: options.tenantId }));
   } catch (err) {
     if (isAbortError(err)) throw err;
     const text = `PX 数据预取失败：${err instanceof Error ? err.message : String(err)}`;
@@ -3645,11 +3649,11 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   yield emit('done', { text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs });
 }
 
-export async function runAssistant(req: RunRequest): Promise<{ text: string; files: string[]; skills_used: string[] }> {
+export async function runAssistant(req: RunRequest, options: StreamAssistantOptions = {}): Promise<{ text: string; files: string[]; skills_used: string[] }> {
   let text = '';
   let files: string[] = [];
   let skills_used: string[] = [];
-  for await (const line of streamAssistant(req)) {
+  for await (const line of streamAssistant(req, options)) {
     const evt = JSON.parse(line) as { type: string; data: unknown };
     if (evt.type === 'text') text += String(evt.data || '');
     if (evt.type === 'files' && Array.isArray(evt.data)) files = evt.data as string[];

@@ -142,12 +142,18 @@ async function readDailyRows(params: PrefetchMetricsParams = {}): Promise<AnyRow
   );
 }
 
-async function readInventoryStats(): Promise<{ projectCount: number; contentCount: number; publishedCount: number }> {
+async function readInventoryStats(params: PrefetchMetricsParams = {}): Promise<{ projectCount: number; contentCount: number; publishedCount: number }> {
+  const tenantId = cleanId(params.tenantId);
+  const projectWhere = tenantId ? ' WHERE tenant_id = ?' : '';
+  const contentWhere = tenantId ? ' WHERE tenant_id = ?' : '';
+  const publishedWhere = tenantId ? " WHERE status = 'published' AND tenant_id = ?" : " WHERE status = 'published'";
+  const values = tenantId ? [tenantId, tenantId, tenantId] : [];
   const row = await dbGet<AnyRow>(
     `SELECT
-       (SELECT COUNT(*) FROM projects) AS project_count,
-       (SELECT COUNT(*) FROM content) AS content_count,
-       (SELECT COUNT(*) FROM content WHERE status = 'published') AS published_count`,
+       (SELECT COUNT(*) FROM projects${projectWhere}) AS project_count,
+       (SELECT COUNT(*) FROM content${contentWhere}) AS content_count,
+       (SELECT COUNT(*) FROM content${publishedWhere}) AS published_count`,
+    values,
   );
   return {
     projectCount: num(row?.project_count),
@@ -203,6 +209,14 @@ async function readTopContent(params: PrefetchMetricsParams = {}): Promise<TopCo
 
 async function readProjects(params: PrefetchMetricsParams = {}): Promise<ProjectMetric[]> {
   const filter = metricFilters(params, '');
+  const tenantId = cleanId(params.tenantId);
+  const projectWhere = tenantId ? 'WHERE p.tenant_id = ?' : '';
+  const contentWhere = tenantId ? ' AND tenant_id = ?' : '';
+  const values = [
+    ...(tenantId ? [tenantId] : []),
+    ...filter.values,
+    ...(tenantId ? [tenantId] : []),
+  ];
   const rows = await dbAll<AnyRow>(
     `SELECT
         p.id,
@@ -221,7 +235,7 @@ async function readProjects(params: PrefetchMetricsParams = {}): Promise<Project
                 COUNT(*) AS content_count,
                 SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) AS published_count
            FROM content
-          WHERE project_id IS NOT NULL AND project_id <> ''
+          WHERE project_id IS NOT NULL AND project_id <> ''${contentWhere}
           GROUP BY project_id
        ) c ON c.project_id = p.id
        LEFT JOIN (
@@ -234,9 +248,10 @@ async function readProjects(params: PrefetchMetricsParams = {}): Promise<Project
           WHERE project_id IS NOT NULL AND project_id <> ''${filter.where}
           GROUP BY project_id
        ) m ON m.project_id = p.id
+      ${projectWhere}
       ORDER BY read_count DESC, interaction_count DESC, content_count DESC
       LIMIT 30`,
-    filter.values,
+    values,
   );
   return rows.map((r) => ({
     id: str(r.id),
@@ -293,7 +308,7 @@ function buildInsights(metrics: Omit<PrefetchMetrics, 'insights'>): string[] {
 export async function prefetchMetrics(params: PrefetchMetricsParams = {}): Promise<PrefetchMetrics> {
   const [dailyRows, inventory, topContent, projects, diseases] = await Promise.all([
     readDailyRows(params),
-    readInventoryStats(),
+    readInventoryStats(params),
     readTopContent(params),
     readProjects(params),
     readDiseaseBreakdown(params),
@@ -389,7 +404,8 @@ export async function prefetchMetrics(params: PrefetchMetricsParams = {}): Promi
   return { ...partial, insights: buildInsights(partial) };
 }
 
-export async function prefetchDataQaContext(): Promise<DataQaContext> {
+export async function prefetchDataQaContext(params: PrefetchMetricsParams = {}): Promise<DataQaContext> {
+  const tenantId = cleanId(params.tenantId);
   const tableNames = [
     'projects',
     'content',
@@ -403,7 +419,16 @@ export async function prefetchDataQaContext(): Promise<DataQaContext> {
   const countRows = await Promise.all(
     tableNames.map(async (table) => {
       try {
-        const row = await dbGet<{ cnt: number | string }>(`SELECT COUNT(*) AS cnt FROM ${table}`);
+        const tenantTables = new Set(['projects', 'content', 'behavior_daily_metrics', 'distribution_projects', 'distribution_strategies', 'users']);
+        const where = tenantId
+          ? table === 'tenants'
+            ? ' WHERE id = ?'
+            : tenantTables.has(table)
+              ? ' WHERE tenant_id = ?'
+              : ''
+          : '';
+        const values = where ? [tenantId] : [];
+        const row = await dbGet<{ cnt: number | string }>(`SELECT COUNT(*) AS cnt FROM ${table}${where}`, values);
         return [table, num(row?.cnt)] as const;
       } catch {
         return [table, 0] as const;
@@ -419,13 +444,16 @@ export async function prefetchDataQaContext(): Promise<DataQaContext> {
     distinctProjects: 0,
   };
   try {
+    const filter = metricFilters(params, '');
     const row = await dbGet<AnyRow>(
       `SELECT COUNT(*) AS row_count,
               MIN(metric_date) AS min_date,
               MAX(metric_date) AS max_date,
               COUNT(DISTINCT content_id) AS distinct_content,
               COUNT(DISTINCT project_id) AS distinct_projects
-         FROM behavior_daily_metrics`,
+         FROM behavior_daily_metrics
+        WHERE 1 = 1${filter.where}`,
+      filter.values,
     );
     behavior = {
       rows: num(row?.row_count),

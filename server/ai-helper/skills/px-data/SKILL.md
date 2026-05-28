@@ -9,7 +9,7 @@ description: PX 当前数据库数据工具。用于基于用户意图传入结�
 
 ### prefetch_metrics
 
-Use when the user asks for overview/trend/monthly/PPT data outside the initial default context, or specifies date range/project/content/disease/tenant filters.
+Use when the user asks for overview/trend/monthly/PPT data outside the initial default context, or specifies date range/project/content/disease filters.
 
 Params:
 
@@ -21,13 +21,12 @@ Params:
   "projectId": "optional",
   "contentId": "optional",
   "diseaseId": "optional",
-  "tenantId": "optional",
   "granularity": "day|week|month",
   "limit": 20
 }
 ```
 
-Only pass parameters that are present in or directly implied by user intent. Do not write SQL.
+Only pass parameters that are present in or directly implied by user intent. Do not write SQL. Tenant scoping is enforced by backend auth context and must not be supplied by the model.
 
 ### prefetch_data_qa_context
 

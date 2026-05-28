@@ -110,7 +110,7 @@ router.get('/system_prompt', (_req, res) => {
 
 router.get('/data/summary', async (_req, res, next) => {
   try {
-    res.json({ ok: true, metrics: await prefetchMetrics() });
+    res.json({ ok: true, metrics: await prefetchMetrics({ tenantId: _req.user?.tenantId }) });
   } catch (err) {
     next(err);
   }
@@ -204,7 +204,7 @@ router.delete('/session', deleteAiHelperSession);
 
 router.post(['/run', '/command'], async (req, res, next) => {
   try {
-    res.json({ ok: true, ...(await runAssistant(req.body || {})) });
+    res.json({ ok: true, ...(await runAssistant(req.body || {}, { userId: req.user?.id, tenantId: req.user?.tenantId })) });
   } catch (err) {
     next(err);
   }

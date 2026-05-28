@@ -21,7 +21,6 @@ type VisualPlan = {
   projectId?: string;
   contentId?: string;
   diseaseId?: string;
-  tenantId?: string;
 };
 
 type Derived = {
@@ -111,7 +110,6 @@ function planParams(plan: VisualPlan): PrefetchMetricsParams {
     projectId: plan.projectId,
     contentId: plan.contentId,
     diseaseId: plan.diseaseId,
-    tenantId: plan.tenantId,
     // `limit` is used by the backend both for top-content SQL cap and dailyTrend cap.
     // Keep it high enough so weekly rhythm/anomaly modules have the full recent window;
     // visual top content count is still controlled by top_content_count below.
@@ -120,7 +118,7 @@ function planParams(plan: VisualPlan): PrefetchMetricsParams {
 }
 
 async function overviewMetricsForPlan(plan: VisualPlan, prefetchMetrics: PrefetchMetricsFn): Promise<PrefetchMetrics> {
-  if (plan.dateRange?.start || plan.dateRange?.end || plan.projectId || plan.contentId || plan.diseaseId || plan.tenantId) {
+  if (plan.dateRange?.start || plan.dateRange?.end || plan.projectId || plan.contentId || plan.diseaseId) {
     return prefetchMetrics(planParams(plan));
   }
 

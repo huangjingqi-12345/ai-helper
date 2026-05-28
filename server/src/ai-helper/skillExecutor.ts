@@ -31,6 +31,7 @@ export interface SkillExecutorOptions {
   allowManualPptSvg?: boolean;
   signal?: AbortSignal;
   publishFiles?: (files: string[]) => Promise<string[]>;
+  tenantId?: string;
 }
 
 export type ActionSpecMode = 'general' | 'data-qa' | 'overview' | 'monthly' | 'ppt-svg' | 'ppt-edit-svg';
@@ -598,7 +599,6 @@ export class SkillExecutor {
         projectId: '可选',
         contentId: '可选',
         diseaseId: '可选',
-        tenantId: '可选',
         granularity: 'day|week|month',
         limit: 20,
       },
@@ -711,6 +711,11 @@ export class SkillExecutor {
     return call.skill_id === 'ppt-master' && call.action === 'ppt_master_export' && process.env.AI_HELPER_PPT_EXPORT_BACKGROUND === 'true';
   }
 
+  private scopedMetricParams(params: Record<string, unknown>): Record<string, unknown> {
+    const tenantId = str(this.options.tenantId);
+    return tenantId ? { ...params, tenantId } : params;
+  }
+
   async execute(call: SkillCall): Promise<SkillResult> {
     try {
       return await this.executeStrict(call);
@@ -733,8 +738,8 @@ export class SkillExecutor {
 
     let result: SkillResult;
     if (action === 'emit_text') result = this.emitText(params);
-    else if (skillId === 'px-data' && action === 'prefetch_metrics') result = await this.runSkillScript('px-data', 'scripts/prefetch_metrics.ts', [JSON.stringify(params)], 120_000);
-    else if (skillId === 'px-data' && action === 'prefetch_data_qa_context') result = await this.runSkillScript('px-data', 'scripts/prefetch_data_qa_context.ts', [JSON.stringify(params)], 120_000);
+    else if (skillId === 'px-data' && action === 'prefetch_metrics') result = await this.runSkillScript('px-data', 'scripts/prefetch_metrics.ts', [JSON.stringify(this.scopedMetricParams(params))], 120_000);
+    else if (skillId === 'px-data' && action === 'prefetch_data_qa_context') result = await this.runSkillScript('px-data', 'scripts/prefetch_data_qa_context.ts', [JSON.stringify(this.scopedMetricParams(params))], 120_000);
     else if (skillId === 'px-data' && action === 'read_metric_file') result = await this.readMetricFile(params);
     else if (action === 'read_skill_file') result = await this.readSkillFile(skillId, str(params.path || 'SKILL.md'), Number(params.max_chars || 12000));
     else if (action === 'run_skill_script') result = await this.runSkillScript(skillId, str(params.script), Array.isArray(params.args) ? params.args.map(String) : [], Number(params.timeout_sec || 300) * 1000);
