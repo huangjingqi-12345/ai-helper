@@ -618,6 +618,23 @@ const sqliteSchema = `
     expires_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS ai_helper_files (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    run_id TEXT,
+    local_path TEXT NOT NULL,
+    storage_provider TEXT NOT NULL DEFAULT 'oss',
+    bucket TEXT,
+    object_key TEXT NOT NULL,
+    asset_url TEXT NOT NULL,
+    content_type TEXT,
+    size_bytes INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS notifications (
     id TEXT PRIMARY KEY,
     tenant_id TEXT,
@@ -649,6 +666,9 @@ const sqliteSchema = `
   CREATE INDEX IF NOT EXISTS idx_doctor_tasks_request ON doctor_tasks(request_id);
   CREATE INDEX IF NOT EXISTS idx_approval_tasks_tenant_status ON approval_tasks(tenant_id, status);
   CREATE INDEX IF NOT EXISTS idx_ai_helper_sessions_expires ON ai_helper_sessions(expires_at);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_helper_files_object_key ON ai_helper_files(object_key);
+  CREATE INDEX IF NOT EXISTS idx_ai_helper_files_user_conversation ON ai_helper_files(user_id, conversation_id);
+  CREATE INDEX IF NOT EXISTS idx_ai_helper_files_expires ON ai_helper_files(expires_at);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_time ON audit_logs(tenant_id, created_at);
 `;
 
@@ -926,6 +946,22 @@ const postgresSchema = `
     updated_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS ai_helper_files (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    run_id TEXT,
+    local_path TEXT NOT NULL,
+    storage_provider TEXT NOT NULL DEFAULT 'oss',
+    bucket TEXT,
+    object_key TEXT NOT NULL,
+    asset_url TEXT NOT NULL,
+    content_type TEXT,
+    size_bytes INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, tenant_id TEXT REFERENCES tenants(id), user_id TEXT, type TEXT NOT NULL CHECK(type IN ('approval','sla','export','system')), title TEXT NOT NULL, message TEXT NOT NULL, is_read BOOLEAN DEFAULT FALSE, link_url TEXT, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS team_settings (id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL REFERENCES tenants(id), site_name TEXT, default_region TEXT, feature_flags JSONB DEFAULT '{}'::jsonb, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 
@@ -941,6 +977,9 @@ const postgresSchema = `
   CREATE INDEX IF NOT EXISTS idx_approval_tasks_tenant_status ON approval_tasks(tenant_id, status);
   CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
   CREATE INDEX IF NOT EXISTS idx_ai_helper_sessions_expires ON ai_helper_sessions(expires_at);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_helper_files_object_key ON ai_helper_files(object_key);
+  CREATE INDEX IF NOT EXISTS idx_ai_helper_files_user_conversation ON ai_helper_files(user_id, conversation_id);
+  CREATE INDEX IF NOT EXISTS idx_ai_helper_files_expires ON ai_helper_files(expires_at);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_time ON audit_logs(tenant_id, created_at);
 `;
 
@@ -963,6 +1002,7 @@ async function resetLegacySqliteSchemaIfNeeded(): Promise<void> {
 
   logger.warn({ forceReset, isLegacy }, 'Resetting legacy SQLite schema so current columns and checks are available');
   const tables = [
+    'ai_helper_files',
     'ai_helper_sessions',
     'role_permissions',
     'user_roles',

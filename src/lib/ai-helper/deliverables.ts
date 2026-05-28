@@ -18,6 +18,7 @@ export function resolveAiHelperAssetUrl(url: string): string {
 function isDeliverablePath(url: string): boolean {
   const raw = normalizeDeliverableUrl(url);
   if (!raw) return false;
+  if (/^https?:\/\//i.test(raw)) return true;
   const lower = raw.toLowerCase();
   if (lower.startsWith('/data/') || lower.startsWith('data/')) return false;
   if (lower.startsWith('/generated/') || lower.startsWith('generated/')) return true;
@@ -52,7 +53,13 @@ export function filterVisibleDeliverables(files: string[]): string[] {
 }
 
 export function fileNameFromUrl(url: string): string {
-  return (url || '').split('/').pop() || '未命名文件';
+  const raw = url || '';
+  try {
+    const parsed = /^https?:\/\//i.test(raw) ? new URL(raw).pathname : raw;
+    return decodeURIComponent(parsed.split('/').pop() || '') || '未命名文件';
+  } catch {
+    return raw.split('?')[0]?.split('/').pop() || '未命名文件';
+  }
 }
 
 export function isPptFile(name: string): boolean {

@@ -15,12 +15,29 @@ export interface ChatMessage {
   role: ChatRole;
   text: string;
   files?: string[];
+  activePptContext?: ActivePptContext;
   loading?: boolean;
   loadingStatus?: string;
   loadingElapsed?: string;
   loadingStep?: number;
   loadingStartedAt?: number;
   pptSvgProgress?: PptSvgProgress;
+}
+
+export interface ActivePptSlideContext {
+  slideNo: number;
+  title?: string;
+  slideType?: string;
+  svgPath?: string;
+  deckSpec?: Record<string, unknown>;
+}
+
+export interface ActivePptContext {
+  projectPath: string;
+  exportedPptx?: string;
+  slideCount: number;
+  deckSpec?: Record<string, unknown>;
+  slides: ActivePptSlideContext[];
 }
 
 export interface StreamEvent {
@@ -32,7 +49,7 @@ export interface ShortcutPrompts {
   [key: string]: string;
 }
 
-export type AiShortcut = 'overview' | 'monthly' | 'ppt' | 'ppt_svg';
+export type AiShortcut = 'overview' | 'monthly' | 'ppt' | 'ppt_svg' | 'data_qa';
 export type AiDataScope = 'last_7_days' | 'latest_complete_month' | 'last_1_year';
 
 export interface ShortcutRunOptions {

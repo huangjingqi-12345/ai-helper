@@ -14,6 +14,7 @@ function normalizeMessage(message: ChatMessage): ChatMessage {
     role: message.role,
     text: message.text || '',
     files: message.files || [],
+    activePptContext: message.activePptContext,
     loading: false,
     pptSvgProgress: message.pptSvgProgress
       ? { ...message.pptSvgProgress, completed: message.pptSvgProgress.completed }

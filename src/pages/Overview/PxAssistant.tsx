@@ -69,7 +69,6 @@ const REPORT_ACTIONS: AssistantAction[] = [
 
 const QA_CHIPS = [
   '互动数怎么算？',
-  '本月数据有什么变化？',
   'k-匿名是什么？',
   '如何提升完读率？',
 ];
@@ -297,7 +296,7 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
   };
 
   const handleQaChip = (question: string) => {
-    void sendMessage(question);
+    void sendMessage(question, { shortcut: 'data_qa' });
   };
 
   return (

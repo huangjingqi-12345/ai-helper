@@ -49,8 +49,11 @@ const dbRunMock = vi.hoisted(() => vi.fn(async (sql: string, params: unknown[] =
   return { changes: 0 };
 }));
 
+const dbAllMock = vi.hoisted(() => vi.fn(async () => []));
+
 vi.mock('../db/connection.js', () => ({
   DB_DRIVER: 'sqlite',
+  dbAll: dbAllMock,
   dbGet: dbGetMock,
   dbRun: dbRunMock,
 }));
@@ -115,7 +118,17 @@ describe('AI helper current session persistence', () => {
   it('saves and restores one current conversation with files per user', async () => {
     const messages = [
       { id: 'm1', role: 'user', text: '生成数据概览' },
-      { id: 'm2', role: 'assistant', text: '已生成', files: ['/generated/conv-1/run-1/overview_report.md'] },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: '已生成',
+        files: ['/generated/conv-1/run-1/overview_report.md'],
+        activePptContext: {
+          projectPath: 'projects/ppt-1',
+          slideCount: 1,
+          slides: [{ slideNo: 1, title: '封面', svgPath: '/projects/ppt-1/svg_output/01_cover.svg' }],
+        },
+      },
     ];
 
     const saveRes = await call(putAiHelperSession, reqFor('user-a', { conversation_id: 'conv-1', messages }));

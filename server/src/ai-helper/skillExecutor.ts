@@ -5,6 +5,7 @@ import { execFile, execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { AI_HELPER_ROOT, GENERATED_DIR, PROJECTS_DIR, safeGeneratedPath, toAssetPath } from './paths.js';
 import { renderPptDeckFromSpecs } from './pptSpecRenderer.js';
+import { restoreAiHelperProjectFromOss } from './ossStorage.js';
 
 export interface SkillCall {
   type: 'skill_call';
@@ -29,9 +30,10 @@ export class SkillExecutionError extends Error {}
 export interface SkillExecutorOptions {
   allowManualPptSvg?: boolean;
   signal?: AbortSignal;
+  publishFiles?: (files: string[]) => Promise<string[]>;
 }
 
-export type ActionSpecMode = 'general' | 'data-qa' | 'overview' | 'monthly' | 'ppt-svg';
+export type ActionSpecMode = 'general' | 'data-qa' | 'overview' | 'monthly' | 'ppt-svg' | 'ppt-edit-svg';
 
 export interface ActionSpecOptions {
   mode?: ActionSpecMode;
@@ -649,16 +651,20 @@ export class SkillExecutor {
       };
     }
 
-    if (mode === 'ppt-svg') {
+    if (mode === 'ppt-svg' || mode === 'ppt-edit-svg') {
+      const isEdit = mode === 'ppt-edit-svg';
       return {
         mode,
-        actions: ['emit_text', 'prefetch_metrics', 'read_metric_file', 'write_project_file', 'write_project_files', 'write_ppt_svg_slide', 'ppt_master_bootstrap', 'ppt_master_export'],
+        actions: isEdit
+          ? ['read_project_file', 'ppt_master_clone_for_edit', 'write_project_file', 'write_project_files', 'write_ppt_svg_slide', 'ppt_master_export']
+          : ['emit_text', 'prefetch_metrics', 'read_metric_file', 'write_project_file', 'write_project_files', 'write_ppt_svg_slide', 'ppt_master_bootstrap', 'ppt_master_export'],
         final_shape: finalShape,
         skill_call_shape: { type: 'skill_call', skill_id: 'ppt-master | px-data', action: '<action>', params: {}, thought: '<reason>' },
         params: {
-          emit_text: { content: '先展示给用户的 300-800 字中文正文/摘要；不会结束任务，后续继续生成文件' },
-          ...pxMetricParams,
+          ...(isEdit ? {} : { emit_text: { content: '先展示给用户的 300-800 字中文正文/摘要；不会结束任务，后续继续生成文件' } }),
+          ...(isEdit ? {} : pxMetricParams),
           ppt_master_bootstrap: { skill_id: 'ppt-master', project_name: 'px_ai_ppt', format: 'ppt169' },
+          ppt_master_clone_for_edit: { skill_id: 'ppt-master', source_project_path: 'projects/上一版项目', edit_pages: [4], copy_pages: [1, 2, 3, 5, 6, 7], project_name: 'px_ai_ppt_edit' },
           write_project_file: { skill_id: 'ppt-master', project_path: 'projects/...', path: 'design_spec.md 或 spec_lock.md 或 notes/total.md', content: '完整文件内容' },
           write_project_files: { skill_id: 'ppt-master', project_path: 'projects/...', files: [{ path: 'design_spec.md', content: '...' }] },
           write_ppt_svg_slide: {
@@ -725,22 +731,41 @@ export class SkillExecutor {
       throw new SkillExecutionError('sql-pro.postgres_query 当前未启用；请使用 px-data 结构化查询');
     }
 
-    if (action === 'emit_text') return this.emitText(params);
-    if (skillId === 'px-data' && action === 'prefetch_metrics') return this.runSkillScript('px-data', 'scripts/prefetch_metrics.ts', [JSON.stringify(params)], 120_000);
-    if (skillId === 'px-data' && action === 'prefetch_data_qa_context') return this.runSkillScript('px-data', 'scripts/prefetch_data_qa_context.ts', [JSON.stringify(params)], 120_000);
-    if (skillId === 'px-data' && action === 'read_metric_file') return this.readMetricFile(params);
+    let result: SkillResult;
+    if (action === 'emit_text') result = this.emitText(params);
+    else if (skillId === 'px-data' && action === 'prefetch_metrics') result = await this.runSkillScript('px-data', 'scripts/prefetch_metrics.ts', [JSON.stringify(params)], 120_000);
+    else if (skillId === 'px-data' && action === 'prefetch_data_qa_context') result = await this.runSkillScript('px-data', 'scripts/prefetch_data_qa_context.ts', [JSON.stringify(params)], 120_000);
+    else if (skillId === 'px-data' && action === 'read_metric_file') result = await this.readMetricFile(params);
+    else if (action === 'read_skill_file') result = await this.readSkillFile(skillId, str(params.path || 'SKILL.md'), Number(params.max_chars || 12000));
+    else if (action === 'run_skill_script') result = await this.runSkillScript(skillId, str(params.script), Array.isArray(params.args) ? params.args.map(String) : [], Number(params.timeout_sec || 300) * 1000);
+    else if (action === 'write_text_deliverable') result = await this.writeTextDeliverable(skillId, params);
+    else if (action === 'write_project_file') result = await this.writeProjectFile(skillId, params);
+    else if (action === 'write_project_files') result = await this.writeProjectFiles(skillId, params);
+    else if (action === 'write_ppt_svg_slide') result = await this.writePptSvgSlide(skillId, params);
+    else if (action === 'render_ppt_from_specs') result = await this.renderPptFromSpecs(skillId, params);
+    else if (action === 'read_project_file') result = await this.readProjectFile(params);
+    else if (action === 'ppt_master_bootstrap') result = await this.pptMasterBootstrap(params);
+    else if (action === 'ppt_master_clone_for_edit') result = await this.pptMasterCloneForEdit(params);
+    else if (action === 'ppt_master_export') result = await this.pptMasterExport(params);
+    else throw new SkillExecutionError(`unsupported action: ${action}`);
+    return this.publishResultFiles(result);
+  }
 
-    if (action === 'read_skill_file') return this.readSkillFile(skillId, str(params.path || 'SKILL.md'), Number(params.max_chars || 12000));
-    if (action === 'run_skill_script') return this.runSkillScript(skillId, str(params.script), Array.isArray(params.args) ? params.args.map(String) : [], Number(params.timeout_sec || 300) * 1000);
-    if (action === 'write_text_deliverable') return this.writeTextDeliverable(skillId, params);
-    if (action === 'write_project_file') return this.writeProjectFile(skillId, params);
-    if (action === 'write_project_files') return this.writeProjectFiles(skillId, params);
-    if (action === 'write_ppt_svg_slide') return this.writePptSvgSlide(skillId, params);
-    if (action === 'render_ppt_from_specs') return this.renderPptFromSpecs(skillId, params);
-    if (action === 'read_project_file') return this.readProjectFile(params);
-    if (action === 'ppt_master_bootstrap') return this.pptMasterBootstrap(params);
-    if (action === 'ppt_master_export') return this.pptMasterExport(params);
-    throw new SkillExecutionError(`unsupported action: ${action}`);
+  private async publishResultFiles(result: SkillResult): Promise<SkillResult> {
+    if (!this.options.publishFiles || result.ok === false) return result;
+    const originals = [
+      ...(Array.isArray(result.files) ? result.files.filter((file): file is string => typeof file === 'string') : []),
+      ...(typeof result.file === 'string' ? [result.file] : []),
+    ];
+    if (!originals.length) return result;
+    const uniqueOriginals = [...new Set(originals)];
+    const published = await this.options.publishFiles(uniqueOriginals);
+    const map = new Map(uniqueOriginals.map((file, index) => [file, published[index] || file]));
+    return {
+      ...result,
+      files: Array.isArray(result.files) ? result.files.map((file) => map.get(file) || file) : result.files,
+      file: typeof result.file === 'string' ? map.get(result.file) || result.file : result.file,
+    };
   }
 
   private async readSkillFile(skillId: string, rel: string, maxChars: number): Promise<SkillResult> {
@@ -1001,6 +1026,57 @@ export class SkillExecutor {
     const abs = match ? path.resolve(match[1].trim()) : path.join(PROJECTS_DIR, `${projectName}_ppt169_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
     const projectPath = path.relative(AI_HELPER_ROOT, abs).split(path.sep).join('/');
     return jsonResult(`新建 PPT 项目 ${projectPath}`, { kind: 'bootstrap', project_path: projectPath, command: run.command }, { project_path: projectPath });
+  }
+
+  private parsePageNumbers(value: unknown): number[] {
+    if (!Array.isArray(value)) return [];
+    return [...new Set(value.map(Number).filter((n) => Number.isInteger(n) && n > 0 && n < 100))].sort((a, b) => a - b);
+  }
+
+  private async pptMasterCloneForEdit(params: Record<string, unknown>): Promise<SkillResult> {
+    const sourceProject = str(params.source_project_path || params.sourceProjectPath).replace(/^\/+/, '');
+    if (!sourceProject) throw new SkillExecutionError('ppt_master_clone_for_edit requires params.source_project_path');
+    const editPages = this.parsePageNumbers(params.edit_pages || params.editPages);
+    if (!editPages.length) throw new SkillExecutionError('ppt_master_clone_for_edit requires params.edit_pages');
+    const copyPages = this.parsePageNumbers(params.copy_pages || params.copyPages);
+    const sourceAbs = safeUnder(AI_HELPER_ROOT, sourceProject);
+    if (!fs.existsSync(sourceAbs) || !fs.statSync(sourceAbs).isDirectory()) {
+      await restoreAiHelperProjectFromOss(sourceProject);
+    }
+    if (!fs.existsSync(sourceAbs) || !fs.statSync(sourceAbs).isDirectory()) throw new SkillExecutionError(`source_project_path not found: ${sourceProject}`);
+
+    await fsp.mkdir(PROJECTS_DIR, { recursive: true });
+    const name = str(params.project_name || 'px_ai_ppt_edit').replace(/[^a-zA-Z0-9_.-]+/g, '_') || 'px_ai_ppt_edit';
+    const targetName = `${name}_run_${Date.now()}_ppt169_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`;
+    const targetAbs = safeUnder(PROJECTS_DIR, targetName);
+    await fsp.cp(sourceAbs, targetAbs, {
+      recursive: true,
+      filter: (src) => !/(^|\/)(exports|svg_final|backup)(\/|$)/.test(src.replace(/\\/g, '/')),
+    });
+
+    const svgDir = path.join(targetAbs, 'svg_output');
+    const removed: string[] = [];
+    if (fs.existsSync(svgDir)) {
+      for (const file of await fsp.readdir(svgDir)) {
+        const match = file.match(/^(\d{1,2})[_-].*\.svg$/i);
+        const slideNo = match ? Number(match[1]) : undefined;
+        if (slideNo && editPages.includes(slideNo)) {
+          const abs = path.join(svgDir, file);
+          await fsp.rm(abs, { force: true });
+          removed.push(relToHelper(abs));
+        }
+      }
+    }
+
+    const targetProject = path.relative(AI_HELPER_ROOT, targetAbs).split(path.sep).join('/');
+    const files = fs.existsSync(svgDir)
+      ? (await fsp.readdir(svgDir)).filter((file) => file.toLowerCase().endsWith('.svg')).map((file) => relToHelper(path.join(svgDir, file)))
+      : [];
+    return jsonResult(
+      `复制上一版 PPT 项目并清空待编辑页 ${editPages.join(', ')}`,
+      { kind: 'ppt_clone_for_edit', source_project_path: sourceProject, project_path: targetProject, edit_pages: editPages, copy_pages: copyPages, removed },
+      { project_path: targetProject, files },
+    );
   }
 
   pptMasterExportPrecheck(params: Record<string, unknown>): { ok: boolean; missing: string[]; project_path?: string; svg_count: number; has_total_md: boolean; moved_files?: Array<{ from: string; to: string; skipped?: boolean; reason: string }>; notes_repaired?: boolean; notes_missing_sections?: string[] } {

@@ -1,5 +1,5 @@
 export type AiTaskKind = 'overview' | 'monthly' | 'ppt' | 'data-qa' | 'chat';
-export type AiShortcut = 'overview' | 'monthly' | 'ppt' | 'ppt_svg';
+export type AiShortcut = 'overview' | 'monthly' | 'ppt' | 'ppt_svg' | 'data_qa';
 export type AiDataScope = 'last_7_days' | 'latest_complete_month' | 'last_1_year';
 
 export interface PrefetchMetricsParams {
@@ -22,7 +22,7 @@ export interface RunRequest {
   run_id?: string;
   shortcut?: AiShortcut;
   data_scope?: AiDataScope;
-  history?: Array<{ role?: 'user' | 'assistant'; text?: string; files?: string[] }>;
+  history?: Array<{ role?: 'user' | 'assistant'; text?: string; files?: string[]; activePptContext?: unknown }>;
 }
 
 export interface StreamEvent {

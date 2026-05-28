@@ -49,7 +49,7 @@ export async function postAiHelperStream(
   runId: string,
   options: ShortcutRunOptions = {},
   signal?: AbortSignal,
-  history: Pick<ChatMessage, 'role' | 'text' | 'files'>[] = [],
+  history: Pick<ChatMessage, 'role' | 'text' | 'files' | 'activePptContext'>[] = [],
 ): Promise<Response> {
   const body = JSON.stringify({
     command: '',

@@ -5,11 +5,12 @@ import { AI_HELPER_ROOT, createRunDirectory, GENERATED_DIR, toAssetPath } from '
 import { prefetchMetrics } from './metrics.js';
 import { MODEL_IO_LOG_PATH, RUNTIME_LOG_PATH, modelIoLog, runtimeLog } from './runtimeLogger.js';
 import type { AiDataScope, AiShortcut, PrefetchMetrics, PrefetchMetricsParams, RunRequest, StreamEvent } from './types.js';
-import { DATA_QA_PROMPT, MONTHLY_PROMPT, OVERVIEW_PROMPT, PPT_PREMIUM_SVG_PROMPT, SHORTCUT_PROMPTS, SYSTEM_PROMPT } from './promptTemplates.js';
+import { DATA_QA_PROMPT, MONTHLY_PROMPT, OVERVIEW_PROMPT, PPT_EDIT_PREMIUM_SVG_PROMPT, PPT_EDIT_SVG_PROMPT, PPT_PREMIUM_SVG_PROMPT, SHORTCUT_PROMPTS, SYSTEM_PROMPT } from './promptTemplates.js';
 import { SkillRegistry } from './skillRegistry.js';
 import { SkillExecutor, type ActionSpecMode, type SkillCall, type SkillResult } from './skillExecutor.js';
 import { scheduleBackgroundJob, type BackgroundJob } from './backgroundJobs.js';
 import { renderPptDeckFromSpecs } from './pptSpecRenderer.js';
+import { uploadAiHelperFiles, type AiHelperUploadContext } from './ossStorage.js';
 
 export { SHORTCUT_PROMPTS, SYSTEM_PROMPT } from './promptTemplates.js';
 
@@ -69,6 +70,8 @@ function modelErrorLog(err: unknown): unknown {
 
 interface StreamAssistantOptions {
   signal?: AbortSignal;
+  userId?: string;
+  tenantId?: string;
 }
 
 function abortError(): Error {
@@ -341,14 +344,20 @@ function asFinal(obj: Record<string, unknown>): { answer: string; deliverable_fi
 }
 
 function fileName(file: string): string {
-  return file.replace(/\\/g, '/').split('/').pop() || file;
+  const normalized = file.replace(/\\/g, '/');
+  try {
+    const pathName = /^https?:\/\//i.test(normalized) ? new URL(normalized).pathname : normalized;
+    return decodeURIComponent(pathName.split('/').pop() || '') || file;
+  } catch {
+    return normalized.split('?')[0]?.split('/').pop() || file;
+  }
 }
 
 function visibleDeliverables(files: string[]): string[] {
   const allowed = new Set(['md', 'svg', 'png', 'pdf', 'ppt', 'pptx', 'html', 'htm']);
   return [...new Set(files)]
     .map((f) => (f.startsWith('generated/') || f.startsWith('projects/') ? `/${f}` : f))
-    .filter((f) => f.startsWith('/generated/') || f.startsWith('/projects/'))
+    .filter((f) => f.startsWith('/generated/') || f.startsWith('/projects/') || /^https?:\/\//i.test(f))
     .filter((f) => allowed.has((fileName(f).split('.').pop() || '').toLowerCase()))
     .filter((f) => !/manifest|metrics|qa/i.test(fileName(f)));
 }
@@ -517,7 +526,7 @@ interface PrimaryDataScope {
 }
 
 function asShortcut(value: unknown): AiShortcut | undefined {
-  return value === 'overview' || value === 'monthly' || value === 'ppt' || value === 'ppt_svg' ? value : undefined;
+  return value === 'overview' || value === 'monthly' || value === 'ppt' || value === 'ppt_svg' || value === 'data_qa' ? value : undefined;
 }
 
 function isPptShortcut(shortcut?: AiShortcut): boolean {
@@ -535,7 +544,7 @@ function defaultDataScope(shortcut?: AiShortcut): AiDataScope | undefined {
   return undefined;
 }
 
-type IntentTask = 'data_qa' | 'overview' | 'monthly' | 'ppt' | 'chat';
+type IntentTask = 'data_qa' | 'overview' | 'monthly' | 'ppt' | 'ppt_edit' | 'chat';
 type IntentPptMode = 'fast' | 'premium' | 'unspecified';
 
 interface AssistantIntent {
@@ -543,11 +552,12 @@ interface AssistantIntent {
   ppt_mode: IntentPptMode;
   confidence: number;
   is_followup: boolean;
+  is_modification: boolean;
   reason?: string;
 }
 
 function asIntentTask(value: unknown): IntentTask {
-  return value === 'data_qa' || value === 'overview' || value === 'monthly' || value === 'ppt' || value === 'chat' ? value : 'chat';
+  return value === 'data_qa' || value === 'overview' || value === 'monthly' || value === 'ppt' || value === 'ppt_edit' || value === 'chat' ? value : 'chat';
 }
 
 function asIntentPptMode(value: unknown): IntentPptMode {
@@ -562,13 +572,15 @@ function normalizeConfidence(value: unknown): number {
 
 function shortcutFromIntent(intent: AssistantIntent | undefined): AiShortcut | undefined {
   if (!intent || intent.confidence < 0.7) return undefined;
+  if (intent.task === 'data_qa') return 'data_qa';
   if (intent.task === 'overview') return 'overview';
   if (intent.task === 'monthly') return 'monthly';
-  if (intent.task !== 'ppt') return undefined;
+  if (intent.task !== 'ppt' && intent.task !== 'ppt_edit') return undefined;
   return intent.ppt_mode === 'premium' ? 'ppt_svg' : 'ppt';
 }
 
 function routeLabel(shortcut?: AiShortcut): string | undefined {
+  if (shortcut === 'data_qa') return '数据问答';
   if (shortcut === 'overview') return '数据概览';
   if (shortcut === 'monthly') return '月度报告';
   if (shortcut === 'ppt') return 'PPT 快速版';
@@ -590,23 +602,26 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string, signal?
       content: [
         '你是 PX 医疗患教数据助手的意图分类器，只做路由判断。',
         '只输出一个 JSON 对象，不要 Markdown，不要解释文字。',
-        'task 只能是 data_qa、overview、monthly、ppt、chat。',
-        'ppt_mode 只能是 fast、premium、unspecified；只有 task=ppt 时才有意义。',
+        'task 只能是 data_qa、overview、monthly、ppt、ppt_edit、chat。',
+        'ppt_mode 只能是 fast、premium、unspecified；只有 task=ppt 或 ppt_edit 时才有意义。',
         'is_followup 必须是 boolean，判断本轮是否依赖上一轮上下文。',
+        'is_modification 必须是 boolean，判断本轮是否在修改已有 PPT/报告/文件；不要细分修改类型。',
         '分类标准：',
-        '- data_qa：询问指标口径、数据来源、字段含义、为什么为空/为 0、互动数怎么算等，只需文字回答。',
-        '- overview：请求短周期数据概览、dashboard、整体运营概览。',
-        '- monthly：请求月报、月度报告、按自然月复盘。',
+        '- data_qa：询问具体数据、指标变化、趋势表现、指标口径、数据来源、字段含义、为什么为空/为 0、互动数怎么算等，只需文字回答；例如“本月数据有什么变化”应归为 data_qa。',
+        '- overview：明确请求生成数据概览、dashboard、看板、KPI overview 等概览交付物。',
+        '- monthly：明确请求生成月报、月度报告、按自然月复盘报告等报告交付物。',
+        '- 如果用户只是问“本月/最近数据有什么变化、表现如何、趋势怎样”，没有说生成概览/月报/PPT/文件，归为 data_qa，不要归为 overview 或 monthly。',
         '- ppt：请求生成 PPT、幻灯片、演示文稿、汇报材料等文件交付。',
+        '- ppt_edit：修改、调整、替换、重画、优化上一轮或已有 PPT，例如改第几页、改封面、文字显示不全、换风格、删元素、基于刚才那份 PPT 继续改。',
         '- chat：其他闲聊或无法判断。',
         'PPT 模式判断：',
         '- fast：用户明确要快速、稳定、简单版，或只说生成 PPT 但未指定视觉要求。',
         '- premium：用户明确想要更高视觉完成度、更精致设计、逐页精修、直接 SVG 设计等。',
         '- unspecified：确定是 PPT，但无法判断快版或精美版；后端会默认快速版。',
         '追问判断：',
-        '- is_followup=true：用户使用“刚才/上面/继续/上一版/这个/这份/它/基于前面/改成/沿用”等表达，必须依赖 previous_turn 才能完成。',
-        '- is_followup=true：用户要求修改、继续、复用上一轮生成的文件/结论/风格。',
-        '- is_followup=false：用户发起一个完整的新任务，即使 previous_turn 存在也不要复用。',
+        '- is_followup=true：只有 task=ppt_edit 且必须依赖 previous_turn/上一份 PPT 才能完成时为 true。',
+        '- is_followup=false：新生成概览、月报、PPT 或普通数据问答，即使 previous_turn 存在也不要复用。',
+        '- is_modification=true：task=ppt_edit 时必须为 true；其他 task 默认 false。',
         '低把握时降低 confidence，不要强行分类。',
       ].join('\n'),
     },
@@ -615,7 +630,7 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string, signal?
       content: JSON.stringify({
         user_request: userText,
         previous_turn: previousTurn,
-        output_schema: { task: 'data_qa|overview|monthly|ppt|chat', ppt_mode: 'fast|premium|unspecified', confidence: '0~1 number', is_followup: 'boolean', reason: '不超过30字' },
+        output_schema: { task: 'data_qa|overview|monthly|ppt|ppt_edit|chat', ppt_mode: 'fast|premium|unspecified', confidence: '0~1 number', is_followup: 'boolean', is_modification: 'boolean', reason: '不超过30字' },
       }, null, 2),
     },
   ];
@@ -644,6 +659,7 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string, signal?
       ppt_mode: asIntentPptMode(parsed.ppt_mode),
       confidence: normalizeConfidence(parsed.confidence),
       is_followup: parsed.is_followup === true,
+      is_modification: parsed.is_modification === true,
       reason: typeof parsed.reason === 'string' ? parsed.reason.slice(0, 80) : undefined,
     };
   } catch (err) {
@@ -975,7 +991,7 @@ function buildTaskMetrics(shortcut: AiShortcut | undefined, primaryMetrics: Pref
         coreKpi: obj(previous30.metrics).coreKpi,
       },
       insights: primaryMetrics.insights,
-      note: 'PPT 默认注入年度月趋势、TOP 项目/内容和最近 30 天摘要；完整日趋势和完整排名见 available_metric_stores。',
+      note: 'PPT 默认注入周期月趋势、TOP 项目/内容和重点观察期摘要；完整日趋势和完整排名见 available_metric_stores。',
     };
   }
 
@@ -1018,30 +1034,32 @@ async function buildPrimaryDataContext(req: RunRequest, rootDir: string): Promis
   if (scope.data_scope === 'last_1_year' && latest) {
     const recent30 = range(addDays(latest, -29), latest);
     const previous30 = range(addDays(latest, -59), addDays(latest, -30));
+    const recent30Label = directPptRangeLabel(recent30, '重点观察期');
+    const previous30Label = directPptRangeLabel(previous30, '对比观察期');
     const recent30Metrics = await prefetchMetrics({
       dateRange: recent30,
       granularity: 'day',
       limit: 40,
-      purpose: 'PPT 核心结论最近 30 天数据',
+      purpose: `PPT 核心结论重点观察期数据：${recent30Label}`,
     });
     const previous30Metrics = await prefetchMetrics({
       dateRange: previous30,
       granularity: 'day',
       limit: 40,
-      purpose: 'PPT 核心结论前 30 天对比数据',
+      purpose: `PPT 核心结论对比观察期数据：${previous30Label}`,
     });
     supplemental.recent_30_days = {
-      label: '最近 30 天',
+      label: recent30Label,
       dateRange: recent30,
       metrics: compactMetricsForContext(recent30Metrics),
     };
     supplemental.previous_30_days = {
-      label: '前 30 天',
+      label: previous30Label,
       dateRange: previous30,
       metrics: compactMetricsForContext(previous30Metrics),
     };
-    storeGroups.push({ prefix: 'recent_30_days', label: '最近 30 天', metrics: recent30Metrics });
-    storeGroups.push({ prefix: 'previous_30_days', label: '前 30 天', metrics: previous30Metrics });
+    storeGroups.push({ prefix: 'recent_30_days', label: recent30Label, metrics: recent30Metrics });
+    storeGroups.push({ prefix: 'previous_30_days', label: previous30Label, metrics: previous30Metrics });
   }
 
   const stores = writeMetricStores(rootDir, storeGroups);
@@ -1177,6 +1195,7 @@ function reusedPrimaryDataResult(call: SkillCall, primaryDataContext: Record<str
 
 function actionSpecModeForRequest(req: RunRequest): ActionSpecMode {
   const shortcut = asShortcut(req.shortcut);
+  if (shortcut === 'data_qa') return 'data-qa';
   if (shortcut === 'overview') return 'overview';
   if (shortcut === 'monthly') return 'monthly';
   if (shortcut === 'ppt_svg') return 'ppt-svg';
@@ -1185,6 +1204,7 @@ function actionSpecModeForRequest(req: RunRequest): ActionSpecMode {
 
 function taskPromptAdditionsForRequest(req: RunRequest): string[] {
   const shortcut = asShortcut(req.shortcut);
+  if (shortcut === 'data_qa') return [DATA_QA_PROMPT];
   if (shortcut === 'overview') return [OVERVIEW_PROMPT];
   if (shortcut === 'monthly') return [MONTHLY_PROMPT];
   if (shortcut === 'ppt_svg') return [PPT_PREMIUM_SVG_PROMPT];
@@ -1210,7 +1230,51 @@ function buildSkillContextInjectionNotice(call: SkillCall): string {
   ].join('\n');
 }
 
-type NormalizedHistoryItem = { role: 'user' | 'assistant'; text: string; files?: string[] };
+type ActivePptSlideContext = {
+  slideNo: number;
+  title?: string;
+  slideType?: string;
+  svgPath?: string;
+  deckSpec?: Record<string, unknown>;
+};
+
+type ActivePptContext = {
+  projectPath: string;
+  exportedPptx?: string;
+  slideCount: number;
+  deckSpec?: Record<string, unknown>;
+  slides: ActivePptSlideContext[];
+};
+
+type NormalizedHistoryItem = { role: 'user' | 'assistant'; text: string; files?: string[]; activePptContext?: ActivePptContext };
+
+function normalizeActivePptContext(value: unknown): ActivePptContext | undefined {
+  const root = obj(value);
+  const projectPath = String(root.projectPath || root.project_path || '').replace(/^\/+/, '');
+  const rawSlides = Array.isArray(root.slides) ? root.slides.map(obj) : [];
+  if (!projectPath || !rawSlides.length) return undefined;
+  const slides = rawSlides.flatMap((slide, index): ActivePptSlideContext[] => {
+    const slideNo = Number(slide.slideNo || slide.slide_no || index + 1);
+    if (!Number.isInteger(slideNo) || slideNo < 1 || slideNo > 99) return [];
+    const deckSpec = obj(slide.deckSpec || slide.deck_spec);
+    return [{
+      slideNo,
+      title: typeof slide.title === 'string' ? slide.title.slice(0, 120) : undefined,
+      slideType: typeof slide.slideType === 'string' ? slide.slideType.slice(0, 80) : typeof slide.slide_type === 'string' ? slide.slide_type.slice(0, 80) : undefined,
+      svgPath: typeof slide.svgPath === 'string' ? slide.svgPath.slice(0, 1000) : typeof slide.svg_path === 'string' ? slide.svg_path.slice(0, 1000) : undefined,
+      deckSpec: Object.keys(deckSpec).length ? deckSpec : undefined,
+    }];
+  });
+  if (!slides.length) return undefined;
+  const deckSpec = obj(root.deckSpec || root.deck_spec);
+  return {
+    projectPath,
+    exportedPptx: typeof root.exportedPptx === 'string' ? root.exportedPptx.slice(0, 1000) : typeof root.exported_pptx === 'string' ? root.exported_pptx.slice(0, 1000) : undefined,
+    slideCount: Number(root.slideCount || root.slide_count) || slides.length,
+    deckSpec: Object.keys(deckSpec).length ? deckSpec : undefined,
+    slides,
+  };
+}
 
 function normalizedHistory(req: RunRequest): NormalizedHistoryItem[] {
   return (Array.isArray(req.history) ? req.history : [])
@@ -1220,9 +1284,18 @@ function normalizedHistory(req: RunRequest): NormalizedHistoryItem[] {
       const files = Array.isArray(item?.files)
         ? item.files.filter((file): file is string => typeof file === 'string' && file.trim().length > 0).slice(0, 12)
         : undefined;
-      return role && (text || files?.length) ? [{ role, text: text.slice(0, 8000), files }] : [];
+      const activePptContext = normalizeActivePptContext(item?.activePptContext);
+      return role && (text || files?.length || activePptContext) ? [{ role, text: text.slice(0, 8000), files, activePptContext }] : [];
     })
     .slice(-10);
+}
+
+function latestActivePptContext(req: RunRequest): ActivePptContext | undefined {
+  const history = normalizedHistory(req);
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index].activePptContext) return history[index].activePptContext;
+  }
+  return undefined;
 }
 
 function previousHistoryTurn(req: RunRequest): NormalizedHistoryItem[] {
@@ -1257,7 +1330,71 @@ function historyTurnForPrompt(req: RunRequest, maxTextChars = 1200): Array<Recor
     role: item.role,
     text: item.text.slice(0, maxTextChars),
     files: item.files?.slice(0, 8),
+    active_ppt: item.activePptContext ? {
+      project_path: item.activePptContext.projectPath,
+      exported_pptx: item.activePptContext.exportedPptx,
+      slide_count: item.activePptContext.slideCount,
+      slides: item.activePptContext.slides.map((slide) => ({
+        slide_no: slide.slideNo,
+        title: slide.title,
+        slide_type: slide.slideType,
+        svg_path: slide.svgPath,
+        deck_spec: slide.deckSpec,
+      })),
+    } : undefined,
   }));
+}
+
+function activePptContextForPrompt(ctx: ActivePptContext): Record<string, unknown> {
+  return {
+    source_project_path: ctx.projectPath,
+    exported_pptx: ctx.exportedPptx,
+    slide_count: ctx.slideCount,
+    slides: ctx.slides.map((slide) => ({
+      slide_no: slide.slideNo,
+      title: slide.title,
+      slide_type: slide.slideType,
+      svg_path: slide.svgPath,
+      deck_spec: slide.deckSpec,
+    })),
+  };
+}
+
+function activePptContextFromEditTrace(source: ActivePptContext, trace: AgentDonePayload['trace']): ActivePptContext | undefined {
+  const clone = trace.find((entry) => entry.call?.action === 'ppt_master_clone_for_edit')?.result;
+  const projectPath = String(clone?.project_path || obj(clone?.detail).project_path || '');
+  if (!projectPath) return undefined;
+  const exported = trace.find((entry) => entry.call?.action === 'ppt_master_export')?.result;
+  const exportedPptx = typeof exported?.file === 'string' ? exported.file : source.exportedPptx;
+  const byNo = new Map(source.slides.map((slide) => [slide.slideNo, { ...slide }]));
+  for (const entry of trace) {
+    if (entry.call?.action !== 'write_ppt_svg_slide') continue;
+    const detail = obj(entry.result?.detail);
+    const slideNo = Number(detail.slide_no);
+    if (!Number.isInteger(slideNo)) continue;
+    const previous = byNo.get(slideNo);
+    byNo.set(slideNo, {
+      slideNo,
+      title: typeof detail.title === 'string' ? detail.title : previous?.title,
+      slideType: previous?.slideType,
+      svgPath: typeof detail.path === 'string' ? detail.path : previous?.svgPath,
+      deckSpec: {
+        ...(previous?.deckSpec || {}),
+        slide_no: slideNo,
+        title: typeof detail.title === 'string' ? detail.title : previous?.title,
+        takeaway: typeof detail.core_conclusion === 'string' ? detail.core_conclusion : obj(previous?.deckSpec).takeaway,
+        edited: true,
+      },
+    });
+  }
+  const slides = [...byNo.values()].sort((a, b) => a.slideNo - b.slideNo);
+  return {
+    ...source,
+    projectPath,
+    exportedPptx,
+    slideCount: slides.length,
+    slides,
+  };
 }
 
 function textFromSuccessfulCall(call: SkillCall, result: SkillResult): string {
@@ -1771,6 +1908,42 @@ function directPptActiveProjects(metrics: Record<string, unknown>): Array<Record
     : [];
 }
 
+function directPptRangeLabel(value: Record<string, unknown>, fallback = '当前周期'): string {
+  const start = String(value.start || '').trim();
+  const end = String(value.end || '').trim();
+  if (start && end) return start === end ? start : `${start} 至 ${end}`;
+  return start || end || fallback;
+}
+
+function directPptMonthLabel(value: unknown, includeYear: boolean): string {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return raw || '当前月';
+  const month = `${Number(match[2])}月`;
+  return includeYear ? `${match[1]}年${month}` : month;
+}
+
+function directPptTrendSummary(monthlyTrend: Array<Record<string, unknown>>): string {
+  if (monthlyTrend.length >= 2) {
+    const first = monthlyTrend[0];
+    const last = monthlyTrend[monthlyTrend.length - 1];
+    const includeYear = new Set(monthlyTrend.map((item) => String(item.month || '').slice(0, 4))).size > 1;
+    const firstLabel = directPptMonthLabel(first.month, includeYear);
+    const lastLabel = directPptMonthLabel(last.month, includeYear);
+    const firstReads = Number(first.readCount || 0);
+    const lastReads = Number(last.readCount || 0);
+    const direction = lastReads >= firstReads ? '提升' : '回落';
+    return `${firstLabel}至${lastLabel}阅读${direction}，需同步观察互动与完读质量`;
+  }
+  if (monthlyTrend.length === 1) return `${directPptMonthLabel(monthlyTrend[0].month, true)}已有阅读与互动数据，建议继续积累趋势样本`;
+  return '当前周期趋势样本有限，建议持续积累月度数据后再判断节奏变化';
+}
+
+function directPptTopNames(items: Array<Record<string, unknown>>, key: string, fallback: string): string {
+  const names = items.map((item) => String(item[key] || '').trim()).filter(Boolean).slice(0, 2);
+  return names.length ? names.join('、') : fallback;
+}
+
 function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, totalSlides: number): Record<string, unknown> {
   const scope = obj(primaryDataContext.scope);
   const metrics = obj(primaryDataContext.primary_metrics);
@@ -1785,7 +1958,12 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
   const projects = directPptActiveProjects(metrics).slice(0, 4);
   const topProject = projects[0];
   const topItem = topContent[0];
-  const rangeText = `${String(rangeValue.start || obj(scope.dateRange).start || '')} 至 ${String(rangeValue.end || obj(scope.dateRange).end || '')}`;
+  const rangeText = directPptRangeLabel(
+    { start: rangeValue.start || obj(scope.dateRange).start, end: rangeValue.end || obj(scope.dateRange).end },
+    String(scope.label || '当前周期'),
+  );
+  const focusWindowLabel = directPptRangeLabel(obj(recent30.range), String(scope.label || '重点观察期'));
+  const previousWindowLabel = directPptRangeLabel(obj(previous30.range), '对比观察期');
   const interactionRate = safeRate(kpi.interactionCount, kpi.readCount);
   const deliveryRate = safeRate(kpi.deliveredCount, kpi.pushCount);
   const readConversion = safeRate(kpi.readUsers, kpi.deliveredCount);
@@ -1797,6 +1975,7 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
     : 0;
   const top3Read = topContent.slice(0, 3).reduce((sum, item) => sum + Number(item.readCount || 0), 0);
   const top3Share = safeRate(top3Read, kpi.readCount);
+  const topContentGroupLabel = topContent.length >= 3 ? 'TOP3' : topContent.length > 0 ? `TOP${topContent.length}` : '头部';
   const bestFinish = [...topContent].filter((item) => Number(item.readCount || 0) > 0).sort((a, b) => Number(b.finishRate || 0) - Number(a.finishRate || 0))[0];
   const lowFinish = [...topContent].filter((item) => Number(item.readCount || 0) > 0).sort((a, b) => Number(a.finishRate || 0) - Number(b.finishRate || 0))[0];
   const projectTotalReads = projects.reduce((sum, item) => sum + Number(item.readCount || 0), 0);
@@ -1806,13 +1985,17 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
     topItem ? `标杆：${String(topItem.title)}，阅读 ${fmtCnInt(topItem.readCount)}，完读率 ${fmtCnPct(topItem.finishRate)}` : '',
     bestFinish ? `高完读：${String(bestFinish.title)}，完读率 ${fmtCnPct(bestFinish.finishRate)}` : '',
     lowFinish ? `待优化：${String(lowFinish.title)}，完读率 ${fmtCnPct(lowFinish.finishRate)}` : '',
-    `TOP3 内容贡献 ${fmtCnPct(top3Share)} 阅读，适合沉淀选题模板`,
+    `${topContentGroupLabel} 内容贡献 ${fmtCnPct(top3Share)} 阅读，适合沉淀选题模板`,
   ].filter(Boolean);
+  const leadingProjectNames = directPptTopNames(projects, 'name', '主力项目');
+  const leadingDiseaseNames = directPptTopNames(Array.isArray(metrics.diseases) ? metrics.diseases.map(obj) : [], 'name', leadingProjectNames);
+  const executiveSubtitle = `${focusWindowLabel}表现、头部内容和项目结构`;
+  const trendInsightText = directPptTrendSummary(monthlyTrend);
   const actionItems = [
-    '模板沉淀：将实操指南、问答卡、红旗信号图解纳入内容 SOP',
-    '质量优化：低完读内容重构为场景清单、图解步骤和明确行动提示',
-    '触达策略：按活跃时段与项目人群分层推送，跟踪阅读到互动转化',
-    '项目组合：巩固糖尿病和高血压基本盘，同时补强肿瘤随访连续主题',
+    topItem ? `模板沉淀：复盘「${String(topItem.title).slice(0, 18)}」的选题、标题和结构` : '模板沉淀：提炼高阅读内容的选题、标题和结构',
+    lowFinish ? `质量优化：优先改版「${String(lowFinish.title).slice(0, 18)}」等低完读样本` : '质量优化：持续监控低完读内容并改成清单、图解和步骤化表达',
+    `触达策略：围绕${leadingProjectNames}分层推送，跟踪阅读到互动转化`,
+    `项目组合：巩固${leadingDiseaseNames}等高贡献方向，并补齐低覆盖项目的连续内容`,
   ];
   const notes = (text: string) => text.slice(0, 60);
   const metric = (label: string, value: unknown, unit = '', note = '', status: string = 'neutral', delta?: string) => ({ label, value, unit, note, status, delta });
@@ -1835,7 +2018,8 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
     },
     data_display: { number_format: 'compact_cn', show_axis: true, show_grid: true, show_value_labels: true, show_legend: true, highlight_max: true },
   };
-  const trendCategories = monthlyTrend.map((item) => String(item.month || '').replace(/^2026-/, ''));
+  const trendIncludeYear = new Set(monthlyTrend.map((item) => String(item.month || '').slice(0, 4)).filter(Boolean)).size > 1;
+  const trendCategories = monthlyTrend.map((item) => directPptMonthLabel(item.month, trendIncludeYear));
   const trendValues = monthlyTrend.map((item) => Number(item.readCount || 0));
   const rankingItems = topContent.map((item) => ({ label: String(item.title || '未命名内容'), value: Number(item.readCount || 0), note: `完读率 ${fmtCnPct(item.finishRate)}` }));
   const projectItems = projects.map((item) => ({ label: String(item.name || '未命名项目'), value: Number(item.readCount || 0), note: `互动 ${fmtCnInt(item.interactionCount)}` }));
@@ -1869,10 +2053,10 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
     互动: fmtCnInt(item.interactionCount),
   }));
   const diagnosisTable = [
-    { 问题: '头部集中', 数据证据: `TOP3 内容占比 ${fmtCnPct(top3Share)}`, 原因判断: '高表现主题可复制但依赖度高', 动作: '沉淀模板并扩展相邻主题' },
+    { 问题: '头部集中', 数据证据: `${topContentGroupLabel} 内容占比 ${fmtCnPct(top3Share)}`, 原因判断: '高表现主题可复制但依赖度高', 动作: '沉淀模板并扩展相邻主题' },
     { 问题: '低完读内容', 数据证据: lowFinish ? `${String(lowFinish.title || '').slice(0, 12)} ${fmtCnPct(lowFinish.finishRate)}` : '暂无低完读样本', 原因判断: '场景切入与结构分层不足', 动作: '改成清单、图解和步骤化表达' },
     { 问题: '互动转化', 数据证据: `互动/阅读 ${fmtCnPct(interactionRate)}`, 原因判断: '阅读后行动引导仍可加强', 动作: '增加问答、收藏和提醒 CTA' },
-    { 问题: '项目组合', 数据证据: topProject ? `头部项目阅读 ${fmtCnInt(topProject.readCount)}` : '项目数据不足', 原因判断: '慢病项目是基本盘，长尾需补强', 动作: '补齐肿瘤随访等连续主题' },
+    { 问题: '项目组合', 数据证据: topProject ? `头部项目阅读 ${fmtCnInt(topProject.readCount)}` : '项目数据不足', 原因判断: `${leadingProjectNames}贡献较高，低覆盖项目需补强`, 动作: '按项目贡献和覆盖缺口补齐连续主题' },
   ];
   const actionTable = [
     { 优先级: 'P0', 动作: '沉淀爆款模板', 负责人: '内容运营', 衡量指标: 'TOP 内容复用数、完读率' },
@@ -1890,11 +2074,11 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
       subtitle: rangeText,
       takeaway: `累计阅读 ${fmtCnInt(kpi.readCount)} 次，互动 ${fmtCnInt(kpi.interactionCount)} 次，完读率 ${fmtCnPct(kpi.finishRate)}`,
       emphasis: 'hero_metric',
-      bullets: [
-        `覆盖 ${fmtCnInt(kpi.projectCount)} 个项目、${fmtCnInt(kpi.contentCount)} 篇内容、${fmtCnInt(kpi.activeDays)} 个活跃日`,
-        `最近 30 天阅读 ${fmtCnInt(recent30Kpi.readCount || kpi.readCount)} 次，互动 ${fmtCnInt(recent30Kpi.interactionCount || kpi.interactionCount)} 次`,
-        topItem ? `头部内容「${String(topItem.title)}」是当前可复用样本` : '聚焦阅读、互动、完读和项目贡献的复盘闭环',
-      ],
+	      bullets: [
+	        `覆盖 ${fmtCnInt(kpi.projectCount)} 个项目、${fmtCnInt(kpi.contentCount)} 篇内容、${fmtCnInt(kpi.activeDays)} 个活跃日`,
+	        `${focusWindowLabel}阅读 ${fmtCnInt(recent30Kpi.readCount || kpi.readCount)} 次，互动 ${fmtCnInt(recent30Kpi.interactionCount || kpi.interactionCount)} 次`,
+	        topItem ? `头部内容「${String(topItem.title)}」是当前可复用样本` : '聚焦阅读、互动、完读和项目贡献的复盘闭环',
+	      ],
       metrics: [
         metric('阅读次数', kpi.readCount, '次', '累计内容消费规模', 'good'),
         metric('互动次数', kpi.interactionCount, '次', '互动深度表现', 'neutral'),
@@ -1909,35 +2093,35 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
     },
     {
       slide_no: 2,
-      slide_type: 'executive_summary',
-      visual_intent: 'executive_summary',
-      layout_variant: 'hero_metric',
-      title: '核心结论',
-      subtitle: '规模增长、质量稳定、头部内容可复制',
-      takeaway: `最近 30 天阅读 ${fmtCnInt(recent30Kpi.readCount || kpi.readCount)} 次，较前 30 天${recentReadDelta >= 0 ? '提升' : '回落'} ${Math.abs(recentReadDelta * 100).toFixed(1)}%`,
+	      slide_type: 'executive_summary',
+	      visual_intent: 'executive_summary',
+	      layout_variant: 'hero_metric',
+	      title: '核心结论',
+	      subtitle: executiveSubtitle,
+	      takeaway: `${focusWindowLabel}阅读 ${fmtCnInt(recent30Kpi.readCount || kpi.readCount)} 次，较${previousWindowLabel}${recentReadDelta >= 0 ? '提升' : '回落'} ${Math.abs(recentReadDelta * 100).toFixed(1)}%`,
       emphasis: 'insight',
       bullets: [
         `送达率 ${fmtCnPct(deliveryRate)}，送达后阅读转化 ${fmtCnPct(readConversion)}`,
         `互动/阅读 ${fmtCnPct(interactionRate)}，可继续强化行动引导`,
         topItem ? `头部内容「${String(topItem.title)}」贡献最高阅读` : '头部内容贡献仍需继续观察',
       ],
-      metrics: [
-        metric('近 30 天阅读', recent30Kpi.readCount || kpi.readCount, '次', '短周期消费规模', 'good', `${recentReadDelta >= 0 ? '+' : ''}${(recentReadDelta * 100).toFixed(1)}%`),
-        metric('近 30 天互动', recent30Kpi.interactionCount || kpi.interactionCount, '次', '短周期互动深度', 'good', `${recentInteractionDelta >= 0 ? '+' : ''}${(recentInteractionDelta * 100).toFixed(1)}%`),
-        metric('送达后阅读', fmtCnPct(readConversion), '', '阅读用户/送达量', 'neutral'),
-        metric('互动/阅读', fmtCnPct(interactionRate), '', '互动转化效率', 'neutral'),
+	      metrics: [
+	        metric('观察期阅读', recent30Kpi.readCount || kpi.readCount, '次', focusWindowLabel, 'good', `${recentReadDelta >= 0 ? '+' : ''}${(recentReadDelta * 100).toFixed(1)}%`),
+	        metric('观察期互动', recent30Kpi.interactionCount || kpi.interactionCount, '次', focusWindowLabel, 'good', `${recentInteractionDelta >= 0 ? '+' : ''}${(recentInteractionDelta * 100).toFixed(1)}%`),
+	        metric('送达后阅读', fmtCnPct(readConversion), '', '阅读用户/送达量', 'neutral'),
+	        metric('互动/阅读', fmtCnPct(interactionRate), '', '互动转化效率', 'neutral'),
       ],
       components: [
-        { type: 'matrix', title: '核心判断表', table: [
-          { 维度: '规模', 数据: `阅读 ${fmtCnInt(kpi.readCount)} 次`, 结论: '内容消费已形成基本盘' },
-          { 维度: '转化', 数据: `送达后阅读 ${fmtCnPct(readConversion)}`, 结论: '人群分层仍有提升空间' },
-          { 维度: '质量', 数据: `完读率 ${fmtCnPct(kpi.finishRate)}`, 结论: '质量基线稳定' },
+	        { type: 'matrix', title: '核心判断表', table: [
+	          { 维度: '规模', 数据: `阅读 ${fmtCnInt(kpi.readCount)} 次`, 结论: '作为当前周期消费规模基准' },
+	          { 维度: '转化', 数据: `送达后阅读 ${fmtCnPct(readConversion)}`, 结论: '人群分层仍有提升空间' },
+	          { 维度: '质量', 数据: `完读率 ${fmtCnPct(kpi.finishRate)}`, 结论: '用于判断内容完整消费质量' },
           { 维度: '内容', 数据: topItem ? `TOP 内容 ${fmtCnInt(topItem.readCount)} 次` : '暂无头部样本', 结论: '可沉淀选题模板' },
-        ], tone: 'neutral' },
-        { type: 'action_card', title: '运营抓手', text: '复制头部内容结构，提升低完读内容的场景切入和行动指引。', tone: 'good' },
-        { type: 'risk_card', title: '关注风险', text: '如果持续依赖少数慢病项目，需要补足长尾病种内容连续性。', tone: 'warn' },
-      ],
-      notes: notes('本页先给出整体判断，强调近 30 天表现、头部内容和后续优化抓手。'),
+	        ], tone: 'neutral' },
+	        { type: 'action_card', title: '运营抓手', text: '复制头部内容结构，提升低完读内容的场景切入和行动指引。', tone: 'good' },
+	        { type: 'risk_card', title: '关注风险', text: `如果持续依赖${leadingProjectNames}等少数高贡献项目，需要同步补足低覆盖项目内容连续性。`, tone: 'warn' },
+	      ],
+	      notes: notes('本页先给出整体判断，强调观察期表现、头部内容和后续优化抓手。'),
     },
     {
       slide_no: 3,
@@ -1979,9 +2163,9 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
           metric('阅读用户', kpi.readUsers, '人', fmtCnPct(readConversion)),
           metric('互动', kpi.interactionCount, '次', fmtCnPct(interactionRate)),
         ] },
-        { type: 'insight_card', title: '指标解读', text: '规模指标已形成基本盘，后续重点是阅读到互动的深度转化。', tone: 'neutral' },
-      ],
-      notes: notes('本页用四类 KPI 建立仪表盘，重点关注阅读规模和阅读质量是否同步提升。'),
+	        { type: 'insight_card', title: '指标解读', text: `当前周期阅读 ${fmtCnInt(kpi.readCount)} 次，后续重点是阅读到互动的深度转化。`, tone: 'neutral' },
+	      ],
+	      notes: notes('本页用四类 KPI 建立仪表盘，重点关注阅读规模和阅读质量是否匹配。'),
     },
     {
       slide_no: 4,
@@ -1991,16 +2175,16 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
       title: '阅读与互动趋势',
       subtitle: '按月观察运营节奏变化',
       takeaway: monthlyTrend.length ? `${String(monthlyTrend.at(-1)?.month || '最新月')}阅读 ${fmtCnInt(monthlyTrend.at(-1)?.readCount)} 次` : '近期阅读与互动保持活跃',
-      emphasis: 'chart',
-      bullets: [
-        '3 月到 5 月阅读规模快速放大，说明触达和内容供给共同拉动',
-        '互动量随阅读同步上升，内容不仅被打开，也能承接后续动作',
-        '5 月阅读继续增长，应关注推送频次与用户疲劳之间的平衡',
-      ],
-      metrics: [
-        metric('最近 30 天阅读', recent30Kpi.readCount || kpi.readCount, '次', '短周期表现', 'good'),
-        metric('最近 30 天互动', recent30Kpi.interactionCount || kpi.interactionCount, '次', '短周期互动', 'neutral'),
-      ],
+	      emphasis: 'chart',
+	      bullets: [
+	        trendInsightText,
+	        monthlyTrend.length ? '互动量需与阅读同步观察，判断内容是否能承接后续动作' : '月度样本不足时，优先观察日级阅读和互动是否稳定',
+	        monthlyTrend.length ? `${directPptMonthLabel(monthlyTrend.at(-1)?.month, trendIncludeYear)}表现需要结合推送频次与用户疲劳判断` : '趋势数据不足时，应先补齐连续统计窗口',
+	      ],
+	      metrics: [
+	        metric('观察期阅读', recent30Kpi.readCount || kpi.readCount, '次', focusWindowLabel, 'good'),
+	        metric('观察期互动', recent30Kpi.interactionCount || kpi.interactionCount, '次', focusWindowLabel, 'neutral'),
+	      ],
       chart: {
         type: 'area',
         title: '月度阅读与互动趋势',
@@ -2019,9 +2203,9 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
             { name: '阅读次数', values: trendValues },
             { name: '互动次数', values: monthlyTrend.map((item) => Number(item.interactionCount || 0)) },
           ],
-        } },
-        { type: 'matrix', title: '月度数据表', table: monthlyTable, tone: 'neutral' },
-        { type: 'insight_card', title: '趋势判断', text: '阅读与互动同步抬升，说明内容主题与用户需求匹配；后续需控制触达疲劳。', tone: 'good' },
+	        } },
+	        { type: 'matrix', title: '月度数据表', table: monthlyTable, tone: 'neutral' },
+	        { type: 'insight_card', title: '趋势判断', text: trendInsightText, tone: 'good' },
       ],
       notes: notes('本页从月度趋势看节奏，说明阅读规模增长后仍要跟踪互动和完读质量。'),
     },
@@ -2034,15 +2218,15 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
       subtitle: '识别可复制内容和主力项目',
       takeaway: topProject ? `主力项目「${String(topProject.name)}」贡献阅读 ${fmtCnInt(topProject.readCount)} 次` : '内容与项目贡献需要持续积累',
       emphasis: 'ranking',
-      bullets: [
-        topProject ? `头部项目贡献阅读占比 ${fmtCnPct(topProjectShare)}，慢病随访是当前基本盘` : '项目贡献仍需继续积累',
+	      bullets: [
+	        topProject ? `头部项目贡献阅读占比 ${fmtCnPct(topProjectShare)}，${String(topProject.name)}是当前高贡献方向` : '项目贡献仍需继续积累',
         topItem ? `头部内容「${String(topItem.title)}」完读率 ${fmtCnPct(topItem.finishRate)}` : '头部内容样本仍需继续沉淀',
         '排行仅比较同口径阅读次数，质量指标单独观察',
       ],
       metrics: [
         metric('TOP 内容数', topContent.length, '篇', '参与本页排名', 'neutral'),
         metric('活跃项目数', projects.length, '个', '有阅读或推送项目', 'neutral'),
-        metric('TOP3 内容占比', fmtCnPct(top3Share), '', '阅读集中度', 'neutral'),
+        metric(`${topContentGroupLabel} 内容占比`, fmtCnPct(top3Share), '', '阅读集中度', 'neutral'),
       ],
       chart: { type: 'ranking', title: '内容阅读 TOP5', items: rankingItems },
       components: [
@@ -2062,18 +2246,18 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
       takeaway: '当前不是单一数据异常，而是内容集中度、低完读样本和互动转化的结构优化问题',
       emphasis: 'balanced',
       bullets: [
-        `TOP3 内容贡献 ${fmtCnPct(top3Share)} 阅读，说明方法可复制但集中度需要控制`,
+        `${topContentGroupLabel} 内容贡献 ${fmtCnPct(top3Share)} 阅读，说明方法可复制但集中度需要控制`,
         lowFinish ? `低完读样本「${String(lowFinish.title || '').slice(0, 18)}」完读率 ${fmtCnPct(lowFinish.finishRate)}` : '低完读样本需要持续监控',
         `互动/阅读 ${fmtCnPct(interactionRate)}，后续要用 CTA 与服务承接提升行动转化`,
       ],
       metrics: [
-        metric('TOP3 内容占比', fmtCnPct(top3Share), '', '阅读集中度', 'neutral'),
+        metric(`${topContentGroupLabel} 内容占比`, fmtCnPct(top3Share), '', '阅读集中度', 'neutral'),
         metric('最低完读率', lowFinish ? fmtCnPct(lowFinish.finishRate) : '暂无', '', '优化样本', 'warn'),
         metric('互动/阅读', fmtCnPct(interactionRate), '', '深度转化', 'neutral'),
       ],
       components: [
         { type: 'matrix', title: '诊断表', table: diagnosisTable, tone: 'warn' },
-        { type: 'risk_card', title: '核心风险', text: '如果只放大推送量而不优化内容结构，阅读增长可能无法稳定转化为互动和长期留存。', tone: 'warn' },
+        { type: 'risk_card', title: '核心风险', text: '如果只放大推送量而不优化内容结构，阅读表现可能无法稳定转化为互动和长期留存。', tone: 'warn' },
         { type: 'action_card', title: '优先机会', text: '从头部内容中提炼标题、结构、图解和行动指引模板，优先复制到相邻疾病场景。', tone: 'good' },
       ],
       notes: notes('本页把表现数据转成问题诊断，明确后续优先优化方向。'),
@@ -2095,7 +2279,7 @@ function directPptTemplateDeck(primaryDataContext: Record<string, unknown>, tota
       components: [
         { type: 'matrix', title: '行动计划表', table: actionTable, tone: 'good' },
         { type: 'timeline', title: '推进节奏', items: actionItems, tone: 'good' },
-        { type: 'takeaway_band', title: '目标', text: '从规模增长转向内容资产沉淀与精细化转化。', tone: 'good' },
+        { type: 'takeaway_band', title: '目标', text: '从单次数据复盘转向内容资产沉淀与精细化转化。', tone: 'good' },
       ],
       notes: notes('本页收束为三类行动：复制模板、优化质量、按人群和项目提升转化。'),
     },
@@ -2445,14 +2629,30 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   const registry = new SkillRegistry();
   const explicitShortcut = asShortcut(req.shortcut);
   const hasPreviousTurn = previousHistoryTurn(req).length > 0;
-  const classifiedIntent = (!explicitShortcut || hasPreviousTurn) ? await classifyAssistantIntent(req, rootDir, signal) : undefined;
-  const includePreviousTurn = Boolean(classifiedIntent?.is_followup && hasPreviousTurn);
+  const classifiedIntent = !explicitShortcut ? await classifyAssistantIntent(req, rootDir, signal) : undefined;
+  const classifiedPptEdit = Boolean(classifiedIntent?.task === 'ppt_edit' || (classifiedIntent?.task === 'ppt' && classifiedIntent.is_modification));
+  const includePreviousTurn = Boolean(classifiedPptEdit && hasPreviousTurn);
   const shortcut = explicitShortcut || shortcutFromIntent(classifiedIntent);
   const effectiveReq: RunRequest = shortcut
     ? { ...req, shortcut, data_scope: asDataScope(req.data_scope) || defaultDataScope(shortcut) }
     : req;
   const isPremiumPptSvg = shortcut === 'ppt_svg';
-  const executor = new SkillExecutor(rootDir, { allowManualPptSvg: isPremiumPptSvg, signal });
+  const uploadContext: AiHelperUploadContext = {
+    userId: options.userId,
+    tenantId: options.tenantId,
+    conversationId: req.conversation_id,
+    runId: req.run_id,
+  };
+  const publishedFileCache = new Map<string, string>();
+  const publishFiles = async (files: string[]): Promise<string[]> => {
+    const missing = [...new Set(files.filter((file) => !publishedFileCache.has(file)))];
+    if (missing.length) {
+      const published = await uploadAiHelperFiles(missing, uploadContext);
+      missing.forEach((file, index) => publishedFileCache.set(file, published[index] || file));
+    }
+    return files.map((file) => publishedFileCache.get(file) || file);
+  };
+  const executor = new SkillExecutor(rootDir, { allowManualPptSvg: isPremiumPptSvg, signal, publishFiles });
   const trace: AgentDonePayload['trace'] = [];
   const backgroundJobs: BackgroundJob[] = [];
   const injected = new Set<string>();
@@ -2484,6 +2684,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       ppt_mode: shortcut === 'ppt_svg' ? 'premium' : shortcut === 'ppt' ? 'fast' : classifiedIntent?.ppt_mode,
       confidence: classifiedIntent?.confidence,
       is_followup: classifiedIntent?.is_followup,
+      is_modification: classifiedIntent?.is_modification,
       history_included: includePreviousTurn,
       note: routeNote,
     });
@@ -2555,6 +2756,227 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     }
   }
 
+  const activePptContext = latestActivePptContext(effectiveReq);
+  const isPptLocalEdit = classifiedPptEdit && (shortcut === 'ppt' || shortcut === 'ppt_svg') && activePptContext;
+  if (isPptLocalEdit) {
+    const trace: AgentDonePayload['trace'] = [];
+    const skillsUsed = new Set<string>(['ppt-master']);
+    const editExecutor = new SkillExecutor(rootDir, { allowManualPptSvg: true, signal, publishFiles });
+    const isPremiumLocalEdit = shortcut === 'ppt_svg' || classifiedIntent?.ppt_mode === 'premium';
+    let expectedEditPages: number[] = [];
+    const writtenEditPages = new Set<number>();
+    let exported = false;
+    let clonedProjectPath = '';
+    const parseEditPageNumbers = (value: unknown): number[] => (
+      Array.isArray(value)
+        ? [...new Set(value.map(Number).filter((n) => Number.isInteger(n) && n > 0 && n < 100))].sort((a, b) => a - b)
+        : []
+    );
+    const editMessages: ChatMessage[] = [
+      { role: 'system', content: withCacheControl(SYSTEM_PROMPT) },
+      { role: 'system', content: `协议与动作说明: ${JSON.stringify(editExecutor.actionSpec({ mode: 'ppt-edit-svg' }))}` },
+      { role: 'system', content: `本轮交付根目录：${rootDir}\n最终导出的 PPTX 必须落在该目录下。` },
+      { role: 'system', content: isPremiumLocalEdit ? PPT_EDIT_PREMIUM_SVG_PROMPT : PPT_EDIT_SVG_PROMPT },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          task: isPremiumLocalEdit ? 'premium_edit_existing_ppt_pages' : 'edit_existing_ppt_pages',
+          user_request: (effectiveReq.message || effectiveReq.command || '').trim(),
+          edit_quality: isPremiumLocalEdit ? 'premium_local_page_redesign' : 'local_page_edit',
+          active_ppt_context: activePptContextForPrompt(activePptContext),
+          required_behavior: [
+            '先判断 edit_pages 和 copy_pages。',
+            '必须先调用 ppt_master_clone_for_edit。',
+            '只对 edit_pages 调用 write_ppt_svg_slide。',
+            '其他页面由 clone 工具复用，不要重画。',
+            ...(isPremiumLocalEdit ? ['“精美版”只适用于 edit_pages 的视觉质量，不代表全量重做。'] : []),
+            '最后调用 ppt_master_export。',
+          ],
+        }, null, 2),
+      },
+    ];
+    try {
+      const userEditRequest = (effectiveReq.message || effectiveReq.command || '').trim();
+      const prefaceMessages: ChatMessage[] = [
+        {
+          role: 'system',
+          content: [
+            '你是 PX 医疗患教数据助手。当前用户要修改上一份 PPT。',
+            '请先输出一段给用户看的中文说明，说明你理解到的修改目标、将优先定位相关页面并完成局部修改。',
+            '要求：只输出自然语言，不要 JSON，不要 Markdown 表格，不要提 skill、工具、内部路径、数据库字段、run_id/conversation_id 等底层细节。',
+            '控制在 80 字以内，语气直接、明确。',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            user_request: userEditRequest,
+            ppt_context: {
+              slide_count: activePptContext.slideCount,
+              slides: activePptContext.slides.map((slide) => ({
+                slide_no: slide.slideNo,
+                title: slide.title,
+                slide_type: slide.slideType,
+              })),
+            },
+          }, null, 2),
+        },
+      ];
+      const prefaceStarted = Date.now();
+      runtimeLog('model_start', { step: 'ppt_edit_preface', rootDir, model: ai.modelName(), messages: prefaceMessages, ...requestLog(effectiveReq) });
+      const prefaceResult = await ai.chatDetailed(prefaceMessages, signal);
+      const prefaceDuration = Date.now() - prefaceStarted;
+      runtimeLog('model_end', { step: 'ppt_edit_preface', rootDir, duration_ms: prefaceDuration, output: prefaceResult.text, raw_response: prefaceResult.rawResponse, request: prefaceResult.request, cache_usage: prefaceResult.cacheUsage, ...requestLog(effectiveReq) });
+      modelIoLog({
+        step: 0,
+        rootDir,
+        model: ai.modelName(),
+        duration_ms: prefaceDuration,
+        messages: prefaceMessages,
+        output: prefaceResult.text,
+        request: prefaceResult.request,
+        meta: { ...requestLog(effectiveReq), direct_pipeline: 'ppt_edit_preface' },
+        cache_usage: prefaceResult.cacheUsage,
+        recovered_from_reasoning_content: prefaceResult.recoveredFromReasoningContent,
+      });
+      const prefaceText = prefaceResult.text.replace(/```[\s\S]*?```/g, '').replace(/\s+/g, ' ').trim().slice(0, 300)
+        || '我会先定位需要修改的 PPT 页面，按你的要求完成局部调整并重新导出文件。';
+      yield emit('text', `${prefaceText}\n\n`);
+      yield emit('progress', { phase: 'planning', message: '已识别为 PPT 局部修改，正在准备上一版页面上下文', step: 1, history_included: true });
+      for (let step = 1; step <= 10; step += 1) {
+        const modelStarted = Date.now();
+        runtimeLog('model_start', { step: `ppt_edit_${step}`, rootDir, model: ai.modelName(), messages: editMessages, ...requestLog(effectiveReq) });
+        const result = await ai.chatDetailed(editMessages, signal);
+        const duration = Date.now() - modelStarted;
+        runtimeLog('model_end', { step: `ppt_edit_${step}`, rootDir, duration_ms: duration, output: result.text, raw_response: result.rawResponse, request: result.request, cache_usage: result.cacheUsage, ...requestLog(effectiveReq) });
+        modelIoLog({
+          step,
+          rootDir,
+          model: ai.modelName(),
+          duration_ms: duration,
+          messages: editMessages,
+          output: result.text,
+          request: result.request,
+          meta: { ...requestLog(effectiveReq), direct_pipeline: 'ppt_edit_pages' },
+          cache_usage: result.cacheUsage,
+          recovered_from_reasoning_content: result.recoveredFromReasoningContent,
+        });
+
+        const parsed = SkillExecutor.parseJsonObject(result.text);
+        if (!parsed) throw new Error('PPT 编辑模型未返回合法 JSON');
+        const final = asFinal(parsed);
+        if (final) {
+          if (!exported) {
+            editMessages.push({ role: 'assistant', content: result.text });
+            editMessages.push({ role: 'user', content: '尚未导出新的 PPTX。请继续调用 ppt_master_export，导出完成后再 final。' });
+            continue;
+          }
+          const files = collectFiles(trace, final.deliverable_files);
+          const nextPptContext = activePptContextFromEditTrace(activePptContext, trace);
+          if (files.length) yield emit('files', files);
+          yield emit('done', { text: final.answer || 'PPT 已按要求完成局部修改。', files, skills_used: [...skillsUsed], trace, background_jobs: [], activePptContext: nextPptContext });
+          runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: final.answer, files, skills_used: [...skillsUsed], trace, direct_ppt_edit_pipeline: true, ...requestLog(effectiveReq) });
+          return;
+        }
+        if (!isSkillCall(parsed)) throw new Error('PPT 编辑模型输出既不是 skill_call 也不是 final');
+        const call = parsed;
+        call.params = { ...obj(call.params) };
+        if (call.action === 'ppt_master_bootstrap') {
+          editMessages.push({ role: 'assistant', content: result.text });
+          editMessages.push({
+            role: 'user',
+            content: [
+              'INVALID_PPT_EDIT_ACTION:',
+              '这是 PPT 局部编辑，禁止新建项目或重做整套 PPT。',
+              '请改为先调用 ppt_master_clone_for_edit，复制上一版项目，只清空并重绘 edit_pages。',
+            ].join('\n'),
+          });
+          yield emit('progress', { phase: 'retry', message: '局部编辑禁止重做整套 PPT，正在要求改为复制上一版后只改目标页', step, ok: false });
+          continue;
+        }
+        if (call.action === 'ppt_master_clone_for_edit') {
+          const params = obj(call.params);
+          if (!params.source_project_path && !params.sourceProjectPath) params.source_project_path = activePptContext.projectPath;
+          const editPages = parseEditPageNumbers(params.edit_pages || params.editPages);
+          if (editPages.length && !parseEditPageNumbers(params.copy_pages || params.copyPages).length) {
+            params.copy_pages = Array.from({ length: activePptContext.slideCount }, (_, i) => i + 1).filter((page) => !editPages.includes(page));
+          }
+          call.params = params;
+        }
+        if (call.action === 'read_project_file') {
+          call.params = { ...obj(call.params), project_path: clonedProjectPath || activePptContext.projectPath };
+        }
+        if (['write_ppt_svg_slide', 'write_project_file', 'write_project_files', 'ppt_master_export'].includes(call.action)) {
+          if (!clonedProjectPath) {
+            editMessages.push({ role: 'assistant', content: result.text });
+            editMessages.push({
+              role: 'user',
+              content: [
+                'INVALID_PPT_EDIT_ORDER:',
+                '还没有复制上一版 PPT 项目，不能写入页面或导出。',
+                `请先调用 ppt_master_clone_for_edit，source_project_path 必须为 "${activePptContext.projectPath}"，并传入 edit_pages 和 copy_pages。`,
+              ].join('\n'),
+            });
+            yield emit('progress', { phase: 'retry', message: '局部编辑需要先复制上一版 PPT，正在要求先克隆项目', step, ok: false });
+            continue;
+          }
+          call.params = { ...obj(call.params), project_path: clonedProjectPath };
+        }
+        if (call.action === 'write_ppt_svg_slide' && expectedEditPages.length) {
+          const requestedSlideNo = Number(obj(call.params).slide_no);
+          if (!expectedEditPages.includes(requestedSlideNo)) {
+            editMessages.push({ role: 'assistant', content: result.text });
+            editMessages.push({
+              role: 'user',
+              content: `INVALID_PPT_EDIT_PAGE: 只能重绘 edit_pages=${expectedEditPages.join(', ')}，不能重写第 ${requestedSlideNo || '未知'} 页。请只写目标页，其他页面由 clone 工具复用。`,
+            });
+            yield emit('progress', { phase: 'retry', message: '局部编辑不能重写非目标页，正在要求只写目标页', step, ok: false });
+            continue;
+          }
+        }
+        if (call.action === 'ppt_master_export' && expectedEditPages.length && !expectedEditPages.every((page) => writtenEditPages.has(page))) {
+          throw new Error(`PPT 编辑页尚未全部写入，缺少第 ${expectedEditPages.filter((page) => !writtenEditPages.has(page)).join(', ')} 页`);
+        }
+        yield emit('progress', { phase: 'file_generation', message: `正在执行 PPT 局部修改：${call.action}`, step: Math.min(6, step + 1), skill_id: call.skill_id, action: call.action });
+        const skillResult = await editExecutor.execute(call);
+        trace.push({ step, call: compactCallForTrace(call, skillResult), result: skillResult });
+        yield emit('skill_result', skillResult);
+        const files = resultFiles(skillResult);
+        if (files.length) yield emit('files', visibleDeliverables(files));
+        if (call.action === 'ppt_master_clone_for_edit') {
+          expectedEditPages = Array.isArray(obj(skillResult.detail).edit_pages) ? (obj(skillResult.detail).edit_pages as unknown[]).map(Number).filter((n) => Number.isInteger(n)) : [];
+          clonedProjectPath = String(skillResult.project_path || obj(skillResult.detail).project_path || '');
+        }
+        if (call.action === 'write_ppt_svg_slide') {
+          const slideNo = Number(obj(skillResult.detail).slide_no);
+          if (Number.isInteger(slideNo)) writtenEditPages.add(slideNo);
+        }
+        if (call.action === 'ppt_master_export' && skillResult.ok !== false) exported = true;
+        editMessages.push({ role: 'assistant', content: result.text });
+        editMessages.push({ role: 'user', content: `SKILL_RESULT:\n${JSON.stringify(skillResult, null, 2)}\n请继续，直到导出 PPTX 后 final。` });
+        if (skillResult.ok === false) throw new Error(skillResult.error || `${call.action} 执行失败`);
+      }
+      throw new Error('PPT 局部修改步骤过多，已停止');
+    } catch (err) {
+      if (isAbortError(err)) throw err;
+      const text = `PPT 局部修改失败：${err instanceof Error ? err.message : String(err)}`;
+      yield emit('text', text);
+      yield emit('progress', { phase: 'error', message: 'PPT 局部修改失败', step: 99, ok: false });
+      yield emit('done', { text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, background_jobs: [], activePptContext });
+      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, direct_ppt_edit_pipeline: true, error: modelErrorLog(err), ...requestLog(effectiveReq) });
+      return;
+    }
+  }
+
+  if (classifiedPptEdit && !activePptContext) {
+    const text = '没有找到可修改的上一份 PPT。请先生成一份 PPT，或在包含 PPT 的同一会话里说明要修改哪一页。';
+    yield emit('text', text);
+    yield emit('progress', { phase: 'error', message: '缺少可修改的 PPT 上下文', step: 99, ok: false });
+    yield emit('done', { text, files: [], skills_used: [], trace: [], background_jobs: [] });
+    runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text, files: [], skills_used: [], trace: [], background_jobs: [], missing_ppt_edit_context: true, ...requestLog(effectiveReq) });
+    return;
+  }
+
   if (shortcut === 'ppt') {
     try {
       const userText = (effectiveReq.message || effectiveReq.command || '').trim() || SHORTCUT_PROMPTS['/ppt'] || '请生成 PPT 快速版患教运营汇报材料。';
@@ -2603,7 +3025,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
         const svgs = rendered.files.filter((file) => file.toLowerCase().endsWith('.svg') && file.includes('/svg_output/'));
         const fresh = svgs.filter((file) => !emittedPreviewFiles.has(file));
         svgs.forEach((file) => emittedPreviewFiles.add(file));
-        return { fresh, count: svgs.length };
+        return { fresh: await publishFiles(fresh), count: svgs.length };
       };
 
       while (nextSlide <= totalSlides) {
@@ -2824,11 +3246,11 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
         ok: true,
         summary: `已生成 ${projectSvgOutputFiles(projectPath).length} 页 PPT SVG 预览`,
         detail: { kind: 'ppt_spec_render', project_path: projectPath, svg_count: projectSvgOutputFiles(projectPath).length, rendering: 'programmatic_svg_from_slide_specs', pre_rendered: true, project_root: projectRootAbs },
-        files: renderFiles,
+        files: await publishFiles(renderFiles),
       };
       trace.push({ step: 'auto_render_specs', call: compactCallForTrace(renderCall, renderResult), result: renderResult });
       yield emit('skill_result', renderResult);
-      if (renderFiles.length) yield emit('files', renderFiles);
+      if (renderResult.files?.length) yield emit('files', renderResult.files);
 
       const exportCall: SkillCall = {
         type: 'skill_call',

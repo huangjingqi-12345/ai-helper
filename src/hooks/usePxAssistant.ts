@@ -7,7 +7,7 @@ import {
 } from '@/lib/ai-helper/loadingStatus';
 import { postAiHelperStream, readNdjsonStream } from '@/lib/ai-helper/stream';
 import { deleteAiHelperSession, fetchAiHelperSession, saveAiHelperSession } from '@/lib/ai-helper/session';
-import type { AiShortcut, ChatMessage, PptSvgProgress, ShortcutPrompts, ShortcutRunOptions } from '@/lib/ai-helper/types';
+import type { ActivePptContext, AiShortcut, ChatMessage, PptSvgProgress, ShortcutPrompts, ShortcutRunOptions } from '@/lib/ai-helper/types';
 
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -56,11 +56,75 @@ function extractPptxFiles(data: unknown): string[] {
   return sortedUnique(collectStringFiles(data).filter(isPptxPath));
 }
 
-function persistedMessagesForModel(messages: ChatMessage[]): Array<Pick<ChatMessage, 'role' | 'text' | 'files'>> {
+function slideNoFromPath(path: string): number | undefined {
+  const name = path.replace(/\\/g, '/').split('/').pop() || '';
+  const match = name.match(/^(\d{1,2})[_-]/);
+  const value = match ? Number(match[1]) : NaN;
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function extractActivePptContext(done: { files?: string[]; trace?: unknown; activePptContext?: ActivePptContext }): ActivePptContext | undefined {
+  if (done.activePptContext?.projectPath && done.activePptContext.slides?.length) return done.activePptContext;
+  const trace = Array.isArray(done.trace) ? done.trace : [];
+  const renderEntry = trace.find((entry) => {
+    const call = entry && typeof entry === 'object' ? (entry as { call?: { action?: unknown } }).call : undefined;
+    return call?.action === 'render_ppt_from_specs';
+  }) as { call?: { params?: Record<string, unknown> } } | undefined;
+  const deck = renderEntry?.call?.params;
+  const projectPath = String(deck?.project_path || '').replace(/^\/+/, '');
+  const rawSlides = Array.isArray(deck?.slides) ? deck.slides.filter((slide): slide is Record<string, unknown> => Boolean(slide) && typeof slide === 'object') : [];
+  if (!projectPath || !rawSlides.length) return undefined;
+
+  const files = sortedUnique(done.files || []);
+  const svgByNo = new Map<number, string>();
+  for (const file of files.filter(isPptSvgSlidePath)) {
+    const no = slideNoFromPath(file);
+    if (no && file.includes(projectPath)) svgByNo.set(no, normalizeDeliverableUrl(file));
+  }
+  const exportedPptx = extractPptxFiles(files)[0];
+  const slides = rawSlides.map((slide, index) => {
+    const slideNo = Number(slide.slide_no || slide.slideNo || index + 1);
+    return {
+      slideNo,
+      title: typeof slide.title === 'string' ? slide.title : undefined,
+      slideType: typeof slide.slide_type === 'string' ? slide.slide_type : undefined,
+      svgPath: svgByNo.get(slideNo),
+      deckSpec: slide,
+    };
+  });
+  return {
+    projectPath,
+    exportedPptx,
+    slideCount: slides.length,
+    deckSpec: deck,
+    slides,
+  };
+}
+
+function activePptContextForMessage(msg: ChatMessage): ActivePptContext | undefined {
+  if (msg.activePptContext) return msg.activePptContext;
+  const slides = sortedUnique(msg.pptSvgProgress?.slides || []);
+  if (!slides.length) return undefined;
+  const first = slides[0] || '';
+  const projectPath = first.replace(/^\/+/, '').split('/svg_output/')[0] || '';
+  if (!projectPath.startsWith('projects/')) return undefined;
+  return {
+    projectPath,
+    exportedPptx: extractPptxFiles(msg.files || [])[0] || msg.pptSvgProgress?.exportedPpt,
+    slideCount: slides.length,
+    slides: slides.map((svgPath, index) => ({
+      slideNo: slideNoFromPath(svgPath) || index + 1,
+      svgPath,
+      title: svgPath.split('/').pop()?.replace(/^\d{1,2}[_-]/, '').replace(/\.svg$/i, ''),
+    })),
+  };
+}
+
+function persistedMessagesForModel(messages: ChatMessage[]): Array<Pick<ChatMessage, 'role' | 'text' | 'files' | 'activePptContext'>> {
   return messages
-    .filter((msg) => msg.text.trim() || (msg.files?.length || 0) > 0)
+    .filter((msg) => msg.text.trim() || (msg.files?.length || 0) > 0 || Boolean(activePptContextForMessage(msg)))
     .slice(-10)
-    .map((msg) => ({ role: msg.role, text: msg.text.slice(0, 8000), files: msg.files?.slice(0, 12) }));
+    .map((msg) => ({ role: msg.role, text: msg.text.slice(0, 8000), files: msg.files?.slice(0, 12), activePptContext: activePptContextForMessage(msg) }));
 }
 
 function normalizePersistedMessages(messages: ChatMessage[]): ChatMessage[] {
@@ -419,7 +483,8 @@ export function usePxAssistant() {
               updateAssistant(assistantId, { files: turnFiles });
             } else if (evt.type === 'done') {
               sawDone = true;
-              const done = (evt.data || {}) as { files?: string[]; text?: string };
+              const done = (evt.data || {}) as { files?: string[]; text?: string; trace?: unknown; activePptContext?: ActivePptContext };
+              const activePptContext = extractActivePptContext(done);
               if (Array.isArray(done.files) && done.files.length) {
                 turnFiles = filterVisibleDeliverables(done.files);
                 const slides = isPptPreviewShortcut ? extractPptSvgSlides(done.files) : [];
@@ -437,9 +502,12 @@ export function usePxAssistant() {
                 updateAssistant(assistantId, {
                   text: assistantText,
                   files: turnFiles,
+                  activePptContext,
                   loadingElapsed: formatElapsed(Math.floor((Date.now() - startedAt) / 1000)),
                   loadingStartedAt: startedAt,
                 });
+              } else if (activePptContext) {
+                updateAssistant(assistantId, { activePptContext });
               }
             }
           }

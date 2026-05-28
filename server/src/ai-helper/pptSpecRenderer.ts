@@ -645,16 +645,16 @@ function miniInsightRow(items: string[], x: number, y: number, w: number, h: num
 
 function compactBulletList(items: string[], x: number, y: number, w: number, h: number, t: Theme, max = 4): string {
   if (!items.length) return '';
-  const gap = 12;
+  const gap = 9;
   const fittedCount = Math.max(1, Math.min(max, items.length, Math.floor((h + gap) / (34 + gap)) || 1));
   const list = items.slice(0, fittedCount);
   const rowH = Math.max(34, Math.min(58, (h - gap * (list.length - 1)) / list.length));
-  const textSize = rowH < 44 ? 13 : rowH < 54 ? 14 : 15;
-  const lineHeight = Math.round(textSize * 1.42);
+  const textSize = rowH < 42 ? 11.6 : rowH < 52 ? 11.8 : rowH < 58 ? 12.4 : 13.2;
+  const lineHeight = Math.round(textSize * 1.22);
   return list.map((item, i) => {
     const cy = y + i * (rowH + gap);
     const color = palette(t, i);
-    const maxLines = rowH >= 52 ? 2 : 1;
+    const maxLines = rowH >= 44 ? 3 : rowH >= 36 ? 2 : 1;
     const maxChars = Math.max(12, Math.floor((w - 58) / Math.max(1, textSize)));
     const lines = wrapText(cleanText(item), maxChars, maxLines);
     const blockH = (lines.length - 1) * lineHeight + textSize;
@@ -699,13 +699,21 @@ function metricRibbon(metrics: DeckMetric[], x: number, y: number, w: number, h:
   }).join('')}</g>`;
 }
 
-function pillStrip(items: string[], x: number, y: number, t: Theme, max = 4): string {
+function pillStrip(items: string[], x: number, y: number, t: Theme, max = 4, availableW = 650, chipH = 48): string {
+  const list = items.slice(0, max);
+  const gap = 12;
+  const equalW = (availableW - gap * Math.max(0, list.length - 1)) / Math.max(1, list.length);
   let cursor = x;
-  return items.slice(0, max).map((item, i) => {
-    const w = Math.min(238, Math.max(104, plain(item).length * 13 + 34));
+  return list.map((item, i) => {
+    const w = Math.max(142, Math.min(238, equalW));
+    const h = chipH;
     const color = palette(t, i);
-    const out = `<g><rect x="${cursor}" y="${y}" width="${w}" height="34" rx="17" fill="${color}" opacity="0.10"/><circle cx="${cursor + 18}" cy="${y + 17}" r="5" fill="${color}"/>${multiline(cursor + 32, y + 23, item, { size: 13, fill: t.text, weight: 700, maxChars: Math.max(6, Math.floor((w - 44) / 13)), maxLines: 1 })}</g>`;
-    cursor += w + 12;
+    const size = h >= 54 ? 11.4 : 12.1;
+    const maxLines = h >= 54 ? 3 : 2;
+    const lineHeight = h >= 54 ? 14 : 16;
+    const textY = y + (h >= 54 ? 18 : 20);
+    const out = `<g><rect x="${cursor}" y="${y}" width="${w}" height="${h}" rx="18" fill="${color}" opacity="0.10"/><circle cx="${cursor + 18}" cy="${y + 17}" r="5" fill="${color}"/>${multiline(cursor + 32, textY, item, { size, fill: t.text, weight: 700, maxChars: Math.max(8, Math.floor((w - 46) / size)), maxLines, lineHeight })}</g>`;
+    cursor += w + gap;
     return out;
   }).join('');
 }
@@ -1675,7 +1683,7 @@ function cover(slide: DeckSlideSpec, deck: DeckSpecParams, t: Theme, idx: number
   const title = slide.title || deck.title || 'PX 患教运营汇报';
   const subtitle = slide.subtitle || deck.subtitle || deck.data_scope || 'Patient Education Operations Review';
   const chips = (slide.bullets?.length ? slide.bullets : []).slice(0, 3);
-  const chipSvg = chips.map((c, i) => `<g><rect x="${128 + i * 154}" y="530" width="132" height="34" rx="17" fill="${palette(t, i)}" opacity="0.10"/><circle cx="${146 + i * 154}" cy="547" r="5" fill="${palette(t, i)}"/>${multiline(160 + i * 154, 552, c, { size: 13, fill: t.text, weight: 700, maxChars: 8, maxLines: 1 })}</g>`).join('');
+  const chipSvg = pillStrip(chips, 128, 526, t, 3, 632, 54);
   const metricPanel = slide.metrics?.length
     ? metricCards(slide.metrics, 806, 186, 330, 286, t, 4, tokens)
     : `<g><rect x="806" y="186" width="330" height="286" rx="26" fill="${t.primary}" opacity="0.08"/><circle cx="970" cy="318" r="84" fill="${t.primary}" opacity="0.12"/><path d="M885 356 C925 286 1012 280 1058 220" fill="none" stroke="${t.primary}" stroke-width="8" stroke-linecap="round"/><circle cx="885" cy="356" r="9" fill="${t.primary}"/><circle cx="1058" cy="220" r="9" fill="${t.secondary}"/></g>`;
@@ -2029,8 +2037,8 @@ function renderClosingReportSlide(slide: DeckSlideSpec, deck: DeckSpecParams, t:
   if (!table?.table?.length) return undefined;
   const timelineItems = (slide.components || []).find((component) => canonicalVariant(component.type || '') === 'timeline')?.items || slide.bullets || [];
   return svg(frame(slide.title || deck.title || '下一步行动建议', slide.subtitle || 'ACTION PLAN', t, { ...tokens, background: tokens.background || 'grid_dots' })
-    + reportTable(table.table, 80, 154, 720, 360, t, table.title || '行动计划表')
-    + `<g>${panel(832, 154, 368, 360, t, 20)}${text(862, 204, '推进节奏', 22, t.primary, 850)}${compactBulletList(timelineItems, 862, 238, 300, 212, t, 4)}<rect x="862" y="472" width="300" height="30" rx="15" fill="${t.secondary}" opacity="0.10"/>${text(1012, 493, '按周复盘 · 按月优化', 13, t.secondary, 850, 'middle')}</g>`
+    + reportTable(table.table, 80, 154, 704, 360, t, table.title || '行动计划表')
+    + `<g>${panel(816, 154, 384, 360, t, 20)}${text(846, 204, '推进节奏', 22, t.primary, 850)}${compactBulletList(timelineItems, 846, 236, 324, 230, t, 4)}<rect x="846" y="482" width="324" height="30" rx="15" fill="${t.secondary}" opacity="0.10"/>${text(1008, 503, '按周复盘 · 按月优化', 13, t.secondary, 850, 'middle')}</g>`
     + miniInsightRow(reportInsights(slide, [], 3), 80, 542, 1120, 52, t, 3)
     + takeawayBand(slide, 80, 612, 1120, t));
 }

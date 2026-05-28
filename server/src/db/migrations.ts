@@ -119,6 +119,34 @@ const migrations = [
         ON ai_helper_sessions(expires_at);
     `,
   },
+  {
+    id: '20260528-ai-helper-oss-files',
+    sql: `
+      CREATE TABLE IF NOT EXISTS ai_helper_files (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        tenant_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        run_id TEXT,
+        local_path TEXT NOT NULL,
+        storage_provider TEXT NOT NULL DEFAULT 'oss',
+        bucket TEXT,
+        object_key TEXT NOT NULL,
+        asset_url TEXT NOT NULL,
+        content_type TEXT,
+        size_bytes INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_helper_files_object_key
+        ON ai_helper_files(object_key);
+      CREATE INDEX IF NOT EXISTS idx_ai_helper_files_user_conversation
+        ON ai_helper_files(user_id, conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_ai_helper_files_expires
+        ON ai_helper_files(expires_at);
+    `,
+  },
 ];
 
 export async function runMigrations(): Promise<void> {

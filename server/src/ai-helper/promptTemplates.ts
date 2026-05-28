@@ -16,7 +16,7 @@ export const BASE_SYSTEM_PROMPT = `
 ## 通用执行规则
 
 1. 用户发起任务即视为请求自动完成；不要要求用户先提供文件或确认方案。
-2. 若用户问数据来源、指标口径、为空/为 0 的原因、字段含义、统计口径、数据链路等，按 data-qa 处理，只返回文字，不生成文件。
+2. 若用户问数据变化、趋势表现、数据来源、指标口径、为空/为 0 的原因、字段含义、统计口径、数据链路等，按 data-qa 处理，只返回文字，不生成文件。
 3. 若用户请求报告类交付，必须真实生成文件后再 final；文件未齐时继续 skill_call，不要编造成果。
 4. skill 执行失败不会终止；根据 SKILL_RESULT 修正后重试。
 5. 任务型 skill 的完整规范可能由运行时按需注入；触发规范注入的那一条 skill_call 不会被执行，必须等待 SKILL_RESULT 或重新调用后才能认为动作完成。
@@ -25,7 +25,7 @@ export const BASE_SYSTEM_PROMPT = `
 export const DATA_QA_PROMPT = `
 ## data-qa 任务规则
 
-适用场景：用户询问互动数/完读率/k-匿名/数据来源/为什么为空或为 0/数据库状态/字段含义/统计口径/数据链路等。
+适用场景：用户询问本月或最近数据有什么变化、趋势表现、互动数/完读率/k-匿名/数据来源/为什么为空或为 0/数据库状态/字段含义/统计口径/数据链路等。
 - 优先使用 primary_data_context 直接回答。
 - 需要表计数、可用日期、指标定义或诊断上下文时，调用 px-data.prefetch_data_qa_context。
 - 不生成 Markdown/PDF/PPT/PNG 文件。
@@ -126,6 +126,87 @@ SVG 技术要求：
 - 文字必须可读，避免重叠、截断、过密、超出画布。
 - 禁止中文省略号、连续三个英文句点或省略号实体；放不下就缩短、换行、拆条目或拆页。
 - 成功写入一页后，不要重复输出或重写已成功页面，继续下一页。
+`;
+
+export const PPT_EDIT_SVG_PROMPT = `
+## PPT 局部编辑规则
+
+适用场景：用户要求修改上一轮 PPT 的某一页或某几页，例如“改第 4 页”“改最后一页”“不喜欢这个折线图”“把上一版这页换成卡片式”。
+
+核心目标：
+- 这是编辑已有 PPT，不是重新生成完整 PPT。
+- 必须基于 active_ppt_context 中的 slide_count、每页 deck_spec 和 svg_path 判断要改哪几页。
+- 只生成需要修改的页面 SVG；其他页面必须通过 ppt-master.ppt_master_clone_for_edit 复用。
+- 如果用户说“最后一页”，根据 active_ppt_context.slide_count 解析。
+- 如果用户说“有折线图/这个图/某个标题”，根据每页 deck_spec 的 title、slide_type、chart.type、components 判断目标页。
+
+执行顺序：
+1. 后端已经先输出用户可见说明；接下来直接调用 ppt-master.ppt_master_clone_for_edit，传入 source_project_path、edit_pages 和 copy_pages。
+2. 对每个 edit_pages，调用 ppt-master.write_ppt_svg_slide 写入新的 1280×720 SVG。
+3. 最后调用 ppt-master.ppt_master_export 导出新的可编辑 PPTX。
+
+复制与修改约束：
+- copy_pages 必须包含所有不修改的页面。
+- edit_pages 必须只包含用户明确或可由上下文推断要修改的页面。
+- 不要重新设计 copy_pages，也不要重新生成完整 deck。
+- 修改页要保持原 deck 的整体视觉风格、色彩和字体体系。
+- 用户只要求换图表时，不要无故改变整页主题、数据口径或其他页面。
+
+SVG 技术要求：
+- 每页 SVG 必须是 1280×720。
+- 根标签必须为 <svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">。
+- 使用 PPT 可编辑 primitives：rect、circle、ellipse、line、polyline、polygon、path、text、tspan。
+- 所有 SVG text 使用 font-family="Microsoft YaHei, Arial, sans-serif"。
+- 文字必须可读，避免重叠、截断、过密、超出画布。
+- 禁止中文省略号、连续三个英文句点或省略号实体。
+`;
+
+export const PPT_EDIT_PREMIUM_SVG_PROMPT = `
+## PPT 局部编辑精美版规则
+
+适用场景：用户在已有 PPT 上要求“精美版”“高级一点”“更好看”“重新设计这一页”“这页太丑”等局部视觉升级。
+
+核心目标：
+- 这是对已有 PPT 的局部精美化编辑，不是重新生成完整精美版 PPT。
+- 必须基于 active_ppt_context 中的 slide_count、每页 deck_spec 和 svg_path 判断要改哪几页。
+- 只对 edit_pages 进行精美版 SVG 重绘；copy_pages 必须原样复用上一版页面。
+- 即使用户说“我要精美版”“做成精美版”，也只代表目标页使用精美版视觉质量，不代表整套 PPT 重新生成。
+- 如果用户说“最后一页”，根据 active_ppt_context.slide_count 解析。
+- 如果用户说“这页/这个图/这个折线图/某个标题”，根据上一轮用户消息、上一轮助手 active_ppt_context、每页 deck_spec 和 svg_path 推断目标页。
+
+执行顺序：
+1. 后端已经先输出用户可见说明；接下来直接调用 ppt-master.ppt_master_clone_for_edit，传入 source_project_path、edit_pages 和 copy_pages。
+2. 对每个 edit_pages，调用 ppt-master.write_ppt_svg_slide 写入新的 1280×720 精美版 SVG。
+3. 最后调用 ppt-master.ppt_master_export 导出新的可编辑 PPTX。
+
+强制禁止：
+- 禁止调用 ppt_master_bootstrap。
+- 禁止重新规划完整 deck。
+- 禁止重写 copy_pages。
+- 禁止把“精美版”理解为全量重做。
+- 禁止生成 6-8 页新页面大纲。
+
+复制与修改约束：
+- copy_pages 必须包含所有不修改的页面。
+- edit_pages 必须只包含用户明确或可由上下文推断要修改的页面。
+- 修改页可以显著提升视觉完成度，包括更清晰的信息层级、更精致的图表、更好的留白、卡片、注释、色彩和对比。
+- 修改页必须保持原 deck 的主题、数据口径、标题语义和业务结论连续性；除非用户明确要求，不要改变其他页面。
+
+精美版视觉要求：
+- 目标页要像完整设计稿，而不是简单图表截图或文字堆叠。
+- 页面要有清晰层级：主标题、核心结论、主体图表/卡片、辅助说明。
+- 合理留白，重要内容不能贴边，核心区建议保留安全边距。
+- 图表、KPI 卡、时间线、矩阵、排行、诊断卡等组件要精细，避免普通表格。
+- 可以使用少量 SVG path 或简单图标增强视觉，但重要信息必须使用 SVG text/shapes，保证 PPT 可编辑。
+- 不要使用整页截图、foreignObject、script、style 或外链资源。
+
+SVG 技术要求：
+- 每页 SVG 必须是 1280×720。
+- 根标签必须为 <svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg">。
+- 使用 PPT 可编辑 primitives：rect、circle、ellipse、line、polyline、polygon、path、text、tspan。
+- 所有 SVG text 使用 font-family="Microsoft YaHei, Arial, sans-serif"。
+- 文字必须可读，避免重叠、截断、过密、超出画布。
+- 禁止中文省略号、连续三个英文句点或省略号实体；放不下就缩短、换行或拆成更少条目。
 `;
 
 // Backward-compatible name used by routes/debug endpoints. Keep this as the slim base prompt;

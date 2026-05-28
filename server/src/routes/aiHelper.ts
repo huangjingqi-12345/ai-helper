@@ -9,6 +9,7 @@ import { getBackgroundJob, listBackgroundJobs } from '../ai-helper/backgroundJob
 import { logger } from '../utils/logger.js';
 import { DB_DRIVER, dbGet, dbRun } from '../db/connection.js';
 import { runtimeLog } from '../ai-helper/runtimeLogger.js';
+import { cleanupExpiredAiHelperFiles, deleteAiHelperFilesForUser } from '../ai-helper/ossStorage.js';
 
 ensureAiHelperDirs();
 
@@ -23,6 +24,7 @@ type PersistedChatMessage = {
   text: string;
   files?: string[];
   pptSvgProgress?: unknown;
+  activePptContext?: unknown;
 };
 
 type AiHelperSessionRow = {
@@ -44,7 +46,9 @@ function expiresAtFrom(updatedAt = Date.now()): string {
 }
 
 async function cleanupExpiredAiSessions(): Promise<void> {
-  await dbRun('DELETE FROM ai_helper_sessions WHERE expires_at <= ?', [nowIso()]);
+  const now = nowIso();
+  await dbRun('DELETE FROM ai_helper_sessions WHERE expires_at <= ?', [now]);
+  await cleanupExpiredAiHelperFiles(now);
 }
 
 const aiSessionCleanupTimer = setInterval(() => {
@@ -64,12 +68,14 @@ function sanitizeMessages(value: unknown): PersistedChatMessage[] {
       ? obj.files.filter((file): file is string => typeof file === 'string' && file.length <= 1000).slice(0, 80)
       : undefined;
     const pptSvgProgress = obj.pptSvgProgress && typeof obj.pptSvgProgress === 'object' ? obj.pptSvgProgress : undefined;
+    const activePptContext = obj.activePptContext && typeof obj.activePptContext === 'object' ? obj.activePptContext : undefined;
     return [{
       id: String(obj.id || `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`).slice(0, 120),
       role,
       text,
       files,
       pptSvgProgress,
+      activePptContext,
     }];
   });
 }
@@ -185,6 +191,7 @@ export async function putAiHelperSession(req: Request, res: Response, next: Next
 export async function deleteAiHelperSession(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     await dbRun('DELETE FROM ai_helper_sessions WHERE user_id = ?', [req.user!.id]);
+    await deleteAiHelperFilesForUser(req.user!.id);
     res.json({ success: true, data: { deleted: true }, timestamp: nowIso() });
   } catch (err) {
     next(err);
@@ -236,7 +243,7 @@ router.post(['/run/stream', '/command/stream'], async (req: Request, res: Respon
   });
 
   try {
-    for await (const line of streamAssistant(req.body || {}, { signal: abortController.signal })) {
+    for await (const line of streamAssistant(req.body || {}, { signal: abortController.signal, userId: req.user?.id, tenantId: req.user?.tenantId })) {
       if (res.destroyed || res.writableEnded) break;
       res.write(line);
     }
