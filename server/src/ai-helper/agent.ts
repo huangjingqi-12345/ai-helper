@@ -1179,7 +1179,7 @@ function monthlyPdfAutoCall(): SkillCall {
     skill_id: 'md-to-pdf',
     action: 'run_skill_script',
     params: {
-      script: 'scripts/md_to_pdf.py',
+      script: 'scripts/md_to_pdf.ts',
       args: ['--input', 'monthly_report.md', '--output', 'monthly_report.pdf'],
       timeout_sec: 120,
     },
@@ -1193,7 +1193,7 @@ function overviewPdfAutoCall(): SkillCall {
     skill_id: 'md-to-pdf',
     action: 'run_skill_script',
     params: {
-      script: 'scripts/md_to_pdf.py',
+      script: 'scripts/md_to_pdf.ts',
       args: ['--input', 'overview_report.md', '--output', 'overview_report.pdf', '--title', '患教内容运营数据概览'],
       timeout_sec: 120,
     },

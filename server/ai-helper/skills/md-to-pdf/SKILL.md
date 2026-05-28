@@ -5,7 +5,10 @@ description: Convert a generated Markdown report into a QA-checked styled PDF.
 
 # Markdown To PDF
 
-Call run_skill_script with script `scripts/md_to_pdf.py`.
+Call run_skill_script with script `scripts/md_to_pdf.ts`.
+
+Implementation: Node.js/TypeScript + Playwright/Chromium. This skill does not require
+Python packages such as reportlab, Pillow, or PyMuPDF.
 
 Required args:
 - `--input` Markdown file in current run output directory, e.g. `monthly_report.md`
