@@ -1,4 +1,4 @@
-import express, { Router, type Request, type Response } from 'express';
+import express, { Router, type NextFunction, type Request, type Response } from 'express';
 import path from 'path';
 import { runAssistant, streamAssistant, SHORTCUT_PROMPTS, SYSTEM_PROMPT, listGeneratedFiles } from '../ai-helper/agent.js';
 import { AIService } from '../ai-helper/aiService.js';
@@ -7,12 +7,89 @@ import { prefetchMetrics } from '../ai-helper/metrics.js';
 import { SkillRegistry } from '../ai-helper/skillRegistry.js';
 import { getBackgroundJob, listBackgroundJobs } from '../ai-helper/backgroundJobs.js';
 import { logger } from '../utils/logger.js';
-import { DB_DRIVER } from '../db/connection.js';
+import { DB_DRIVER, dbGet, dbRun } from '../db/connection.js';
 import { runtimeLog } from '../ai-helper/runtimeLogger.js';
 
 ensureAiHelperDirs();
 
 const router = Router();
+const AI_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_PERSISTED_MESSAGES = 80;
+const MAX_SESSION_JSON_CHARS = 1_500_000;
+
+type PersistedChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  files?: string[];
+  pptSvgProgress?: unknown;
+};
+
+type AiHelperSessionRow = {
+  user_id: string;
+  tenant_id: string;
+  conversation_id: string;
+  messages: string;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+};
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function expiresAtFrom(updatedAt = Date.now()): string {
+  return new Date(updatedAt + AI_SESSION_TTL_MS).toISOString();
+}
+
+async function cleanupExpiredAiSessions(): Promise<void> {
+  await dbRun('DELETE FROM ai_helper_sessions WHERE expires_at <= ?', [nowIso()]);
+}
+
+const aiSessionCleanupTimer = setInterval(() => {
+  cleanupExpiredAiSessions().catch((err) => logger.warn({ err }, 'AI helper expired session cleanup failed'));
+}, 60 * 60 * 1000);
+aiSessionCleanupTimer.unref?.();
+
+function sanitizeMessages(value: unknown): PersistedChatMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-MAX_PERSISTED_MESSAGES).flatMap((item): PersistedChatMessage[] => {
+    if (!item || typeof item !== 'object') return [];
+    const obj = item as Record<string, unknown>;
+    const role = obj.role === 'user' || obj.role === 'assistant' ? obj.role : undefined;
+    if (!role) return [];
+    const text = String(obj.text ?? '').slice(0, 120_000);
+    const files = Array.isArray(obj.files)
+      ? obj.files.filter((file): file is string => typeof file === 'string' && file.length <= 1000).slice(0, 80)
+      : undefined;
+    const pptSvgProgress = obj.pptSvgProgress && typeof obj.pptSvgProgress === 'object' ? obj.pptSvgProgress : undefined;
+    return [{
+      id: String(obj.id || `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`).slice(0, 120),
+      role,
+      text,
+      files,
+      pptSvgProgress,
+    }];
+  });
+}
+
+function parseStoredMessages(raw: string): PersistedChatMessage[] {
+  try {
+    return sanitizeMessages(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+function sessionPayload(row: AiHelperSessionRow): Record<string, unknown> {
+  return {
+    conversationId: row.conversation_id,
+    messages: parseStoredMessages(row.messages),
+    updatedAt: row.updated_at,
+    expiresAt: row.expires_at,
+  };
+}
 
 export function aiHelperHealth(_req: Request, res: Response): void {
   const ai = new AIService();
@@ -60,6 +137,64 @@ router.get('/files', (_req, res) => {
   res.json({ files: listGeneratedFiles() });
 });
 
+export async function getAiHelperSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await cleanupExpiredAiSessions();
+    const userId = req.user!.id;
+    const row = await dbGet<AiHelperSessionRow>('SELECT * FROM ai_helper_sessions WHERE user_id = ?', [userId]);
+    res.json({ success: true, data: row ? sessionPayload(row) : null, timestamp: nowIso() });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function putAiHelperSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await cleanupExpiredAiSessions();
+    const userId = req.user!.id;
+    const tenantId = req.user!.tenantId;
+    const conversationId = String(req.body?.conversation_id || req.body?.conversationId || '').trim();
+    if (!conversationId) {
+      res.status(400).json({ success: false, data: null, message: 'conversation_id is required', timestamp: nowIso() });
+      return;
+    }
+    const messages = sanitizeMessages(req.body?.messages);
+    const messagesJson = JSON.stringify(messages);
+    if (messagesJson.length > MAX_SESSION_JSON_CHARS) {
+      res.status(413).json({ success: false, data: null, message: 'AI helper session is too large', timestamp: nowIso() });
+      return;
+    }
+    const now = nowIso();
+    const expiresAt = expiresAtFrom();
+    await dbRun(`
+      INSERT INTO ai_helper_sessions (user_id, tenant_id, conversation_id, messages, created_at, updated_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        tenant_id = excluded.tenant_id,
+        conversation_id = excluded.conversation_id,
+        messages = excluded.messages,
+        updated_at = excluded.updated_at,
+        expires_at = excluded.expires_at
+    `, [userId, tenantId, conversationId, messagesJson, now, now, expiresAt]);
+    res.json({ success: true, data: { conversationId, messages, updatedAt: now, expiresAt }, timestamp: nowIso() });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function deleteAiHelperSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await dbRun('DELETE FROM ai_helper_sessions WHERE user_id = ?', [req.user!.id]);
+    res.json({ success: true, data: { deleted: true }, timestamp: nowIso() });
+  } catch (err) {
+    next(err);
+  }
+}
+
+router.get('/session', getAiHelperSession);
+router.put('/session', putAiHelperSession);
+router.delete('/session', deleteAiHelperSession);
+
 router.post(['/run', '/command'], async (req, res, next) => {
   try {
     res.json({ ok: true, ...(await runAssistant(req.body || {})) });
@@ -86,9 +221,11 @@ router.post(['/run/stream', '/command/stream'], async (req: Request, res: Respon
   }, heartbeatMs);
   let completed = false;
   let disconnected = false;
+  const abortController = new AbortController();
   res.on('close', () => {
     if (completed) return;
     disconnected = true;
+    abortController.abort();
     runtimeLog('stream_client_closed', {
       conversation_id: req.body?.conversation_id,
       run_id: req.body?.run_id,
@@ -99,11 +236,21 @@ router.post(['/run/stream', '/command/stream'], async (req: Request, res: Respon
   });
 
   try {
-    for await (const line of streamAssistant(req.body || {})) {
+    for await (const line of streamAssistant(req.body || {}, { signal: abortController.signal })) {
       if (res.destroyed || res.writableEnded) break;
       res.write(line);
     }
   } catch (err) {
+    if (abortController.signal.aborted) {
+      runtimeLog('stream_aborted', {
+        conversation_id: req.body?.conversation_id,
+        run_id: req.body?.run_id,
+        shortcut: req.body?.shortcut,
+        disconnected,
+        url: req.originalUrl,
+      });
+      return;
+    }
     logger.error({ err }, 'embedded AI helper stream error');
     if (!res.destroyed && !res.writableEnded) {
       res.write(JSON.stringify({ type: 'text', data: `AI helper 执行失败: ${err instanceof Error ? err.message : String(err)}` }) + '\n');

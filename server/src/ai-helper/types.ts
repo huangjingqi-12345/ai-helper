@@ -22,6 +22,7 @@ export interface RunRequest {
   run_id?: string;
   shortcut?: AiShortcut;
   data_scope?: AiDataScope;
+  history?: Array<{ role?: 'user' | 'assistant'; text?: string; files?: string[] }>;
 }
 
 export interface StreamEvent {

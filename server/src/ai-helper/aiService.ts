@@ -45,6 +45,12 @@ export interface ChatResult {
   recoveredFromReasoningContent?: boolean;
 }
 
+function abortError(message = '模型调用已取消'): AIServiceError {
+  const err = new AIServiceError(message);
+  err.name = 'AbortError';
+  return err;
+}
+
 function parseProtocolJson(raw: string): Record<string, unknown> | undefined {
   let text = raw.trim();
   if (!text) return undefined;
@@ -107,10 +113,11 @@ export class AIService {
     return this.model;
   }
 
-  async chatDetailed(messages: ChatMessage[]): Promise<ChatResult> {
+  async chatDetailed(messages: ChatMessage[], signal?: AbortSignal): Promise<ChatResult> {
     if (!this.apiKey) {
       throw new AIServiceError('未配置 POE_API_KEY 或 OPENAI_API_KEY');
     }
+    if (signal?.aborted) throw abortError();
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
@@ -128,7 +135,13 @@ export class AIService {
 
     let resp: Response;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    let timedOut = false;
+    const abortFromCaller = () => controller.abort(signal?.reason);
+    if (signal) signal.addEventListener('abort', abortFromCaller, { once: true });
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.timeoutMs);
     try {
       resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -138,11 +151,13 @@ export class AIService {
       });
     } catch (err) {
       if (controller.signal.aborted) {
+        if (!timedOut) throw abortError();
         throw new AIServiceError(`模型调用超时（>${this.timeoutMs}ms）：模型服务未在限定时间内返回`, { request });
       }
       throw new AIServiceError(`模型调用失败（网络异常）: ${err instanceof Error ? err.message : String(err)}`, { request });
     } finally {
       clearTimeout(timeout);
+      if (signal) signal.removeEventListener('abort', abortFromCaller);
     }
 
     if (!resp.ok) {
@@ -179,7 +194,7 @@ export class AIService {
     return { text, rawResponse: data, request, cacheUsage, recoveredFromReasoningContent: Boolean(recoveredText) };
   }
 
-  async chat(messages: ChatMessage[]): Promise<string> {
-    return (await this.chatDetailed(messages)).text;
+  async chat(messages: ChatMessage[], signal?: AbortSignal): Promise<string> {
+    return (await this.chatDetailed(messages, signal)).text;
   }
 }

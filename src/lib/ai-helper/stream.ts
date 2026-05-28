@@ -1,4 +1,4 @@
-import type { ShortcutRunOptions, StreamEvent } from './types';
+import type { ChatMessage, ShortcutRunOptions, StreamEvent } from './types';
 import { aiHelperAuthHeaders } from './auth';
 
 export function formatProgressStatus(data: unknown): string {
@@ -48,6 +48,8 @@ export async function postAiHelperStream(
   conversationId: string,
   runId: string,
   options: ShortcutRunOptions = {},
+  signal?: AbortSignal,
+  history: Pick<ChatMessage, 'role' | 'text' | 'files'>[] = [],
 ): Promise<Response> {
   const body = JSON.stringify({
     command: '',
@@ -56,12 +58,14 @@ export async function postAiHelperStream(
     run_id: runId,
     shortcut: options.shortcut,
     data_scope: options.data_scope,
+    history,
   });
 
   let resp = await fetch('/api/ai-helper/run/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...aiHelperAuthHeaders() },
     body,
+    signal,
   });
 
   if (resp.status === 404) {
@@ -69,6 +73,7 @@ export async function postAiHelperStream(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...aiHelperAuthHeaders() },
       body,
+      signal,
     });
   }
 

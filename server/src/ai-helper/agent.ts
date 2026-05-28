@@ -67,6 +67,24 @@ function modelErrorLog(err: unknown): unknown {
   return err;
 }
 
+interface StreamAssistantOptions {
+  signal?: AbortSignal;
+}
+
+function abortError(): Error {
+  const err = new Error('AI helper generation aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'AbortError' || /aborted|abort|取消|暂停/i.test(err.message));
+}
+
 function withHardTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -524,6 +542,7 @@ interface AssistantIntent {
   task: IntentTask;
   ppt_mode: IntentPptMode;
   confidence: number;
+  is_followup: boolean;
   reason?: string;
 }
 
@@ -557,9 +576,10 @@ function routeLabel(shortcut?: AiShortcut): string | undefined {
   return undefined;
 }
 
-async function classifyAssistantIntent(req: RunRequest, rootDir: string): Promise<AssistantIntent | undefined> {
+async function classifyAssistantIntent(req: RunRequest, rootDir: string, signal?: AbortSignal): Promise<AssistantIntent | undefined> {
   const userText = (req.message || req.command || '').trim();
   if (!userText) return undefined;
+  const previousTurn = historyTurnForPrompt(req, 900);
   const ai = new AIService({
     model: process.env.AI_HELPER_INTENT_MODEL || 'qwen3.7-max',
     timeoutMs: Math.max(8_000, Math.min(30_000, Number(process.env.AI_HELPER_INTENT_TIMEOUT_MS || 15_000) || 15_000)),
@@ -572,6 +592,7 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string): Promis
         '只输出一个 JSON 对象，不要 Markdown，不要解释文字。',
         'task 只能是 data_qa、overview、monthly、ppt、chat。',
         'ppt_mode 只能是 fast、premium、unspecified；只有 task=ppt 时才有意义。',
+        'is_followup 必须是 boolean，判断本轮是否依赖上一轮上下文。',
         '分类标准：',
         '- data_qa：询问指标口径、数据来源、字段含义、为什么为空/为 0、互动数怎么算等，只需文字回答。',
         '- overview：请求短周期数据概览、dashboard、整体运营概览。',
@@ -582,6 +603,10 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string): Promis
         '- fast：用户明确要快速、稳定、简单版，或只说生成 PPT 但未指定视觉要求。',
         '- premium：用户明确想要更高视觉完成度、更精致设计、逐页精修、直接 SVG 设计等。',
         '- unspecified：确定是 PPT，但无法判断快版或精美版；后端会默认快速版。',
+        '追问判断：',
+        '- is_followup=true：用户使用“刚才/上面/继续/上一版/这个/这份/它/基于前面/改成/沿用”等表达，必须依赖 previous_turn 才能完成。',
+        '- is_followup=true：用户要求修改、继续、复用上一轮生成的文件/结论/风格。',
+        '- is_followup=false：用户发起一个完整的新任务，即使 previous_turn 存在也不要复用。',
         '低把握时降低 confidence，不要强行分类。',
       ].join('\n'),
     },
@@ -589,14 +614,15 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string): Promis
       role: 'user',
       content: JSON.stringify({
         user_request: userText,
-        output_schema: { task: 'data_qa|overview|monthly|ppt|chat', ppt_mode: 'fast|premium|unspecified', confidence: '0~1 number', reason: '不超过30字' },
+        previous_turn: previousTurn,
+        output_schema: { task: 'data_qa|overview|monthly|ppt|chat', ppt_mode: 'fast|premium|unspecified', confidence: '0~1 number', is_followup: 'boolean', reason: '不超过30字' },
       }, null, 2),
     },
   ];
   const started = Date.now();
   runtimeLog('model_start', { step: 'intent_classification', rootDir, model: ai.modelName(), messages, ...requestLog(req) });
   try {
-    const result = await ai.chatDetailed(messages);
+    const result = await ai.chatDetailed(messages, signal);
     const duration = Date.now() - started;
     runtimeLog('model_end', { step: 'intent_classification', rootDir, duration_ms: duration, output: result.text, raw_response: result.rawResponse, request: result.request, cache_usage: result.cacheUsage, ...requestLog(req) });
     modelIoLog({
@@ -617,9 +643,11 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string): Promis
       task: asIntentTask(parsed.task),
       ppt_mode: asIntentPptMode(parsed.ppt_mode),
       confidence: normalizeConfidence(parsed.confidence),
+      is_followup: parsed.is_followup === true,
       reason: typeof parsed.reason === 'string' ? parsed.reason.slice(0, 80) : undefined,
     };
   } catch (err) {
+    if (isAbortError(err)) throw err;
     const duration = Date.now() - started;
     runtimeLog('model_error', { step: 'intent_classification', rootDir, duration_ms: duration, error: modelErrorLog(err), fallback_to_general: true, ...requestLog(req) });
     modelIoLog({
@@ -1035,7 +1063,13 @@ async function buildPrimaryDataContext(req: RunRequest, rootDir: string): Promis
   };
 }
 
-async function buildMessages(req: RunRequest, rootDir: string, registry: SkillRegistry, executor: SkillExecutor): Promise<{ messages: ChatMessage[]; initialSkills: string[]; primaryDataContext: Record<string, unknown> }> {
+async function buildMessages(
+  req: RunRequest,
+  rootDir: string,
+  registry: SkillRegistry,
+  executor: SkillExecutor,
+  options: { includePreviousTurn?: boolean } = {},
+): Promise<{ messages: ChatMessage[]; initialSkills: string[]; primaryDataContext: Record<string, unknown> }> {
   const userText = (req.message || req.command || '').trim() || '请根据我的需求完成分析并交付。';
   const primaryDataContext = await buildPrimaryDataContext(req, rootDir);
   const catalog = registry.buildPromptContext();
@@ -1070,6 +1104,25 @@ async function buildMessages(req: RunRequest, rootDir: string, registry: SkillRe
     messages.push({ role: 'system', content: '运行时硬约束：shortcut=ppt_svg，必须使用 PPT 精美版直接 SVG 逐页设计链路；不要调用 render_ppt_from_specs。' });
   }
   if (catalog) messages.push({ role: 'system', content: catalog });
+  const history = options.includePreviousTurn ? previousHistoryTurn(req) : [];
+  if (history.length) {
+    messages.push({
+      role: 'system',
+      content: [
+        '以下仅为上一轮对话上下文，因为意图识别已判断本轮是追问/修改/继续。',
+        '只用于理解省略指代、复用上一轮文件/结论/风格；不要重复执行上一轮任务，除非用户明确要求继续或修改。',
+      ].join('\n'),
+    });
+    for (const item of history) {
+      const fileLine = item.files?.length ? `\n关联文件：${item.files.join(', ')}` : '';
+      messages.push({
+        role: item.role,
+        content: item.role === 'user'
+          ? `上一轮用户消息：${item.text}${fileLine}`
+          : `上一轮助手回复：${item.text}${fileLine}`,
+      });
+    }
+  }
   messages.push({ role: 'user', content: `用户请求: ${userText}\n\n请按 new-ai skill_call/final 协议推进。` });
   return { messages, initialSkills: [], primaryDataContext };
 }
@@ -1155,6 +1208,56 @@ function buildSkillContextInjectionNotice(call: SkillCall): string {
     '请基于完整规范重新输出下一步，只输出一个 JSON 对象。',
     '如果上一条 skill_call 仍符合完整规范，请原样或修正后再次输出；如果规范要求先生成源文件/manifest/notes/design/spec，请按正确顺序继续。',
   ].join('\n');
+}
+
+type NormalizedHistoryItem = { role: 'user' | 'assistant'; text: string; files?: string[] };
+
+function normalizedHistory(req: RunRequest): NormalizedHistoryItem[] {
+  return (Array.isArray(req.history) ? req.history : [])
+    .flatMap((item) => {
+      const role = item?.role === 'user' || item?.role === 'assistant' ? item.role : undefined;
+      const text = String(item?.text || '').trim();
+      const files = Array.isArray(item?.files)
+        ? item.files.filter((file): file is string => typeof file === 'string' && file.trim().length > 0).slice(0, 12)
+        : undefined;
+      return role && (text || files?.length) ? [{ role, text: text.slice(0, 8000), files }] : [];
+    })
+    .slice(-10);
+}
+
+function previousHistoryTurn(req: RunRequest): NormalizedHistoryItem[] {
+  const history = normalizedHistory(req);
+  if (!history.length) return [];
+  let lastAssistantIndex = -1;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index].role === 'assistant') {
+      lastAssistantIndex = index;
+      break;
+    }
+  }
+  if (lastAssistantIndex >= 0) {
+    let previousUserIndex = -1;
+    for (let index = lastAssistantIndex - 1; index >= 0; index -= 1) {
+      if (history[index].role === 'user') {
+        previousUserIndex = index;
+        break;
+      }
+    }
+    return [
+      ...(previousUserIndex >= 0 ? [history[previousUserIndex]] : []),
+      history[lastAssistantIndex],
+    ];
+  }
+  const lastUser = [...history].reverse().find((item) => item.role === 'user');
+  return lastUser ? [lastUser] : [];
+}
+
+function historyTurnForPrompt(req: RunRequest, maxTextChars = 1200): Array<Record<string, unknown>> {
+  return previousHistoryTurn(req).map((item) => ({
+    role: item.role,
+    text: item.text.slice(0, maxTextChars),
+    files: item.files?.slice(0, 8),
+  }));
 }
 
 function textFromSuccessfulCall(call: SkillCall, result: SkillResult): string {
@@ -1570,6 +1673,7 @@ interface DirectPptBatchOptions {
   totalSlides: number;
   generatedSlides: Array<Record<string, unknown>>;
   retryIssue?: string;
+  previousTurn?: Array<Record<string, unknown>>;
 }
 
 function directPptSlideOutline(slides: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
@@ -1643,6 +1747,12 @@ function buildDirectPptMessages(userText: string, primaryDataContext: Record<str
       '只基于提供的数据生成结论，不得编造新指标、新项目、新内容。',
     ],
     user_goal: shortUserGoal(userText),
+    previous_turn_context: options.previousTurn?.length
+      ? {
+          usage: '意图识别判断本轮是追问/修改/继续时才提供。可复用上一轮需求、文件或风格；不得把上一轮旧任务当成必须重复执行。',
+          messages: options.previousTurn,
+        }
+      : undefined,
     previous_batch_issue: options.retryIssue || undefined,
     data_context: context,
   };
@@ -2271,7 +2381,7 @@ function buildOverviewVisualPlan(primaryDataContext: Record<string, unknown>): R
   };
 }
 
-async function generateMonthlyInsights(req: RunRequest, rootDir: string, current: PrefetchMetrics, previous: PrefetchMetrics, dateRange: DateRange, compareRange: DateRange): Promise<MonthlyInsights> {
+async function generateMonthlyInsights(req: RunRequest, rootDir: string, current: PrefetchMetrics, previous: PrefetchMetrics, dateRange: DateRange, compareRange: DateRange, signal?: AbortSignal): Promise<MonthlyInsights> {
   const monthlyInsightTimeoutMs = Math.max(
     20_000,
     Math.min(60_000, Number(process.env.AI_HELPER_MONTHLY_INSIGHT_TIMEOUT_MS || 55_000) || 55_000),
@@ -2288,7 +2398,7 @@ async function generateMonthlyInsights(req: RunRequest, rootDir: string, current
     runtimeLog('model_start', { step: 'monthly_insights', attempt, max_attempts: maxAttempts, timeout_ms: monthlyInsightTimeoutMs, rootDir, model: ai.modelName(), messages, ...requestLog(req) });
     try {
       const result = await withHardTimeout(
-        ai.chatDetailed(messages),
+        ai.chatDetailed(messages, signal),
         monthlyInsightTimeoutMs + 5_000,
         '月报复盘结论生成超时，已切换为规则结论',
       );
@@ -2307,6 +2417,7 @@ async function generateMonthlyInsights(req: RunRequest, rootDir: string, current
       });
       return normalizeMonthlyInsights(parseInsightJson(result.text), current);
     } catch (err) {
+      if (isAbortError(err)) throw err;
       lastError = err;
       const duration = Date.now() - started;
       runtimeLog('model_error', { step: 'monthly_insights', attempt, max_attempts: maxAttempts, rootDir, duration_ms: duration, model: ai.modelName(), error: modelErrorLog(err), fallback_to_rule_based: attempt >= maxAttempts, ...requestLog(req) });
@@ -2325,19 +2436,23 @@ async function generateMonthlyInsights(req: RunRequest, rootDir: string, current
   return fallbackMonthlyInsights(current);
 }
 
-export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> {
+export async function* streamAssistant(req: RunRequest, options: StreamAssistantOptions = {}): AsyncGenerator<string> {
   const { rootDir } = createRunDirectory(req.conversation_id, req.run_id);
+  const signal = options.signal;
+  throwIfAborted(signal);
   const started = Date.now();
   const ai = new AIService();
   const registry = new SkillRegistry();
   const explicitShortcut = asShortcut(req.shortcut);
-  const classifiedIntent = explicitShortcut ? undefined : await classifyAssistantIntent(req, rootDir);
+  const hasPreviousTurn = previousHistoryTurn(req).length > 0;
+  const classifiedIntent = (!explicitShortcut || hasPreviousTurn) ? await classifyAssistantIntent(req, rootDir, signal) : undefined;
+  const includePreviousTurn = Boolean(classifiedIntent?.is_followup && hasPreviousTurn);
   const shortcut = explicitShortcut || shortcutFromIntent(classifiedIntent);
   const effectiveReq: RunRequest = shortcut
     ? { ...req, shortcut, data_scope: asDataScope(req.data_scope) || defaultDataScope(shortcut) }
     : req;
   const isPremiumPptSvg = shortcut === 'ppt_svg';
-  const executor = new SkillExecutor(rootDir, { allowManualPptSvg: isPremiumPptSvg });
+  const executor = new SkillExecutor(rootDir, { allowManualPptSvg: isPremiumPptSvg, signal });
   const trace: AgentDonePayload['trace'] = [];
   const backgroundJobs: BackgroundJob[] = [];
   const injected = new Set<string>();
@@ -2348,12 +2463,13 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
   const modelTimeoutRetries = Math.max(1, Number(process.env.AI_HELPER_MODEL_TIMEOUT_RETRIES || 3) || 3);
 
   const emit = (type: string, data: unknown): string => {
+    throwIfAborted(signal);
     const safeData = sanitizeUserVisibleData(data);
     runtimeLog('stream_event', { type, data: safeData, rootDir, ...requestLog(effectiveReq) });
     return eventLine(type, safeData);
   };
 
-  runtimeLog('request_start', { mode: 'new-ai-ts', rootDir, runtime_log_path: RUNTIME_LOG_PATH, model_io_log_path: MODEL_IO_LOG_PATH, run_model_io_log_path: path.join(rootDir, 'model_io.md'), classified_intent: classifiedIntent, inferred_shortcut: !explicitShortcut && shortcut ? shortcut : undefined, ...requestLog(effectiveReq) });
+  runtimeLog('request_start', { mode: 'new-ai-ts', rootDir, runtime_log_path: RUNTIME_LOG_PATH, model_io_log_path: MODEL_IO_LOG_PATH, run_model_io_log_path: path.join(rootDir, 'model_io.md'), classified_intent: classifiedIntent, include_previous_turn: includePreviousTurn, inferred_shortcut: !explicitShortcut && shortcut ? shortcut : undefined, ...requestLog(effectiveReq) });
   yield emit('status', '开始处理请求...');
   const routeNote = !explicitShortcut && shortcut === 'ppt' && classifiedIntent?.task === 'ppt' && classifiedIntent.ppt_mode === 'unspecified'
     ? '已为你选择 PPT 快速版；如需更强视觉效果，可使用 PPT 精美版。'
@@ -2367,6 +2483,8 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       task: classifiedIntent?.task,
       ppt_mode: shortcut === 'ppt_svg' ? 'premium' : shortcut === 'ppt' ? 'fast' : classifiedIntent?.ppt_mode,
       confidence: classifiedIntent?.confidence,
+      is_followup: classifiedIntent?.is_followup,
+      history_included: includePreviousTurn,
       note: routeNote,
     });
   }
@@ -2426,6 +2544,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: [], direct_overview_pipeline: true, ...requestLog(effectiveReq) });
       return;
     } catch (err) {
+      if (isAbortError(err)) throw err;
       const files = collectFiles(trace);
       const text = `数据概览生成失败：${err instanceof Error ? err.message : String(err)}`;
       yield emit('text', text);
@@ -2499,6 +2618,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
             totalSlides,
             generatedSlides: Array.isArray(deck.slides) ? deck.slides.map(obj) : [],
             retryIssue,
+            previousTurn: includePreviousTurn ? historyTurnForPrompt(effectiveReq, 1800) : undefined,
           });
           const modelStarted = Date.now();
           yield emit('progress', {
@@ -2522,7 +2642,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
             ...requestLog(effectiveReq),
           });
           try {
-            const result = await pptAi.chatDetailed(messages);
+            const result = await pptAi.chatDetailed(messages, signal);
             const duration = Date.now() - modelStarted;
             runtimeLog('model_end', {
               step: 'direct_ppt_spec_batch',
@@ -2599,6 +2719,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
             });
             break;
           } catch (err) {
+            if (isAbortError(err)) throw err;
             const duration = Date.now() - modelStarted;
             runtimeLog('model_error', {
               step: 'direct_ppt_spec_batch',
@@ -2731,6 +2852,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: [], direct_ppt_pipeline: true, ...requestLog(effectiveReq) });
       return;
     } catch (err) {
+      if (isAbortError(err)) throw err;
       const text = `PPT 快速版生成失败：${err instanceof Error ? err.message : String(err)}`;
       yield emit('text', text);
       yield emit('progress', { phase: 'error', message: 'PPT 快速版生成失败', step: 99, ok: false });
@@ -2780,7 +2902,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       if (emitTextResult.text) yield emit('text', emitTextResult.text);
 
       yield emit('progress', { phase: 'analysis', message: '正在生成月报复盘结论', step: 2 });
-      const insights = await generateMonthlyInsights(effectiveReq, rootDir, currentMetrics, previousMetrics, scope.dateRange, scope.compareRange);
+      const insights = await generateMonthlyInsights(effectiveReq, rootDir, currentMetrics, previousMetrics, scope.dateRange, scope.compareRange, signal);
       const markdown = buildMonthlyReportMarkdown(currentMetrics, previousMetrics, scope.dateRange, scope.compareRange, insights);
 
       const mdCall: SkillCall = {
@@ -2812,6 +2934,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
       runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: [], direct_monthly_template: true, ...requestLog(effectiveReq) });
       return;
     } catch (err) {
+      if (isAbortError(err)) throw err;
       const text = `月报生成失败：${err instanceof Error ? err.message : String(err)}`;
       yield emit('text', text);
       yield emit('done', { text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, background_jobs: [] });
@@ -2823,8 +2946,9 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
   let messages: ChatMessage[];
   let primaryDataContext: Record<string, unknown>;
   try {
-    ({ messages, primaryDataContext } = await buildMessages(effectiveReq, rootDir, registry, executor));
+    ({ messages, primaryDataContext } = await buildMessages(effectiveReq, rootDir, registry, executor, { includePreviousTurn }));
   } catch (err) {
+    if (isAbortError(err)) throw err;
     const text = `PX 数据预取失败：${err instanceof Error ? err.message : String(err)}`;
     yield emit('text', text);
     yield emit('done', { text, files: [], skills_used: [], trace: [] });
@@ -2842,7 +2966,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
         const modelStarted = Date.now();
         runtimeLog('model_start', { step, attempt, max_attempts: modelTimeoutRetries, rootDir, model: ai.modelName(), messages, ...requestLog(effectiveReq) });
         try {
-          const result = await ai.chatDetailed(messages);
+          const result = await ai.chatDetailed(messages, signal);
           raw = result.text;
           const duration = Date.now() - modelStarted;
           runtimeLog('model_end', { step, attempt, max_attempts: modelTimeoutRetries, rootDir, duration_ms: duration, output: raw, raw_response: result.rawResponse, request: result.request, cache_usage: result.cacheUsage, recovered_from_reasoning_content: result.recoveredFromReasoningContent, ...requestLog(effectiveReq) });
@@ -2860,6 +2984,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
           });
           break;
         } catch (err) {
+          if (isAbortError(err)) throw err;
           const duration = Date.now() - modelStarted;
           if (isModelTimeoutError(err) && attempt < modelTimeoutRetries) {
             const text = `模型调用失败：${err instanceof Error ? err.message : String(err)}`;
@@ -2881,6 +3006,7 @@ export async function* streamAssistant(req: RunRequest): AsyncGenerator<string> 
         }
       }
     } catch (err) {
+      if (isAbortError(err)) throw err;
       const text = `模型调用失败：${err instanceof Error ? err.message : String(err)}`;
       runtimeLog('model_error', { step, rootDir, error: modelErrorLog(err), ...requestLog(effectiveReq) });
       modelIoLog({

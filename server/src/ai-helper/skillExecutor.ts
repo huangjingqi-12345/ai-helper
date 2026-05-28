@@ -28,6 +28,7 @@ export class SkillExecutionError extends Error {}
 
 export interface SkillExecutorOptions {
   allowManualPptSvg?: boolean;
+  signal?: AbortSignal;
 }
 
 export type ActionSpecMode = 'general' | 'data-qa' | 'overview' | 'monthly' | 'ppt-svg';
@@ -172,12 +173,21 @@ function tsxExecutable(): string {
   return fs.existsSync(local) ? local : 'tsx';
 }
 
-async function exec(command: string, args: string[], cwd = SERVER_ROOT, timeout = 300_000): Promise<ScriptRun> {
+function abortExecutionError(): SkillExecutionError {
+  return new SkillExecutionError('技能执行已取消');
+}
+
+async function exec(command: string, args: string[], cwd = SERVER_ROOT, timeout = 300_000, signal?: AbortSignal): Promise<ScriptRun> {
   const started = Date.now();
   const rendered = [command, ...args].join(' ');
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout, maxBuffer: 50 * 1024 * 1024, env: process.env }, (error, stdout, stderr) => {
-      if (error) reject(new SkillExecutionError(`${rendered}\n${stderr || stdout || error.message}`));
+    if (signal?.aborted) {
+      reject(abortExecutionError());
+      return;
+    }
+    execFile(command, args, { cwd, timeout, maxBuffer: 50 * 1024 * 1024, env: process.env, signal }, (error, stdout, stderr) => {
+      if (signal?.aborted) reject(abortExecutionError());
+      else if (error) reject(new SkillExecutionError(`${rendered}\n${stderr || stdout || error.message}`));
       else resolve({ stdout, stderr, command: rendered, duration_ms: Date.now() - started });
     });
   });
@@ -704,6 +714,7 @@ export class SkillExecutor {
   }
 
   async executeStrict(call: SkillCall): Promise<SkillResult> {
+    if (this.options.signal?.aborted) throw abortExecutionError();
     const skillId = str(call.skill_id);
     const action = str(call.action);
     const params = (call.params || {}) as Record<string, unknown>;
@@ -794,9 +805,9 @@ export class SkillExecutor {
     }
     const ext = path.extname(script).toLowerCase();
     let run: ScriptRun;
-    if (ext === '.ts') run = await exec(tsxExecutable(), [script, ...finalArgs], SERVER_ROOT, timeout);
-    else if (ext === '.py') run = await exec(pythonExecutable(skillId === 'md-to-pdf' ? ['reportlab', 'PIL', 'fitz'] : []), [script, ...finalArgs], SERVER_ROOT, timeout);
-    else run = await exec(script, finalArgs, SERVER_ROOT, timeout);
+    if (ext === '.ts') run = await exec(tsxExecutable(), [script, ...finalArgs], SERVER_ROOT, timeout, this.options.signal);
+    else if (ext === '.py') run = await exec(pythonExecutable(skillId === 'md-to-pdf' ? ['reportlab', 'PIL', 'fitz'] : []), [script, ...finalArgs], SERVER_ROOT, timeout, this.options.signal);
+    else run = await exec(script, finalArgs, SERVER_ROOT, timeout, this.options.signal);
     const parsed = parseLastJson(run.stdout) || {};
     const files = this.extractFiles(parsed);
     return jsonResult(`执行脚本 ${skillId}/${scriptRel}`, { kind: 'script', command: run.command, duration_ms: run.duration_ms }, { stdout: run.stdout.slice(-6000), stderr: run.stderr.slice(-6000), json: parsed, files });

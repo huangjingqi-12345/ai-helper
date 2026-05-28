@@ -6,6 +6,7 @@ import {
   statusFromStreamEvent,
 } from '@/lib/ai-helper/loadingStatus';
 import { postAiHelperStream, readNdjsonStream } from '@/lib/ai-helper/stream';
+import { deleteAiHelperSession, fetchAiHelperSession, saveAiHelperSession } from '@/lib/ai-helper/session';
 import type { AiShortcut, ChatMessage, PptSvgProgress, ShortcutPrompts, ShortcutRunOptions } from '@/lib/ai-helper/types';
 
 function newId(prefix: string): string {
@@ -55,6 +56,24 @@ function extractPptxFiles(data: unknown): string[] {
   return sortedUnique(collectStringFiles(data).filter(isPptxPath));
 }
 
+function persistedMessagesForModel(messages: ChatMessage[]): Array<Pick<ChatMessage, 'role' | 'text' | 'files'>> {
+  return messages
+    .filter((msg) => msg.text.trim() || (msg.files?.length || 0) > 0)
+    .slice(-10)
+    .map((msg) => ({ role: msg.role, text: msg.text.slice(0, 8000), files: msg.files?.slice(0, 12) }));
+}
+
+function normalizePersistedMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((msg) => ({
+    ...msg,
+    loading: false,
+    loadingStatus: undefined,
+    loadingElapsed: undefined,
+    loadingStep: undefined,
+    loadingStartedAt: undefined,
+  }));
+}
+
 function isPptShortcut(shortcut?: AiShortcut): boolean {
   return shortcut === 'ppt' || shortcut === 'ppt_svg';
 }
@@ -72,15 +91,47 @@ export function usePxAssistant() {
   const [shortcutPrompts, setShortcutPrompts] = useState<ShortcutPrompts>({});
   const [serviceReady, setServiceReady] = useState<boolean | null>(null);
   const conversationIdRef = useRef(newId('conv'));
+  const activeRunRef = useRef<{ controller: AbortController; assistantId: string } | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const sessionLoadedRef = useRef(false);
+  const skipNextPersistRef = useRef(false);
+  const localSessionTouchedRef = useRef(false);
+  const saveAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const persistSessionSnapshot = useCallback((conversationId: string, snapshot: ChatMessage[]) => {
+    const normalized = normalizePersistedMessages(snapshot);
+    if (normalized.length === 0) return;
+    saveAbortRef.current?.abort();
+    const controller = new AbortController();
+    saveAbortRef.current = controller;
+    void saveAiHelperSession(conversationId, normalized, controller.signal)
+      .catch(() => undefined)
+      .finally(() => {
+        if (saveAbortRef.current === controller) saveAbortRef.current = null;
+      });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [prompts, ok] = await Promise.all([
+      const [prompts, ok, session] = await Promise.all([
         fetchShortcutPrompts(),
         checkAiHelperHealth(),
+        fetchAiHelperSession().catch(() => null),
       ]);
       if (cancelled) return;
+      if (session && !localSessionTouchedRef.current && messagesRef.current.length === 0 && !activeRunRef.current) {
+        const restored = normalizePersistedMessages(session.messages || []);
+        conversationIdRef.current = session.conversationId || conversationIdRef.current;
+        skipNextPersistRef.current = true;
+        messagesRef.current = restored;
+        setMessages(restored);
+      }
+      sessionLoadedRef.current = true;
       setShortcutPrompts(prompts);
       setServiceReady(ok);
     })();
@@ -89,32 +140,79 @@ export function usePxAssistant() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!sessionLoadedRef.current) return;
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+    if (messages.length === 0) return;
+    const timeout = window.setTimeout(() => {
+      persistSessionSnapshot(conversationIdRef.current, messages);
+    }, streaming ? 1200 : 350);
+    return () => window.clearTimeout(timeout);
+  }, [messages, streaming, persistSessionSnapshot]);
+
   const resetConversation = useCallback(() => {
+    localSessionTouchedRef.current = true;
+    saveAbortRef.current?.abort();
+    saveAbortRef.current = null;
+    activeRunRef.current?.controller.abort();
+    activeRunRef.current = null;
     conversationIdRef.current = newId('conv');
+    messagesRef.current = [];
     setMessages([]);
     setStreaming(false);
+    void deleteAiHelperSession();
   }, []);
 
   const updateAssistant = useCallback((id: string, patch: Partial<ChatMessage>) => {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, ...patch } : m)),
-    );
+    setMessages((prev) => {
+      const next = prev.map((m) => (m.id === id ? { ...m, ...patch } : m));
+      messagesRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const stopGeneration = useCallback(() => {
+    const active = activeRunRef.current;
+    if (!active) return;
+    active.controller.abort();
+    setMessages((prev) => {
+      const next = prev.map((m) =>
+        m.id === active.assistantId
+          ? {
+              ...m,
+              loadingStatus: '正在暂停生成…',
+              loadingStep: undefined,
+            }
+          : m,
+      );
+      messagesRef.current = next;
+      return next;
+    });
   }, []);
 
   const sendMessage = useCallback(
     async (rawMessage: string, options: ShortcutRunOptions = {}) => {
       const text = rawMessage.trim();
       if (!text || streaming) return;
+      localSessionTouchedRef.current = true;
 
       if (serviceReady === false) {
-        setMessages((prev) => [
-          ...prev,
-          {
+        setMessages((prev) => {
+          const errMsg: ChatMessage = {
             id: newId('err'),
             role: 'assistant',
             text: 'AI 助手服务未就绪。请确认 Px 后端已启动，并在后端环境变量中配置 `POE_API_KEY` 或 `OPENAI_API_KEY`。',
-          },
-        ]);
+          };
+          const next = [
+            ...prev,
+            errMsg,
+          ];
+          messagesRef.current = next;
+          return next;
+        });
         return;
       }
 
@@ -136,11 +234,17 @@ export function usePxAssistant() {
         pptSvgProgress: initialPptSvgProgress,
       };
 
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      setMessages((prev) => {
+        const next = [...prev, userMsg, assistantMsg];
+        messagesRef.current = next;
+        return next;
+      });
       setStreaming(true);
 
       const conversationId = conversationIdRef.current;
       const runId = newId('run');
+      const abortController = new AbortController();
+      activeRunRef.current = { controller: abortController, assistantId };
       let assistantText = '';
       let turnFiles: string[] = [];
       let sawDone = false;
@@ -245,6 +349,7 @@ export function usePxAssistant() {
         const chars = Array.from(piece);
         const chunkSize = Math.max(2, Math.ceil(chars.length / 240));
         for (let index = 0; index < chars.length; index += chunkSize) {
+          if (abortController.signal.aborted) return;
           assistantText += chars.slice(index, index + chunkSize).join('');
           updateAssistant(assistantId, {
             text: assistantText,
@@ -264,7 +369,14 @@ export function usePxAssistant() {
       }, 1000);
 
       try {
-        const resp = await postAiHelperStream(text, conversationId, runId, options);
+        const resp = await postAiHelperStream(
+          text,
+          conversationId,
+          runId,
+          options,
+          abortController.signal,
+          persistedMessagesForModel(messagesRef.current),
+        );
         if (!resp.ok || !resp.body) {
           const errText = '请求失败，请确认 Px 后端 AI 助手已启用，且数据库连接与模型 Key 已配置。';
           updateAssistant(assistantId, { loading: false, text: errText, loadingStatus: undefined, loadingElapsed: undefined, loadingStep: undefined });
@@ -272,6 +384,7 @@ export function usePxAssistant() {
         }
 
         for await (const evt of readNdjsonStream(resp.body)) {
+          if (abortController.signal.aborted) break;
           if (evt.type === 'text') {
             const piece = String(evt.data ?? '');
             if (!piece) continue;
@@ -332,6 +445,18 @@ export function usePxAssistant() {
           }
         }
 
+        if (abortController.signal.aborted) {
+          updateAssistant(assistantId, {
+            loading: false,
+            text: assistantText.trim() ? `${assistantText}\n\n已暂停生成。` : '已暂停生成。',
+            files: turnFiles,
+            loadingStatus: undefined,
+            loadingElapsed: undefined,
+            loadingStep: undefined,
+          });
+          return;
+        }
+
         if (!assistantText.trim()) {
           assistantText = sawDone ? '已完成。' : '连接已结束，但未收到完整结果，请稍后重试。';
         }
@@ -344,7 +469,18 @@ export function usePxAssistant() {
           loadingElapsed: undefined,
           loadingStep: undefined,
         });
-      } catch {
+      } catch (err) {
+        if (abortController.signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+          updateAssistant(assistantId, {
+            loading: false,
+            text: assistantText.trim() ? `${assistantText}\n\n已暂停生成。` : '已暂停生成。',
+            files: turnFiles,
+            loadingStatus: undefined,
+            loadingElapsed: undefined,
+            loadingStep: undefined,
+          });
+          return;
+        }
         updateAssistant(assistantId, {
           loading: false,
           text: assistantText.trim() || '连接已中断，请稍后重试。',
@@ -355,10 +491,16 @@ export function usePxAssistant() {
       } finally {
         clearModelWaitingTimer();
         window.clearInterval(elapsedTimerId);
+        if (activeRunRef.current?.assistantId === assistantId) {
+          activeRunRef.current = null;
+        }
+        if (conversationIdRef.current === conversationId && messagesRef.current.length > 0) {
+          persistSessionSnapshot(conversationId, messagesRef.current);
+        }
         setStreaming(false);
       }
     },
-    [streaming, serviceReady, updateAssistant],
+    [streaming, serviceReady, updateAssistant, persistSessionSnapshot],
   );
 
   const runShortcut = useCallback(
@@ -378,6 +520,7 @@ export function usePxAssistant() {
     serviceReady,
     resetConversation,
     sendMessage,
+    stopGeneration,
     runShortcut,
   };
 }

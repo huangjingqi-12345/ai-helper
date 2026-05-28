@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Send,
   Sparkles,
+  Square,
   Wand2,
   type LucideProps,
 } from 'lucide-react';
@@ -59,7 +60,7 @@ const REPORT_ACTIONS: AssistantAction[] = [
   },
   {
     title: '月度报告',
-    desc: '近 30 天复盘 · 洞察 · 行动建议',
+    desc: '完整自然月 · 环比复盘 · 行动建议',
     cmd: '/monthly',
     icon: CalendarDays,
     accentClass: 'border-emerald-300/40 bg-emerald-300/15 text-emerald-100 shadow-[0_0_22px_rgba(16,185,129,.13)]',
@@ -236,6 +237,7 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
     serviceReady,
     resetConversation,
     sendMessage,
+    stopGeneration,
     runShortcut,
   } = usePxAssistant();
 
@@ -274,6 +276,10 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
   }
 
   const handleSend = () => {
+    if (streaming) {
+      stopGeneration();
+      return;
+    }
     const txt = draft.trim();
     if (!txt) return;
     void sendMessage(txt);
@@ -503,13 +509,18 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
               />
               <button
                 type="button"
-                disabled={streaming || !draft.trim()}
+                disabled={!streaming && !draft.trim()}
                 onClick={handleSend}
-                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-cyan-200/30 bg-cyan-300/20 px-3.5 text-[13px] font-medium text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,.10)] transition-colors hover:bg-cyan-300/30 disabled:opacity-40"
-                aria-label="发送"
+                className={clsx(
+                  'inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border px-3.5 text-[13px] font-medium shadow-[0_0_24px_rgba(34,211,238,.10)] transition-colors disabled:opacity-40',
+                  streaming
+                    ? 'border-rose-200/30 bg-rose-400/18 text-rose-50 hover:bg-rose-400/28'
+                    : 'border-cyan-200/30 bg-cyan-300/20 text-cyan-50 hover:bg-cyan-300/30',
+                )}
+                aria-label={streaming ? '暂停生成' : '发送'}
               >
-                {streaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                发送
+                {streaming ? <Square className="h-4 w-4 fill-current" /> : <Send className="h-4 w-4" />}
+                {streaming ? '暂停' : '发送'}
               </button>
             </div>
           </div>

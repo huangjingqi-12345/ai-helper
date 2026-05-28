@@ -102,6 +102,23 @@ const migrations = [
       SELECT 1;
     `,
   },
+  {
+    id: '20260528-ai-helper-current-session',
+    sql: `
+      CREATE TABLE IF NOT EXISTS ai_helper_sessions (
+        user_id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        messages TEXT DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_helper_sessions_expires
+        ON ai_helper_sessions(expires_at);
+    `,
+  },
 ];
 
 export async function runMigrations(): Promise<void> {
