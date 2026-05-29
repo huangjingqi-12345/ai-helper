@@ -430,20 +430,50 @@ function svgEstimateTextWidth(text: string, fontSize: number): number {
 function svgSplitTokens(text: string): string[] {
   const tokens: string[] = [];
   let buffer = '';
+  const flushLatin = () => {
+    if (buffer) tokens.push(buffer);
+    buffer = '';
+  };
+  const splitCjkRun = (run: string): string[] => {
+    const segmenterCtor = (Intl as unknown as { Segmenter?: new (locale: string, options: { granularity: 'word' }) => { segment(input: string): Iterable<{ segment: string }> } }).Segmenter;
+    let parts: string[] = [];
+    if (segmenterCtor) {
+      parts = Array.from(new segmenterCtor('zh-CN', { granularity: 'word' }).segment(run), (item) => item.segment).filter(Boolean);
+    } else {
+      parts = Array.from(run);
+    }
+    const merged: string[] = [];
+    const suffixes = new Set(['期', '率', '数', '量', '人', '次', '天', '页', '图', '表', '项', '度']);
+    const punct = new Set(['，', '。', '；', '：', '、', '）', '】', '》', '”', '’', ')', ']', '}', ',', '.', ';', ':']);
+    for (const part of parts) {
+      if (merged.length && (punct.has(part) || (part.length === 1 && suffixes.has(part)))) {
+        merged[merged.length - 1] += part;
+      } else {
+        merged.push(part);
+      }
+    }
+    return merged;
+  };
+  let cjkBuffer = '';
+  const flushCjk = () => {
+    if (cjkBuffer) tokens.push(...splitCjkRun(cjkBuffer));
+    cjkBuffer = '';
+  };
   for (const ch of Array.from(text)) {
     if (/\s/.test(ch)) {
-      if (buffer) tokens.push(buffer);
-      buffer = '';
+      flushLatin();
+      flushCjk();
       tokens.push(ch);
     } else if (/[\u4e00-\u9fff\u3000-\u303f]/.test(ch)) {
-      if (buffer) tokens.push(buffer);
-      buffer = '';
-      tokens.push(ch);
+      flushLatin();
+      cjkBuffer += ch;
     } else {
+      flushCjk();
       buffer += ch;
     }
   }
-  if (buffer) tokens.push(buffer);
+  flushLatin();
+  flushCjk();
   return tokens;
 }
 
@@ -491,9 +521,7 @@ function svgCanvasSize(content: string): { width: number; height: number } {
 function inferredSvgTextMaxWidth(attrs: string, canvasWidth: number): number {
   const x = svgFirstNumber(svgAttr(attrs, 'x'), 0);
   const fontSize = svgFirstNumber(svgAttr(attrs, 'font-size'), 18);
-  const margin = Math.max(48, canvasWidth * 0.045);
-  if (x < canvasWidth * 0.48) return Math.max(fontSize * 8, canvasWidth * 0.48 - x - margin * 0.35);
-  if (x < canvasWidth * 0.72) return Math.max(fontSize * 8, canvasWidth * 0.72 - x - margin * 0.35);
+  const margin = Math.max(24, canvasWidth * 0.02);
   return Math.max(fontSize * 8, canvasWidth - x - margin);
 }
 

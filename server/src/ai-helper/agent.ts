@@ -4,7 +4,7 @@ import { AIService, AIServiceError, type ChatMessage, type ContentBlock } from '
 import { AI_HELPER_ROOT, createRunDirectory, GENERATED_DIR, toAssetPath } from './paths.js';
 import { prefetchMetrics } from './metrics.js';
 import { MODEL_IO_LOG_PATH, RUNTIME_LOG_PATH, modelIoLog, runtimeLog } from './runtimeLogger.js';
-import type { AiDataScope, AiShortcut, PrefetchMetrics, PrefetchMetricsParams, RunRequest, StreamEvent } from './types.js';
+import type { AiDataScope, AiShortcut, PrefetchMetrics, PrefetchMetricsParams, ProjectMetric, RunRequest, StreamEvent, TopContentMetric } from './types.js';
 import { DATA_QA_PROMPT, MONTHLY_PROMPT, OVERVIEW_PROMPT, PPT_EDIT_PREMIUM_SVG_PROMPT, PPT_EDIT_SVG_PROMPT, PPT_PREMIUM_SVG_PROMPT, SHORTCUT_PROMPTS, SYSTEM_PROMPT } from './promptTemplates.js';
 import { SkillRegistry } from './skillRegistry.js';
 import { SkillExecutor, type ActionSpecMode, type SkillCall, type SkillResult } from './skillExecutor.js';
@@ -39,8 +39,50 @@ function sanitizeUserVisibleText(value: string): string {
     .replace(/数据库/g, '数据源');
 }
 
+function looksLikeLowLevelErrorText(text: string): boolean {
+  return /模型调用(?:失败|超时|已取消)|AI helper 执行失败|HTTP\s*\d{3}|网络异常|未配置\s*(?:POE_API_KEY|OPENAI_API_KEY|API)|模型响应不是合法 JSON|模型返回为空|SKILL_RESULT|Traceback|Command failed|execFile|spawn\b|ENOENT|EACCES|ECONN[A-Z_]*|ETIMEDOUT|timeout|node_modules|\/app\/|\/Users\/|\\Users\\|python\d?|Pillow|PIL|OSS .*HTTP|SQL|PPT SVG 兼容性检查失败|导出前置条件未满足|foreignObject|<g opacity>|script\/style|HTML named entities/i.test(text);
+}
+
+function sanitizeClientVisibleText(value: string): string {
+  const text = sanitizeUserVisibleText(value);
+  if (!looksLikeLowLevelErrorText(text)) return text;
+  if (/PPT SVG|<g opacity>|foreignObject|script\/style|HTML named entities/i.test(text)) return '页面内容校验未通过，正在自动修正。';
+  if (/PPT 局部修改/.test(text)) return '这次 PPT 局部修改没有成功完成，已保留上一版 PPT 不变。你可以稍后重试，或换一种更明确的修改描述。';
+  if (/PPT 快速版/.test(text)) return 'PPT 快速版生成失败，请稍后重试。';
+  if (/PPT/.test(text)) return 'PPT 生成失败，请稍后重试。';
+  if (/数据概览/.test(text) && /PDF/.test(text)) return '数据概览已生成，但 PDF 自动转换未完成，可先下载已生成的 Markdown、HTML 和图片文件。';
+  if (/数据概览/.test(text)) return '数据概览生成失败，请稍后重试。';
+  if (/月度报告|月报/.test(text) && /PDF/.test(text)) return '月度报告已生成，但 PDF 自动转换未完成，可先下载 Markdown 文件。';
+  if (/月度报告|月报/.test(text)) return '月报生成失败，请稍后重试。';
+  if (/数据预取|数据准备|PX 数据/.test(text)) return '数据准备失败，请稍后重试。';
+  if (/PDF/.test(text)) return 'PDF 自动转换未完成，可先下载已生成文件。';
+  return '处理过程中出现问题，请稍后重试。';
+}
+
+function sanitizePptEditPrefaceText(raw: string): string {
+  const fallback = '我会基于上一版 PPT 自动定位需要调整的页面，保持其他页面不变，并直接完成局部修改。';
+  const text = raw.replace(/```[\s\S]*?```/g, '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (!text) return fallback;
+  const asksForClarification = /请(?:说明|提供|补充|告诉|描述|明确)|具体需要|需要调整哪些|哪些内容|哪些元素|您希望|你希望|是否需要|能否|可否|[？?]/.test(text);
+  return asksForClarification ? fallback : text;
+}
+
+function sanitizePptEditFinalText(raw: string): string {
+  const fallback = 'PPT 已按要求完成局部修改。';
+  const text = raw.replace(/```[\s\S]*?```/g, '').replace(/\s+/g, ' ').trim().slice(0, 500);
+  if (!text) return fallback;
+  const asksForClarification = /请(?:说明|提供|补充|告诉|描述|明确)|具体需要|需要调整哪些|哪些内容|哪些元素|您希望|你希望|是否需要|能否|可否|[？?]/.test(text);
+  return asksForClarification ? fallback : text;
+}
+
+function pptEditFailureFallbackText(ctx?: { exportedPptx?: string }): string {
+  return ctx?.exportedPptx
+    ? '这次 PPT 局部修改没有成功完成，已保留上一版 PPT 不变。你可以稍后重试，或换一种更明确的修改描述。'
+    : '这次 PPT 局部修改没有成功完成，请稍后重试。';
+}
+
 function sanitizeUserVisibleData<T>(value: T): T {
-  if (typeof value === 'string') return sanitizeUserVisibleText(value) as T;
+  if (typeof value === 'string') return sanitizeClientVisibleText(value) as T;
   if (Array.isArray(value)) return value.map((item) => sanitizeUserVisibleData(item)) as T;
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, sanitizeUserVisibleData(item)])) as T;
@@ -1077,6 +1119,11 @@ function explicitLimitForRange(dateRange: DateRange, granularity: NonNullable<Pr
   return Math.max(14, Math.min(800, days + 10));
 }
 
+function recentOneMonthRange(anchorIso?: string): DateRange {
+  const anchor = parseIsoDate(String(anchorIso || '').slice(0, 10)) || parseIsoDate(new Date().toISOString().slice(0, 10))!;
+  return range(addDays(anchor, -29), anchor);
+}
+
 function resolvePrimaryDataScope(req: RunRequest, latestMetricDate: string): PrimaryDataScope {
   const shortcut = asShortcut(req.shortcut);
   const dataScope = asDataScope(req.data_scope) || defaultDataScope(shortcut);
@@ -1363,7 +1410,7 @@ function buildTaskMetrics(shortcut: AiShortcut | undefined, primaryMetrics: Pref
         range: previousMetrics.range,
         coreKpi: previousMetrics.coreKpi,
       },
-      note: '月报默认只注入写作必需的本月 KPI、上月核心 KPI、环比、周度节奏、项目/内容精简排名；完整日趋势和完整排名见 available_metric_stores。',
+      note: '月报默认只注入写作必需的本期 KPI、对比期核心 KPI、环比、周度节奏、项目/内容精简排名；完整日趋势和完整排名见 available_metric_stores。',
     };
   }
 
@@ -1859,6 +1906,26 @@ function formatMoM(current: number, previous: number): string {
   return `${current >= previous ? '较上期提升' : '较上期下降'} ${Math.abs(((current - previous) / previous) * 100).toFixed(1)}%`;
 }
 
+function hasBehaviorActivity(metrics: PrefetchMetrics): boolean {
+  const k = metrics.coreKpi;
+  return Boolean(k.pushCount || k.deliveredCount || k.readUsers || k.readCount || k.interactionCount || k.activeDays);
+}
+
+function hasMonthlyAnalysisActivity(metrics: PrefetchMetrics): boolean {
+  const k = metrics.coreKpi;
+  return Boolean(k.readUsers || k.readCount || k.interactionCount);
+}
+
+function hasProjectContribution(item: ProjectMetric | Record<string, unknown> | undefined): boolean {
+  if (!item) return false;
+  return Boolean(Number(item.readCount || 0) || Number(item.interactionCount || 0) || Number((item as Record<string, unknown>).readUsers || 0));
+}
+
+function hasContentContribution(item: TopContentMetric | Record<string, unknown> | undefined): boolean {
+  if (!item) return false;
+  return Boolean(Number(item.readCount || 0) || Number(item.interactionCount || 0) || Number((item as Record<string, unknown>).readUsers || 0));
+}
+
 function mdEscape(value: unknown): string {
   return String(value ?? '').replace(/\|/g, '｜').trim();
 }
@@ -1899,6 +1966,7 @@ function normalizeStringList(value: unknown, maxItems: number, maxLen = 120): st
 function normalizeMonthlyInsights(raw: unknown, metrics: PrefetchMetrics): MonthlyInsights {
   const value = obj(raw);
   const fallback = fallbackMonthlyInsights(metrics);
+  if (!hasBehaviorActivity(metrics)) return fallback;
   const diagnosisRaw = Array.isArray(value.diagnosis) ? value.diagnosis : [];
   const diagnosis = diagnosisRaw.slice(0, 4).map((item) => {
     const row = obj(item);
@@ -1923,19 +1991,86 @@ function normalizeMonthlyInsights(raw: unknown, metrics: PrefetchMetrics): Month
 
 function fallbackMonthlyInsights(metrics: PrefetchMetrics): MonthlyInsights {
   const k = metrics.coreKpi;
-  const topProject = metrics.projects[0];
-  const topContent = metrics.topContent[0];
+  if (!hasMonthlyAnalysisActivity(metrics)) {
+    return {
+      executive_summary: [
+        hasBehaviorActivity(metrics)
+          ? '本周期已有基础触达记录，但暂无阅读或互动样本，暂不输出增长、环比或结构贡献结论。'
+          : '本周期暂无可分析的行为指标记录，暂不输出增长、环比或结构贡献结论。',
+        '当前月报重点应放在确认数据是否已完成同步，以及核对统计周期、账号范围和项目内容是否已有实际触达。',
+      ],
+      kpi_insights: [
+        hasBehaviorActivity(metrics)
+          ? '当前缺少阅读和互动样本，暂不能判断内容消费质量或用户参与质量。'
+          : '推送、阅读、互动等核心行为指标均为 0，暂不能判断内容触达效率或用户参与质量。',
+        '完读率、平均阅读时长等质量指标缺少有效阅读样本，暂不做优劣判断。',
+      ],
+      weekly_insights: [
+        '本周期暂无可分析的周度行为趋势，暂不判断峰谷变化。',
+        '建议待数据同步完成后，再按周复盘推送、阅读、互动和完读之间的联动。',
+      ],
+      project_insights: [
+        '当前暂无项目侧行为贡献数据，暂不输出项目排名或主力项目判断。',
+      ],
+      content_insights: [
+        '当前暂无内容侧阅读或互动样本，暂不输出头部内容、低完读内容或可复制样本判断。',
+      ],
+      highlights: [],
+      diagnosis: [
+        {
+          issue: '当前周期暂无有效行为样本',
+          evidence: '推送、阅读、互动等核心行为指标均为 0',
+          reason: '可能是该周期尚未产生行为数据，或业务数据同步尚未覆盖当前筛选范围',
+        },
+      ],
+      risks: [
+        '如果业务上确认本周期应有触达记录，需要优先核对数据同步、账号范围和统计周期配置。',
+      ],
+      recommendations: [
+        '先确认该账号在本报告周期内是否已有实际推送、阅读或互动记录。',
+        '核对数据同步任务是否覆盖当前月份、项目和内容范围。',
+        '待产生有效行为样本后，再重新生成月报进行环比、结构贡献和内容表现复盘。',
+      ],
+    };
+  }
+  const topProject = metrics.projects.find(hasProjectContribution);
+  const topContent = metrics.topContent.find(hasContentContribution);
   const lowFinish = [...metrics.topContent].filter((item) => item.readCount > 0).sort((a, b) => a.finishRate - b.finishRate)[0];
+  const kpiInsights = k.readCount > 0
+    ? [
+        `阅读规模达到 ${fmtNumber(k.readCount)} 次，可作为本周期内容消费规模的复盘基础。`,
+        k.interactionCount > 0
+          ? `互动/阅读为 ${fmtPct(safeRate(k.interactionCount, k.readCount))}，可继续结合内容 CTA、问答和收藏机制提升深度参与。`
+          : '本周期已有阅读但暂无互动沉淀，建议优先检查内容尾部行动引导和互动入口。',
+      ]
+    : [
+        k.pushCount > 0
+          ? `本周期已有推送 ${fmtNumber(k.pushCount)} 次，但暂无阅读样本，暂不判断阅读转化和内容消费质量。`
+          : '本周期暂无可分析的推送和阅读样本，暂不判断触达效率。',
+        '在缺少有效阅读样本前，互动率、完读率和平均阅读时长不做业务优劣判断。',
+      ];
+  const highlights = [
+    topContent ? `已出现可复盘的高表现内容样本「${topContent.title}」。` : '',
+    topProject ? `主力项目「${topProject.name}」形成了主要阅读贡献。` : '',
+  ].filter(Boolean);
+  const diagnosis = k.readCount > 0
+    ? [{
+        issue: k.interactionCount > 0 ? '互动深度仍有优化空间' : '阅读后的互动沉淀不足',
+        evidence: `阅读 ${fmtNumber(k.readCount)} 次，互动 ${fmtNumber(k.interactionCount)} 次，互动/阅读 ${fmtPct(safeRate(k.interactionCount, k.readCount))}`,
+        reason: '内容可能更偏阅读型触达，互动入口、问答引导和收藏提醒还可以继续强化',
+      }]
+    : [{
+        issue: '暂无有效阅读样本',
+        evidence: `推送 ${fmtNumber(k.pushCount)} 次，阅读 ${fmtNumber(k.readCount)} 次`,
+        reason: '需要先确认触达链路、数据同步和统计周期，再判断内容表现',
+      }];
   return {
     executive_summary: [
       `本周期累计阅读 ${fmtNumber(k.readCount)} 次、互动 ${fmtNumber(k.interactionCount)} 次，完读率 ${fmtPct(k.finishRate)}，平均阅读时长 ${(k.avgReadSec || 0).toFixed(0)} 秒。`,
       topProject ? `阅读贡献主要来自「${topProject.name}」，该项目贡献 ${fmtNumber(topProject.readCount)} 次阅读和 ${fmtNumber(topProject.interactionCount)} 次互动。` : '项目贡献结构暂无明显头部项目，需要继续积累有效阅读数据。',
       topContent ? `头部内容「${topContent.title}」表现最好，可作为后续内容选题和表达方式的复盘样本。` : '当前暂无可用于沉淀方法的头部内容样本。',
     ],
-    kpi_insights: [
-      `阅读规模达到 ${fmtNumber(k.readCount)} 次，说明本周期内容触达已形成基础流量。`,
-      `互动/阅读为 ${fmtPct(safeRate(k.interactionCount, k.readCount))}，需要结合内容 CTA、问答和收藏机制继续提升深度参与。`,
-    ],
+    kpi_insights: kpiInsights,
     weekly_insights: [
       '周度节奏建议结合高阅读周和推送节奏复盘，识别可复制的推送窗口和内容主题。',
       '如果周间波动较大，建议拆分分析推送频次、主题匹配度和头部内容带动效应。',
@@ -1948,17 +2083,8 @@ function fallbackMonthlyInsights(metrics: PrefetchMetrics): MonthlyInsights {
       `「${topContent.title}」阅读 ${fmtNumber(topContent.readCount)} 次、完读率 ${fmtPct(topContent.finishRate)}，具备复用为选题模板的价值。`,
       lowFinish ? `低完读内容「${lowFinish.title}」完读率 ${fmtPct(lowFinish.finishRate)}，建议复盘标题承诺、正文长度和行动指引。` : '建议持续跟踪低完读内容，定位内容结构和阅读门槛问题。',
     ] : ['内容侧暂无明显头部样本，建议继续积累阅读和完读数据后再沉淀方法。'],
-    highlights: [
-      topContent ? `已出现可复盘的高表现内容样本「${topContent.title}」。` : '本周期已完成基础内容表现沉淀。',
-      topProject ? `主力项目「${topProject.name}」形成了主要阅读贡献。` : '项目矩阵已具备继续观察的基础。',
-    ],
-    diagnosis: [
-      {
-        issue: '互动深度仍需提升',
-        evidence: `互动 ${fmtNumber(k.interactionCount)} 次，互动/阅读 ${fmtPct(safeRate(k.interactionCount, k.readCount))}`,
-        reason: '内容可能更偏阅读型触达，互动入口、问答引导和收藏提醒还可以继续强化',
-      },
-    ],
+    highlights,
+    diagnosis,
     risks: [
       '如果阅读贡献持续集中在少数项目或内容，后续增长会更依赖单点爆款，稳定性不足。',
       '如果互动率没有随阅读增长同步提升，内容价值难以沉淀为可持续的患者行为反馈。',
@@ -1972,28 +2098,66 @@ function fallbackMonthlyInsights(metrics: PrefetchMetrics): MonthlyInsights {
   };
 }
 
-function buildMonthlySummaryText(current: PrefetchMetrics, previous: PrefetchMetrics, dateRange: DateRange, compareRange: DateRange): string {
+function buildMonthlySummaryText(current: PrefetchMetrics, previous: PrefetchMetrics | undefined, dateRange: DateRange, compareRange?: DateRange): string {
   const k = current.coreKpi;
-  const pk = previous.coreKpi;
-  const topProject = current.projects[0];
-  const topContent = current.topContent[0];
-  const readMoM = formatMoM(k.readCount, pk.readCount);
-  const interactionMoM = formatMoM(k.interactionCount, pk.interactionCount);
-  const pushMoM = formatMoM(k.pushCount, pk.pushCount);
+  const pk = previous?.coreKpi;
+  const hasCurrentActivity = hasBehaviorActivity(current);
+  const hasCurrentAnalysisActivity = hasMonthlyAnalysisActivity(current);
+  const hasCompare = Boolean(compareRange && previous && hasBehaviorActivity(previous));
+  const topProject = current.projects.find(hasProjectContribution);
+  const topContent = current.topContent.find(hasContentContribution);
+  const readMoM = pk ? formatMoM(k.readCount, pk.readCount) : '';
+  const interactionMoM = pk ? formatMoM(k.interactionCount, pk.interactionCount) : '';
+  const pushMoM = pk ? formatMoM(k.pushCount, pk.pushCount) : '';
+  if (!hasCurrentAnalysisActivity) {
+    const backendInsights = current.insights.slice(0, 2);
+    return [
+      `## 患教内容运营月度报告摘要`,
+      '',
+      `**报告周期**：${dateRange.start} 至 ${dateRange.end}`,
+      ...(hasCompare && compareRange ? [`**对比周期**：${compareRange.start} 至 ${compareRange.end}`] : []),
+      '',
+      hasCurrentActivity
+        ? '本周期已有基础触达记录，但暂未获取到可分析的阅读或互动样本，因此暂不输出环比变化、结构贡献、头部项目或头部内容判断。'
+        : '本周期暂未获取到可分析的推送、阅读或互动行为数据，因此暂不输出环比变化、结构贡献、头部项目或头部内容判断。',
+      '',
+      '**数据状态**：',
+      `- 推送：**${fmtNumber(k.pushCount)}** 次`,
+      `- 阅读：**${fmtNumber(k.readCount)}** 次`,
+      `- 互动：**${fmtNumber(k.interactionCount)}** 次`,
+      '',
+      '**初步判断**：',
+      ...(backendInsights.length ? backendInsights.map((insight) => `- ${insight}`) : ['- 当前周期暂无有效行为样本，请先确认业务数据是否已完成同步并覆盖当前账号与统计周期。']),
+      '',
+      '月度报告将按“数据状态说明 + 排查建议”生成，不会输出没有数据支撑的增长、排名或运营贡献结论。',
+    ].join('\n');
+  }
   const lines = [
     `## 患教内容运营月度报告摘要`,
     '',
     `**报告周期**：${dateRange.start} 至 ${dateRange.end}`,
-    `**对比周期**：${compareRange.start} 至 ${compareRange.end}`,
+    ...(hasCompare && compareRange ? [`**对比周期**：${compareRange.start} 至 ${compareRange.end}`] : []),
     '',
-    `本月累计推送 **${fmtNumber(k.pushCount)}** 次、送达 **${fmtNumber(k.deliveredCount)}** 次，触达阅读用户 **${fmtNumber(k.readUsers)}** 人，产生阅读 **${fmtNumber(k.readCount)}** 次、互动 **${fmtNumber(k.interactionCount)}** 次。完读率为 **${fmtPct(k.finishRate)}**，平均阅读时长约 **${(k.avgReadSec || 0).toFixed(0)} 秒**。`,
-    '',
-    `**环比变化**：推送量${pushMoM}，阅读次数${readMoM}，互动次数${interactionMoM}。`,
+    `本周期累计推送 **${fmtNumber(k.pushCount)}** 次、送达 **${fmtNumber(k.deliveredCount)}** 次，触达阅读用户 **${fmtNumber(k.readUsers)}** 人，产生阅读 **${fmtNumber(k.readCount)}** 次、互动 **${fmtNumber(k.interactionCount)}** 次。完读率为 **${fmtPct(k.finishRate)}**，平均阅读时长约 **${(k.avgReadSec || 0).toFixed(0)} 秒**。`,
   ];
-  if (topProject || topContent) {
+  const comparisonParts = [
+    (k.pushCount || pk?.pushCount) ? `推送量${pushMoM}` : '',
+    (k.readCount || pk?.readCount) ? `阅读次数${readMoM}` : '',
+    (k.interactionCount || pk?.interactionCount) ? `互动次数${interactionMoM}` : '',
+  ].filter(Boolean);
+  if (hasCompare && hasCurrentAnalysisActivity && comparisonParts.length) {
+    lines.push('', `**环比变化**：${comparisonParts.join('，')}。`);
+  } else if (!hasCompare) {
+    lines.push('', '**环比判断**：暂无可用对比周期，暂不输出环比结论。');
+  } else if (!hasCurrentAnalysisActivity) {
+    lines.push('', '**环比判断**：本周期暂无足够阅读或互动样本，暂不输出环比结论。');
+  }
+  if (hasCurrentAnalysisActivity && (topProject || topContent)) {
     lines.push('', '**结构贡献**：');
-    if (topProject) lines.push(`- 项目侧，「${topProject.name}」贡献阅读 **${fmtNumber(topProject.readCount)}** 次、互动 **${fmtNumber(topProject.interactionCount)}** 次，是本月主要贡献项目。`);
+    if (topProject) lines.push(`- 项目侧，「${topProject.name}」贡献阅读 **${fmtNumber(topProject.readCount)}** 次、互动 **${fmtNumber(topProject.interactionCount)}** 次，是本周期主要贡献项目。`);
     if (topContent) lines.push(`- 内容侧，「${topContent.title}」阅读 **${fmtNumber(topContent.readCount)}** 次，完读率 **${fmtPct(topContent.finishRate)}**，可作为内容复盘重点。`);
+  } else if (!hasCurrentAnalysisActivity) {
+    lines.push('', '**结构贡献**：当前周期暂无项目或内容侧行为贡献数据，暂不输出项目排名、头部内容或主要贡献判断。');
   }
   const backendInsights = current.insights.slice(0, 2);
   if (backendInsights.length) {
@@ -2003,34 +2167,36 @@ function buildMonthlySummaryText(current: PrefetchMetrics, previous: PrefetchMet
   return lines.join('\n');
 }
 
-function buildMonthlyInsightPrompt(current: PrefetchMetrics, previous: PrefetchMetrics, dateRange: DateRange, compareRange: DateRange): ChatMessage[] {
+function buildMonthlyInsightPrompt(current: PrefetchMetrics, previous: PrefetchMetrics | undefined, dateRange: DateRange, compareRange?: DateRange): ChatMessage[] {
+  const hasCompare = Boolean(compareRange && previous && hasBehaviorActivity(previous));
   const context = {
     task: 'monthly_report_insight_generation',
     instruction: [
       '你要写的是月度复盘报告的“分析结论”，不是异常检测清单。',
       '禁止在任何输出字段中出现用户明确排除的受众称谓；如需表达受众或用途，改用“业务团队”“运营复盘”“汇报决策”等表述。',
       '请同时分析成绩、变化、贡献结构、内容方法、原因判断、经营含义和下月策略。',
-      '即使没有明显异常，也要说明本月表现说明了什么、哪些做法值得延续、哪些结构需要优化。',
+      '即使没有明显异常，也要说明本周期表现说明了什么、哪些做法值得延续、哪些结构需要优化。',
+      hasCompare ? '本轮有可用对比周期，可以输出环比和对比结论。' : '本轮没有可用对比周期，禁止输出环比、较上期、对比月等对比结论。',
       '不要只写“未发现异常/保持观察”；每个模块都要有复盘视角和运营动作指向。',
       '只基于给定指标生成结论。不要输出 Markdown，不要生成文件，不要编造未提供的数据。',
     ].join('\n'),
     output_schema: {
-      executive_summary: ['3-5 条，像月报开头一样总结本月整体表现、关键变化、主要贡献和下月重点'],
+      executive_summary: ['3-5 条，像月报开头一样总结本周期整体表现、关键变化、主要贡献和下月重点'],
       kpi_insights: ['2-4 条，围绕阅读、互动、完读、时长、环比讲经营含义，不只是异常'],
-      weekly_insights: ['2-4 条，复盘本月节奏、峰谷周、推送节奏和可复制动作'],
+      weekly_insights: ['2-4 条，复盘本周期节奏、峰谷周、推送节奏和可复制动作'],
       project_insights: ['2-4 条，分析项目贡献结构、主力项目价值、资源倾斜和项目组合'],
       content_insights: ['2-4 条，分析内容类型/主题/表达方式，沉淀可复制方法和优化方向'],
-      highlights: ['1-4 条，本月值得肯定的亮点、有效动作、可沉淀资产'],
+      highlights: ['1-4 条，本周期值得肯定的亮点、有效动作、可沉淀资产'],
       diagnosis: [{ issue: '需要关注的运营问题或结构问题', evidence: '数据证据', reason: '原因判断' }],
       risks: ['1-4 条，下月可能影响表现的风险或结构性隐患'],
       recommendations: ['3-6 条，具体到下月运营动作、内容策略、项目资源配置或复盘机制'],
     },
     period: dateRange,
-    compare_period: compareRange,
+    compare_period: hasCompare ? compareRange : undefined,
     kpi: {
       current: current.coreKpi,
-      previous: previous.coreKpi,
-      month_delta: current.monthDelta,
+      previous: hasCompare ? previous?.coreKpi : undefined,
+      month_delta: hasCompare ? current.monthDelta : undefined,
     },
     weekly_trend: weeklyTrend(current.dailyTrend),
     top_projects: slimProjects(current.projects, 5),
@@ -2051,21 +2217,71 @@ function buildMonthlyInsightPrompt(current: PrefetchMetrics, previous: PrefetchM
   ];
 }
 
-function buildMonthlyReportMarkdown(current: PrefetchMetrics, previous: PrefetchMetrics, dateRange: DateRange, compareRange: DateRange, insights: MonthlyInsights): string {
+function buildMonthlyReportMarkdown(current: PrefetchMetrics, previous: PrefetchMetrics | undefined, dateRange: DateRange, compareRange: DateRange | undefined, insights: MonthlyInsights): string {
   const k = current.coreKpi;
-  const pk = previous.coreKpi;
-  const topProjects = slimProjects(current.projects, 3);
-  const topContents = slimContent(current.topContent, 5);
-  const topProject = current.projects[0];
-  const topContent = current.topContent[0];
+  const pk = previous?.coreKpi;
+  const hasCompare = Boolean(compareRange && previous && hasBehaviorActivity(previous));
+  const hasCurrentActivity = hasBehaviorActivity(current);
+  const hasCurrentAnalysisActivity = hasMonthlyAnalysisActivity(current);
+  if (!hasCurrentAnalysisActivity) {
+    const statusLabel = (value: number, okText: string) => value ? okText : '暂无样本';
+    const statusRows = [
+      ['推送次数', fmtNumber(k.pushCount), statusLabel(k.pushCount, '已有基础触达记录')],
+      ['送达次数', fmtNumber(k.deliveredCount), statusLabel(k.deliveredCount, '已有基础触达记录')],
+      ['阅读人数', fmtNumber(k.readUsers), '暂无阅读样本'],
+      ['阅读次数', fmtNumber(k.readCount), '暂无阅读样本'],
+      ['互动次数', fmtNumber(k.interactionCount), '暂无互动样本'],
+      ['有效行为天数', fmtNumber(k.activeDays), statusLabel(k.activeDays, '已有基础触达记录')],
+    ];
+    return `# 患教内容运营月度报告
+
+**报告周期**：${dateRange.start} 至 ${dateRange.end}
+${hasCompare && compareRange ? `**对比周期**：${compareRange.start} 至 ${compareRange.end}  \n` : ''}**数据来源**：PX 指标数据
+
+> **核心判断**：${hasCurrentActivity ? '本周期已有基础触达记录，但暂无可分析的阅读或互动样本' : '本周期暂未获取到可分析的推送、阅读或互动行为数据'}，因此不输出环比增长、结构贡献、头部项目、头部内容或运营成效判断。
+
+## 01｜数据状态
+
+| 指标 | 当前值 | 判断 |
+|---|---:|---|
+${tableRows(statusRows)}
+
+## 02｜本期结论
+
+${listMd(insights.executive_summary)}
+
+## 03｜暂不输出的分析项
+
+- **环比变化**：当前周期缺少有效行为样本，直接计算“持平”或“增长”容易误导，因此暂不输出。
+- **项目贡献**：暂无项目侧阅读或互动贡献数据，暂不判断主力项目或项目排名。
+- **内容表现**：暂无内容侧阅读或互动样本，暂不判断头部内容、低完读内容或可复制样本。
+- **阅读质量**：暂无有效阅读样本，暂不判断完读率和平均阅读时长表现。
+
+## 04｜建议优先排查
+
+${listMd(insights.recommendations)}
+
+## 05｜风险提示
+
+${listMd(insights.risks)}
+
+## 附：口径说明
+
+阅读人数、阅读次数、互动次数、完读率和平均阅读时长均来自 PX 指标数据。当前报告仅说明数据状态和排查建议，不对无样本指标做业务成效解读。
+`;
+  }
+  const topProjects = slimProjects(current.projects.filter(hasProjectContribution), 3);
+  const topContents = slimContent(current.topContent.filter(hasContentContribution), 5);
+  const topProject = current.projects.find(hasProjectContribution);
+  const topContent = current.topContent.find(hasContentContribution);
   const lowFinish = [...current.topContent].filter((item) => item.readCount > 0).sort((a, b) => a.finishRate - b.finishRate)[0];
   const top3Reads = current.topContent.slice(0, 3).reduce((sum, item) => sum + (item.readCount || 0), 0);
   const top3Share = safeRate(top3Reads, k.readCount);
   const deliveryRate = safeRate(k.deliveredCount, k.pushCount);
   const readConversion = safeRate(k.readUsers, k.deliveredCount);
   const interactionRate = safeRate(k.interactionCount, k.readCount);
-  const delta = (currentValue: number, previousValue: number) => previousValue ? fmtDeltaPct(((currentValue - previousValue) / previousValue) * 100) : (currentValue ? '+100.0%' : '0.0%');
-  const qualityDelta = (currentValue: number, previousValue: number, unit: string) => `${currentValue - previousValue >= 0 ? '+' : ''}${(currentValue - previousValue).toFixed(1)}${unit}`;
+  const delta = (currentValue: number, previousValue?: number) => hasCompare && previousValue ? fmtDeltaPct(((currentValue - previousValue) / previousValue) * 100) : '暂无对比';
+  const qualityDelta = (currentValue: number, previousValue?: number, unit = 'pct') => hasCompare && previousValue !== undefined ? `${currentValue - previousValue >= 0 ? '+' : ''}${(currentValue - previousValue).toFixed(1)}${unit}` : '暂无对比';
   const weeklyRows = weeklyTrend(current.dailyTrend).map((row) => [
     String(row.label),
     fmtNumber(Number(row.readCount)),
@@ -2076,8 +2292,8 @@ function buildMonthlyReportMarkdown(current: PrefetchMetrics, previous: Prefetch
   const kpiRows = [
     ['触达规模', fmtNumber(k.pushCount), fmtNumber(k.deliveredCount), fmtPct(deliveryRate)],
     ['阅读转化', fmtNumber(k.readUsers), fmtNumber(k.readCount), fmtPct(readConversion)],
-    ['互动深度', fmtNumber(k.interactionCount), fmtPct(interactionRate), delta(k.interactionCount, pk.interactionCount)],
-    ['阅读质量', fmtPct(k.finishRate), `${(k.avgReadSec || 0).toFixed(0)} 秒`, qualityDelta(k.finishRate * 100, pk.finishRate * 100, 'pct')],
+    ['互动深度', fmtNumber(k.interactionCount), fmtPct(interactionRate), hasCurrentActivity ? delta(k.interactionCount, pk?.interactionCount) : '暂无有效样本'],
+    ['阅读质量', fmtPct(k.finishRate), `${(k.avgReadSec || 0).toFixed(0)} 秒`, hasCurrentActivity ? qualityDelta(k.finishRate * 100, pk?.finishRate !== undefined ? pk.finishRate * 100 : undefined, 'pct') : '暂无有效样本'],
   ];
   const contentRows = topContents.map((item, index) => [
     String(index + 1),
@@ -2092,23 +2308,24 @@ function buildMonthlyReportMarkdown(current: PrefetchMetrics, previous: Prefetch
     ? insights.diagnosis.map((item, index) => `**${index + 1}. ${item.issue}**  \n证据：${item.evidence || '待补充'}  \n判断：${item.reason || '待结合运营动作继续复盘'}`).join('\n\n')
     : '当前没有明显异常，但仍建议持续跟踪阅读、互动和完读之间的联动变化。';
   const headline = [
-    `本月阅读 ${fmtNumber(k.readCount)} 次，互动 ${fmtNumber(k.interactionCount)} 次，完读率 ${fmtPct(k.finishRate)}。`,
+    hasCurrentActivity
+      ? `本周期阅读 ${fmtNumber(k.readCount)} 次，互动 ${fmtNumber(k.interactionCount)} 次，完读率 ${fmtPct(k.finishRate)}。`
+      : '本周期暂无可分析的行为指标记录，暂不输出增长、环比或结构贡献结论。',
     topProject ? `主力项目为「${topProject.name}」。` : '',
     topContent ? `头部内容为「${topContent.title}」。` : '',
   ].filter(Boolean).join(' ');
 
   return `# 患教内容运营月度报告
 
-**报告周期**：${dateRange.start} 至 ${dateRange.end}  
-**对比周期**：${compareRange.start} 至 ${compareRange.end}  
-**数据来源**：PX 指标数据
+**报告周期**：${dateRange.start} 至 ${dateRange.end}
+${hasCompare && compareRange ? `**对比周期**：${compareRange.start} 至 ${compareRange.end}  \n` : ''}**数据来源**：PX 指标数据
 
 > **核心判断**：${headline}
 
-## 01｜本月经营仪表盘
+## 01｜本期经营仪表盘
 
 > **阅读规模**  
-> ${fmtNumber(k.readCount)} 次阅读，环比 ${delta(k.readCount, pk.readCount)}。这是本月内容消费规模的核心判断基准。
+> ${hasCurrentActivity ? `${fmtNumber(k.readCount)} 次阅读${hasCompare ? `，环比 ${delta(k.readCount, pk?.readCount)}` : ''}。这是本周期内容消费规模的核心判断基准。` : '当前周期暂无阅读样本，暂不做阅读规模和环比判断。'}
 
 > **互动深度**  
 > ${fmtNumber(k.interactionCount)} 次互动，互动/阅读 ${fmtPct(interactionRate)}。需要关注阅读是否有效沉淀为问答、收藏、提醒等后续动作。
@@ -2117,13 +2334,13 @@ function buildMonthlyReportMarkdown(current: PrefetchMetrics, previous: Prefetch
 > 完读率 ${fmtPct(k.finishRate)}，平均阅读 ${(k.avgReadSec || 0).toFixed(0)} 秒。该指标用于判断内容是否真正被完整消费。
 
 > **结构集中度**  
-> TOP3 内容贡献 ${fmtPct(top3Share)} 阅读量，${top3Share >= 0.5 ? '头部内容带动明显，需要沉淀可复制方法。' : '内容贡献相对分散，可继续扩展多主题覆盖。'}
+> ${hasCurrentActivity ? `TOP3 内容贡献 ${fmtPct(top3Share)} 阅读量，${top3Share >= 0.5 ? '头部内容带动明显，需要沉淀可复制方法。' : '内容贡献相对分散，可继续扩展多主题覆盖。'}` : '当前周期暂无内容侧行为贡献，暂不判断内容集中度。'}
 
-${sectionList('## 02｜本月关键结论', insights.executive_summary)}
+${sectionList('## 02｜本期关键结论', insights.executive_summary)}
 
 ## 03｜核心指标体检
 
-| 观察维度 | 本月关键值 | 辅助指标 | 变化或效率 |
+| 观察维度 | 本期关键值 | 辅助指标 | 变化或效率 |
 |---|---:|---:|---:|
 ${tableRows(kpiRows)}
 
@@ -2131,7 +2348,7 @@ ${insights.kpi_insights.length ? `> **指标解读**：${insights.kpi_insights.j
 
 ## 04｜阅读与互动节奏
 
-本月节奏不只看总量，更要看每周推送、阅读、互动是否同步变化。如果阅读增长但互动没有同步提升，说明内容触达有效，但行动引导仍需加强。
+本周期节奏不只看总量，更要看每周推送、阅读、互动是否同步变化。如果阅读增长但互动没有同步提升，说明内容触达有效，但行动引导仍需加强。
 
 | 周期 | 阅读次数 | 互动次数 | 完读率 | 平均阅读 |
 |---|---:|---:|---:|---:|
@@ -2173,7 +2390,7 @@ ${insights.recommendations.map((item, index) => `${index + 1}. **行动 ${index 
 
 ## 附：阅读口径说明
 
-阅读人数、阅读次数、互动次数、完读率和平均阅读时长均来自 PX 指标数据。项目与内容排名按本报告周期内阅读次数排序。环比使用本报告周期与对比周期的同口径核心指标计算。
+阅读人数、阅读次数、互动次数、完读率和平均阅读时长均来自 PX 指标数据。项目与内容排名按本报告周期内阅读次数排序。${hasCompare ? '环比使用本报告周期与对比周期的同口径核心指标计算。' : '本报告未使用对比周期，因此不输出环比结论。'}
 `;
 }
 
@@ -2966,7 +3183,11 @@ function buildOverviewVisualPlan(primaryDataContext: Record<string, unknown>): R
   };
 }
 
-async function generateMonthlyInsights(req: RunRequest, rootDir: string, current: PrefetchMetrics, previous: PrefetchMetrics, dateRange: DateRange, compareRange: DateRange, signal?: AbortSignal): Promise<MonthlyInsights> {
+async function generateMonthlyInsights(req: RunRequest, rootDir: string, current: PrefetchMetrics, previous: PrefetchMetrics | undefined, dateRange: DateRange, compareRange: DateRange | undefined, signal?: AbortSignal): Promise<MonthlyInsights> {
+  if (!hasMonthlyAnalysisActivity(current)) {
+    runtimeLog('monthly_insights_fallback', { rootDir, reason: 'no_current_read_or_interaction_activity', dateRange, compareRange, ...requestLog(req) });
+    return fallbackMonthlyInsights(current);
+  }
   const monthlyInsightTimeoutMs = Math.max(
     20_000,
     Math.min(60_000, Number(process.env.AI_HELPER_MONTHLY_INSIGHT_TIMEOUT_MS || 55_000) || 55_000),
@@ -3152,7 +3373,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       const files = collectFiles(trace);
       if (files.length) yield emit('files', files);
       const finalAnswer = pdfResult.ok === false
-        ? `数据概览已生成：上方已先输出文字总结，Markdown、HTML 和 PNG 文件可在下方查看与下载；但 PDF 转换失败：${pdfResult.error || '未知错误'}。`
+        ? '数据概览已生成：上方已先输出文字总结，Markdown、HTML 和 PNG 文件可在下方查看与下载；但 PDF 自动转换未完成，可先下载已生成文件。'
         : '数据概览已生成：上方已先输出文字总结，Markdown、HTML、PNG 和 PDF 文件可在下方查看与下载。';
       yield emit('text', finalAnswer);
       yield emit('progress', { phase: pdfResult.ok === false ? 'error' : 'complete', message: pdfResult.ok === false ? '数据概览 PDF 转换失败' : '数据概览生成完成', step: 5, ok: pdfResult.ok !== false });
@@ -3162,7 +3383,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     } catch (err) {
       if (isAbortError(err)) throw err;
       const files = collectFiles(trace);
-      const text = `数据概览生成失败：${err instanceof Error ? err.message : String(err)}`;
+      const text = '数据概览生成失败，请稍后重试。';
       yield emit('text', text);
       yield emit('progress', { phase: 'error', message: '数据概览生成失败', step: 99, ok: false });
       yield emit('done', { text, files, skills_used: ['patient-education-data-overview'], trace, background_jobs: [] });
@@ -3201,6 +3422,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
           active_ppt_context: activePptContextForPrompt(activePptContext),
           required_behavior: [
             '先判断 edit_pages 和 copy_pages。',
+            '禁止向用户追问或要求补充说明；信息不完整时必须基于上下文自行推断并直接开始修改。',
             '必须先调用 ppt_master_clone_for_edit。',
             '只对 edit_pages 调用 write_ppt_svg_slide。',
             '其他页面由 clone 工具复用，不要重画。',
@@ -3218,6 +3440,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
           content: [
             '你是 PX 医疗患教数据助手。当前用户要修改上一份 PPT。',
             '请先输出一段给用户看的中文说明，说明你理解到的修改目标、将优先定位相关页面并完成局部修改。',
+            '禁止询问用户、禁止让用户补充说明、禁止输出“请说明您具体需要调整哪些内容或元素”等追问；即使需求较笼统，也要说明会基于上一版上下文自动定位并直接开始修改。',
             '要求：只输出自然语言，不要 JSON，不要 Markdown 表格，不要提 skill、工具、内部路径、底层字段、run_id/conversation_id 等底层细节。',
             '控制在 80 字以内，语气直接、明确。',
           ].join('\n'),
@@ -3254,8 +3477,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
         cache_usage: prefaceResult.cacheUsage,
         recovered_from_reasoning_content: prefaceResult.recoveredFromReasoningContent,
       });
-      const prefaceText = prefaceResult.text.replace(/```[\s\S]*?```/g, '').replace(/\s+/g, ' ').trim().slice(0, 300)
-        || '我会先定位需要修改的 PPT 页面，按你的要求完成局部调整并重新导出文件。';
+      const prefaceText = sanitizePptEditPrefaceText(prefaceResult.text);
       yield emit('text', `${prefaceText}\n\n`);
       yield emit('progress', { phase: 'planning', message: '已识别为 PPT 局部修改，正在准备上一版页面上下文', step: 1, history_included: true });
       for (let step = 1; step <= 10; step += 1) {
@@ -3289,8 +3511,9 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
           const files = collectFiles(trace, final.deliverable_files);
           const nextPptContext = activePptContextFromEditTrace(activePptContext, trace);
           if (files.length) yield emit('files', files);
-          yield emit('done', { text: final.answer || 'PPT 已按要求完成局部修改。', files, skills_used: [...skillsUsed], trace, background_jobs: [], activePptContext: nextPptContext });
-          runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: final.answer, files, skills_used: [...skillsUsed], trace, direct_ppt_edit_pipeline: true, ...requestLog(effectiveReq) });
+          const finalText = sanitizePptEditFinalText(final.answer);
+          yield emit('done', { text: finalText, files, skills_used: [...skillsUsed], trace, background_jobs: [], activePptContext: nextPptContext });
+          runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: finalText, files, skills_used: [...skillsUsed], trace, direct_ppt_edit_pipeline: true, ...requestLog(effectiveReq) });
           return;
         }
         if (!isSkillCall(parsed)) throw new Error('PPT 编辑模型输出既不是 skill_call 也不是 final');
@@ -3368,17 +3591,37 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
         }
         if (call.action === 'ppt_master_export' && skillResult.ok !== false) exported = true;
         editMessages.push({ role: 'assistant', content: result.text });
-        editMessages.push({ role: 'user', content: `SKILL_RESULT:\n${JSON.stringify(skillResult, null, 2)}\n请继续，直到导出 PPTX 后 final。` });
-        if (skillResult.ok === false) throw new Error(skillResult.error || `${call.action} 执行失败`);
+        const failureHint = skillResult.ok === false
+          ? [
+            '',
+            '上一步工具执行失败，但这是可修复问题，不要结束任务。',
+            '请阅读 error/detail，修正参数或 SVG 后重新调用对应工具。',
+            String(skillResult.error || '').includes('<g opacity>')
+              ? '特别注意：PPT SVG 禁止 <g opacity>，请把 opacity 下推到每个子元素（如 rect/path/text/image 的 opacity、fill-opacity 或 stroke-opacity），然后重新调用 write_ppt_svg_slide。'
+              : '',
+          ].filter(Boolean).join('\n')
+          : '';
+        editMessages.push({ role: 'user', content: `SKILL_RESULT:
+${JSON.stringify(skillResult, null, 2)}
+${failureHint}
+请继续，直到导出 PPTX 后 final。` });
+        if (skillResult.ok === false) {
+          yield emit('progress', { phase: 'retry', message: 'PPT 局部修改工具执行失败，已把错误返回模型修正', step, ok: false, skill_id: call.skill_id, action: call.action });
+          continue;
+        }
       }
       throw new Error('PPT 局部修改步骤过多，已停止');
     } catch (err) {
       if (isAbortError(err)) throw err;
-      const text = `PPT 局部修改失败：${err instanceof Error ? err.message : String(err)}`;
+      const text = pptEditFailureFallbackText(activePptContext);
+      const fallbackFiles = activePptContext.exportedPptx
+        ? visibleDeliverables([activePptContext.exportedPptx])
+        : collectFiles(trace);
+      if (fallbackFiles.length) yield emit('files', fallbackFiles);
       yield emit('text', text);
-      yield emit('progress', { phase: 'error', message: 'PPT 局部修改失败', step: 99, ok: false });
-      yield emit('done', { text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, background_jobs: [], activePptContext });
-      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, direct_ppt_edit_pipeline: true, error: modelErrorLog(err), ...requestLog(effectiveReq) });
+      yield emit('progress', { phase: 'error', message: 'PPT 局部修改未完成，已保留上一版', step: 99, ok: false });
+      yield emit('done', { text, files: fallbackFiles, skills_used: [...skillsUsed], trace, background_jobs: [], activePptContext });
+      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text, files: fallbackFiles, skills_used: [...skillsUsed], trace, direct_ppt_edit_pipeline: true, error: modelErrorLog(err), user_visible_error_sanitized: true, ...requestLog(effectiveReq) });
       return;
     }
   }
@@ -3615,7 +3858,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
           yield emit('progress', {
             phase: 'analysis',
             message: skipRemainingSpecModel
-              ? `模型响应超时，已切换为模板快速生成第 ${batchStart}-${batchEnd} 页`
+              ? `响应时间较长，已切换为模板快速生成第 ${batchStart}-${batchEnd} 页`
               : `第 ${batchStart}-${batchEnd} 页已用模板补齐，继续生成后续页面`,
             step: 3,
             generated_slides: Array.isArray(deck.slides) ? deck.slides.length : 0,
@@ -3690,7 +3933,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       return;
     } catch (err) {
       if (isAbortError(err)) throw err;
-      const text = `PPT 快速版生成失败：${err instanceof Error ? err.message : String(err)}`;
+      const text = 'PPT 快速版生成失败，请稍后重试。';
       yield emit('text', text);
       yield emit('progress', { phase: 'error', message: 'PPT 快速版生成失败', step: 99, ok: false });
       yield emit('done', { text, files: [], skills_used: ['ppt-master'], trace: [], background_jobs: [] });
@@ -3705,29 +3948,55 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     const trace: AgentDonePayload['trace'] = [];
     const skillsUsed = new Set<string>(['monthly-template', 'md-to-pdf']);
     try {
-      yield emit('progress', { phase: 'data', message: '正在聚合报告周期与对比周期指标', step: 1 });
+      yield emit('progress', { phase: 'data', message: '正在聚合报告周期指标，并按可用性准备对比数据', step: 1 });
       const defaultMetrics = await prefetchMetrics(tenantScopedParams({}, enforcedTenantId));
       const scope = resolvePrimaryDataScope(effectiveReq, defaultMetrics.range.end);
-      if (!scope.dateRange || !scope.compareRange) throw new Error('无法解析月报周期或对比周期');
-      const currentMetrics = await prefetchMetrics(tenantScopedParams({
-        dateRange: scope.dateRange,
-        compareRange: scope.compareRange,
+      let dateRange = scope.dateRange || recentOneMonthRange(defaultMetrics.range.end);
+      let compareRange = scope.compareRange || previousComparableRange(dateRange);
+      let currentMetrics = await prefetchMetrics(tenantScopedParams({
+        dateRange,
+        ...(compareRange ? { compareRange } : {}),
         granularity: 'week',
         limit: 70,
         purpose: '后端模板月报：本月主数据',
       }, enforcedTenantId));
-      const previousMetrics = await prefetchMetrics(tenantScopedParams({
-        dateRange: scope.compareRange,
-        granularity: 'week',
-        limit: 70,
-        purpose: '后端模板月报：上月对比数据',
-      }, enforcedTenantId));
+      if (!scope.is_explicit_date_range && !hasBehaviorActivity(currentMetrics) && hasBehaviorActivity(defaultMetrics)) {
+        const recentRange = recentOneMonthRange(defaultMetrics.range.end);
+        if (!sameRange(recentRange, dateRange)) {
+          dateRange = recentRange;
+          compareRange = previousComparableRange(dateRange);
+          currentMetrics = await prefetchMetrics(tenantScopedParams({
+            dateRange,
+            ...(compareRange ? { compareRange } : {}),
+            granularity: 'week',
+            limit: 70,
+            purpose: '后端模板月报兜底：最近一月主数据',
+          }, enforcedTenantId));
+          runtimeLog('monthly_recent_one_month_fallback', { rootDir, dateRange, compareRange, reason: 'default_complete_month_has_no_data', ...requestLog(effectiveReq) });
+        }
+      }
+      let previousMetrics: PrefetchMetrics | undefined;
+      let usableCompareRange: DateRange | undefined;
+      if (compareRange) {
+        const candidatePrevious = await prefetchMetrics(tenantScopedParams({
+          dateRange: compareRange,
+          granularity: 'week',
+          limit: 70,
+          purpose: '后端模板月报：对比周期数据',
+        }, enforcedTenantId));
+        if (hasBehaviorActivity(candidatePrevious)) {
+          previousMetrics = candidatePrevious;
+          usableCompareRange = compareRange;
+        } else {
+          runtimeLog('monthly_compare_omitted', { rootDir, compareRange, reason: 'compare_period_has_no_data', ...requestLog(effectiveReq) });
+        }
+      }
       writeMetricStores(rootDir, [
-        { prefix: 'primary', label: '本月主数据', metrics: currentMetrics },
-        { prefix: 'previous_period', label: '上月对比数据', metrics: previousMetrics },
+        { prefix: 'primary', label: '本期主数据', metrics: currentMetrics },
+        ...(previousMetrics ? [{ prefix: 'previous_period', label: '对比周期数据', metrics: previousMetrics }] : []),
       ]);
 
-      const monthlySummaryText = buildMonthlySummaryText(currentMetrics, previousMetrics, scope.dateRange, scope.compareRange);
+      const monthlySummaryText = buildMonthlySummaryText(currentMetrics, previousMetrics, dateRange, usableCompareRange);
       const emitTextResult = await executor.execute({
         type: 'skill_call',
         skill_id: 'patient-education-monthly-report',
@@ -3739,8 +4008,8 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       if (emitTextResult.text) yield emit('text', emitTextResult.text);
 
       yield emit('progress', { phase: 'analysis', message: '正在生成月报复盘结论', step: 2 });
-      const insights = await generateMonthlyInsights(effectiveReq, rootDir, currentMetrics, previousMetrics, scope.dateRange, scope.compareRange, signal);
-      const markdown = buildMonthlyReportMarkdown(currentMetrics, previousMetrics, scope.dateRange, scope.compareRange, insights);
+      const insights = await generateMonthlyInsights(effectiveReq, rootDir, currentMetrics, previousMetrics, dateRange, usableCompareRange, signal);
+      const markdown = buildMonthlyReportMarkdown(currentMetrics, previousMetrics, dateRange, usableCompareRange, insights);
 
       const mdCall: SkillCall = {
         type: 'skill_call',
@@ -3764,7 +4033,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       const files = collectFiles(trace);
       if (files.length) yield emit('files', files);
       const finalAnswer = pdfResult.ok === false
-        ? `月度报告 Markdown 已生成，但 PDF 自动转换失败：${pdfResult.error || '未知错误'}。请先下载 Markdown 文件。`
+        ? '月度报告已生成，但 PDF 自动转换未完成，可先下载 Markdown 文件。'
         : '月度报告已生成，Markdown 与 PDF 文件可在下方下载。';
       yield emit('progress', { phase: pdfResult.ok === false ? 'error' : 'complete', message: pdfResult.ok === false ? 'PDF 自动转换失败' : '月度报告生成完成', step: 5, ok: pdfResult.ok !== false });
       yield emit('done', { text: `${monthlySummaryText}\n\n${finalAnswer}`, files, skills_used: [...skillsUsed], trace, background_jobs: [] });
@@ -3772,7 +4041,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       return;
     } catch (err) {
       if (isAbortError(err)) throw err;
-      const text = `月报生成失败：${err instanceof Error ? err.message : String(err)}`;
+      const text = '月报生成失败，请稍后重试。';
       yield emit('text', text);
       yield emit('done', { text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, background_jobs: [] });
       runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, background_jobs: [], direct_monthly_template: true, error: modelErrorLog(err), ...requestLog(effectiveReq) });
@@ -3786,7 +4055,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     ({ messages, primaryDataContext } = await buildMessages(effectiveReq, rootDir, registry, executor, { includePreviousTurn, enforcedTenantId }));
   } catch (err) {
     if (isAbortError(err)) throw err;
-    const text = `PX 数据预取失败：${err instanceof Error ? err.message : String(err)}`;
+    const text = '数据准备失败，请稍后重试。';
     yield emit('text', text);
     yield emit('done', { text, files: [], skills_used: [], trace: [] });
     return;
@@ -3836,7 +4105,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
               meta: { ...requestLog(effectiveReq), attempt, max_attempts: modelTimeoutRetries, retrying: true },
             });
             if (attempt === 1) messages.push({ role: 'user', content: buildModelTimeoutRetryObservation(text) });
-            yield emit('progress', { phase: 'retry', message: `模型响应超时，自动重试 ${attempt + 1}/${modelTimeoutRetries}`, step, attempt, max_attempts: modelTimeoutRetries, ok: false });
+            yield emit('progress', { phase: 'retry', message: `响应时间较长，正在自动重试 ${attempt + 1}/${modelTimeoutRetries}`, step, attempt, max_attempts: modelTimeoutRetries, ok: false });
             continue;
           }
           throw err;
@@ -3844,7 +4113,8 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       }
     } catch (err) {
       if (isAbortError(err)) throw err;
-      const text = `模型调用失败：${err instanceof Error ? err.message : String(err)}`;
+      const modelObservationText = `模型调用失败：${err instanceof Error ? err.message : String(err)}`;
+      const text = '处理过程中出现问题，请稍后重试。';
       runtimeLog('model_error', { step, rootDir, error: modelErrorLog(err), ...requestLog(effectiveReq) });
       modelIoLog({
         step,
@@ -3855,8 +4125,8 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
         meta: requestLog(effectiveReq),
       });
       if (isRecoverableEmptyModelContent(err) && step < maxSteps) {
-        messages.push({ role: 'user', content: buildModelErrorObservation(text) });
-        yield emit('progress', { phase: 'retry', message: '模型调用未返回有效结果，已作为 observation 反馈并要求重试', step, ok: false });
+        messages.push({ role: 'user', content: buildModelErrorObservation(modelObservationText) });
+        yield emit('progress', { phase: 'retry', message: '响应未返回有效结果，正在自动重试', step, ok: false });
         continue;
       }
       yield emit('text', text);
@@ -4017,7 +4287,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       if (files.length) yield emit('files', files);
 
       const finalAnswer = pdfResult.ok === false
-        ? `月度报告 Markdown 已生成，但 PDF 自动转换失败：${pdfResult.error || '未知错误'}。请先下载 Markdown 文件。`
+        ? '月度报告已生成，但 PDF 自动转换未完成，可先下载 Markdown 文件。'
         : '月度报告已生成，Markdown 与 PDF 文件可在下方下载。';
       if (!earlyTextEmitted) {
         earlyTextEmitted = true;

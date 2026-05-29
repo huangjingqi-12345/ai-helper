@@ -41,4 +41,59 @@ describe('ppt-master export notes splitting', () => {
     await expect(fs.access(path.join(root, 'notes', '01_cover.md'))).resolves.toBeUndefined();
     await expect(fs.readFile(path.join(root, 'notes', '07_closing.md'), 'utf8')).resolves.toContain('07_closing speaker note');
   });
+
+  it('keeps Chinese SVG text on one line when it fits before PPT export', async () => {
+    await reset();
+    const root = path.join(AI_HELPER_ROOT, projectRel);
+    await fs.mkdir(path.join(root, 'svg_output'), { recursive: true });
+    await fs.mkdir(path.join(root, 'notes'), { recursive: true });
+    await fs.writeFile(path.join(root, 'svg_output', '01_slide.svg'), `
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFFFF"/>
+  <text x="314" y="100" font-family="Microsoft YaHei" font-size="24" fill="#111827">确认业务后台是否实际配置并下发了患教推送任务</text>
+  <text x="314" y="200" font-family="Microsoft YaHei" font-size="24" fill="#111827">核对年度运营计划确认是否存在长期的业务静默期</text>
+</svg>`, 'utf8');
+    await fs.writeFile(path.join(root, 'notes', 'total.md'), '# 01_slide\n\nspeaker note', 'utf8');
+
+    const executor = new SkillExecutor(outputDir, { allowManualPptSvg: true });
+    const result = await executor.execute({
+      type: 'skill_call',
+      skill_id: 'ppt-master',
+      action: 'ppt_master_export',
+      params: { project_path: projectRel },
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    const wrapped = await fs.readFile(path.join(root, 'svg_output', '01_slide.svg'), 'utf8');
+    expect(wrapped).not.toContain('<tspan');
+    expect(wrapped).toContain('确认业务后台是否实际配置并下发了患教推送任务');
+    expect(wrapped).toContain('核对年度运营计划确认是否存在长期的业务静默期');
+  });
+
+  it('only wraps Chinese SVG text when it would overflow the canvas', async () => {
+    await reset();
+    const root = path.join(AI_HELPER_ROOT, projectRel);
+    await fs.mkdir(path.join(root, 'svg_output'), { recursive: true });
+    await fs.mkdir(path.join(root, 'notes'), { recursive: true });
+    await fs.writeFile(path.join(root, 'svg_output', '01_slide.svg'), `
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFFFF"/>
+  <text x="980" y="100" font-family="Microsoft YaHei" font-size="24" fill="#111827">核对年度运营计划确认是否存在长期的业务静默期</text>
+</svg>`, 'utf8');
+    await fs.writeFile(path.join(root, 'notes', 'total.md'), '# 01_slide\n\nspeaker note', 'utf8');
+
+    const executor = new SkillExecutor(outputDir, { allowManualPptSvg: true });
+    const result = await executor.execute({
+      type: 'skill_call',
+      skill_id: 'ppt-master',
+      action: 'ppt_master_export',
+      params: { project_path: projectRel },
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    const wrapped = await fs.readFile(path.join(root, 'svg_output', '01_slide.svg'), 'utf8');
+    expect(wrapped).toContain('<tspan');
+    expect(wrapped).not.toMatch(/静默<\/tspan><tspan[^>]*>期/);
+    expect(wrapped).toContain('静默期');
+  });
 });

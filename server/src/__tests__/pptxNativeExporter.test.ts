@@ -22,6 +22,29 @@ function createProject(): string {
   return root;
 }
 
+function readStoredZipEntry(zipFile: string, entryName: string): string {
+  const buf = fs.readFileSync(zipFile);
+  let ptr = 0;
+  while (ptr < buf.length - 30) {
+    if (buf.readUInt32LE(ptr) !== 0x04034b50) {
+      ptr += 1;
+      continue;
+    }
+    const method = buf.readUInt16LE(ptr + 8);
+    const compSize = buf.readUInt32LE(ptr + 18);
+    const nameLen = buf.readUInt16LE(ptr + 26);
+    const extraLen = buf.readUInt16LE(ptr + 28);
+    const name = buf.subarray(ptr + 30, ptr + 30 + nameLen).toString('utf8');
+    const dataStart = ptr + 30 + nameLen + extraLen;
+    if (name === entryName) {
+      if (method !== 0) throw new Error(`unsupported test zip method: ${method}`);
+      return buf.subarray(dataStart, dataStart + compSize).toString('utf8');
+    }
+    ptr = dataStart + compSize;
+  }
+  throw new Error(`entry not found: ${entryName}`);
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
@@ -43,5 +66,24 @@ describe('pptxNativeExporter', () => {
     expect(validation.ok).toBe(true);
     expect(validation.slideCount).toBe(1);
     expect(validation.editableShapeCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('exports long CJK SVG text as a wide non-wrapping PPT text box', () => {
+    const root = createProject();
+    fs.writeFileSync(path.join(root, 'svg_output', '01_cover.svg'), `
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#FFFFFF"/>
+  <text x="80" y="92" font-family="Microsoft YaHei" font-size="42" font-weight="700" fill="#111827">内容表现：患教资产盘点与标签体系重构</text>
+  <text x="80" y="150" font-family="Microsoft YaHei" font-size="22" fill="#2563EB">下方说明文字不应被标题换行挤压</text>
+</svg>`, 'utf8');
+
+    const exported = exportPptProjectToPptxSync(root, { projectName: 'unit_test_text_wrap' });
+    const slideXml = readStoredZipEntry(exported.pptxPath, 'ppt/slides/slide1.xml');
+    const titleShape = slideXml.match(/<p:sp>[\s\S]*?<a:t>内容表现：患教资产盘点与标签体系重构<\/a:t>[\s\S]*?<\/p:sp>/)?.[0] || '';
+    expect(titleShape).toContain('wrap="none"');
+    expect(titleShape).toContain('<a:noAutofit/>');
+    expect(titleShape).not.toContain('<a:spAutoFit/>');
+    const cx = Number(titleShape.match(/<a:ext cx="(\d+)"/)?.[1] || 0);
+    expect(cx).toBeGreaterThan(10_000_000);
   });
 });

@@ -29,6 +29,7 @@ interface ConvertCtx {
   sy: number;
   opacity: number;
   inherited: Record<string, string>;
+  canvasWidth: number;
 }
 
 interface SlideBuildCtx {
@@ -551,11 +552,23 @@ function fontFace(fontFamily: string | undefined): string {
 function textShapeXml(id: number, text: string, xx: number, baselineY: number, attrs: Record<string, string>, ctx: ConvertCtx): string {
   const fontSize = Math.max(num(attrs['font-size'], 18), 1);
   const anchor = (attrs['text-anchor'] || 'start').toLowerCase();
-  const width = Math.max(estimateTextWidth(text, fontSize) + fontSize * 0.8, fontSize * 2);
+  const estimatedWidth = Math.max(estimateTextWidth(text, fontSize) + fontSize * 1.6, fontSize * 2);
+  const slideMargin = Math.max(8, fontSize * 0.25);
+  let width = estimatedWidth;
   const height = fontSize * 1.35;
   let left = xx;
-  if (anchor === 'middle') left -= width / 2;
-  else if (anchor === 'end') left -= width;
+  if (anchor === 'middle') {
+    const centeredAvailable = Math.max(fontSize * 2, 2 * Math.max(0, Math.min(xx - slideMargin, ctx.canvasWidth - xx - slideMargin)));
+    width = Math.max(estimatedWidth, centeredAvailable);
+    left -= width / 2;
+  } else if (anchor === 'end') {
+    const leftAvailable = Math.max(fontSize * 2, xx - slideMargin);
+    width = Math.max(estimatedWidth, leftAvailable);
+    left -= width;
+  } else {
+    const rightAvailable = Math.max(fontSize * 2, ctx.canvasWidth - xx - slideMargin);
+    width = Math.max(estimatedWidth, rightAvailable);
+  }
   const top = baselineY - fontSize * 1.05;
   const fill = colorHex(attrs.fill || '#000000') || '000000';
   const opacity = ctx.opacity * clamp(Number(attrs['fill-opacity'] ?? 1), 0, 1);
@@ -564,7 +577,7 @@ function textShapeXml(id: number, text: string, xx: number, baselineY: number, a
   const italic = /italic/i.test(attrs['font-style'] || '') ? ' i="1"' : '';
   const sz = Math.max(100, Math.round(fontSize * 75));
   const face = fontFace(attrs['font-family']);
-  return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Text ${id}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${emu(left)}" y="${emu(top)}"/><a:ext cx="${emu(width)}" cy="${emu(height)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="none" rtlCol="0" anchor="t"><a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="${align}"/><a:r><a:rPr lang="zh-CN" sz="${sz}"${bold}${italic}><a:solidFill><a:srgbClr val="${fill}">${alphaXml(opacity)}</a:srgbClr></a:solidFill><a:latin typeface="${esc(face)}"/><a:ea typeface="${esc(face)}"/><a:cs typeface="${esc(face)}"/></a:rPr><a:t>${esc(text)}</a:t></a:r><a:endParaRPr lang="zh-CN" sz="${sz}"/></a:p></p:txBody></p:sp>`;
+  return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Text ${id}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${emu(left)}" y="${emu(top)}"/><a:ext cx="${emu(width)}" cy="${emu(height)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="none" rtlCol="0" anchor="t" lIns="0" tIns="0" rIns="0" bIns="0" horzOverflow="overflow" vertOverflow="overflow"><a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="${align}"/><a:r><a:rPr lang="zh-CN" sz="${sz}"${bold}${italic}><a:solidFill><a:srgbClr val="${fill}">${alphaXml(opacity)}</a:srgbClr></a:solidFill><a:latin typeface="${esc(face)}"/><a:ea typeface="${esc(face)}"/><a:cs typeface="${esc(face)}"/></a:rPr><a:t>${esc(text)}</a:t></a:r><a:endParaRPr lang="zh-CN" sz="${sz}"/></a:p></p:txBody></p:sp>`;
 }
 
 function convertText(node: SvgNode, ctx: ConvertCtx, slide: SlideBuildCtx): ShapeXml[] {
@@ -843,6 +856,7 @@ export function exportPptProjectToPptxSync(projectRoot: string, options: { proje
       sy: size.height / thisSize.height,
       opacity: 1,
       inherited: {},
+      canvasWidth: size.width,
     };
     const slide: SlideBuildCtx = { nextShapeId: 2, media: mediaFiles, mediaExts: allMediaExts, rels: [], nextRelId: 2, svgFile, projectRoot };
     const shapes = convertNode(root, ctx, slide).map((shape) => shape.xml).join('');

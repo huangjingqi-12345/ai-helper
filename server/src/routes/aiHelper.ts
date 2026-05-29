@@ -260,8 +260,9 @@ router.post(['/run/stream', '/command/stream'], async (req: Request, res: Respon
     }
     logger.error({ err }, 'embedded AI helper stream error');
     if (!res.destroyed && !res.writableEnded) {
-      res.write(JSON.stringify({ type: 'text', data: `AI helper 执行失败: ${err instanceof Error ? err.message : String(err)}` }) + '\n');
-      res.write(JSON.stringify({ type: 'done', data: { text: 'AI helper 执行失败', files: [] } }) + '\n');
+      const text = '处理过程中出现问题，请稍后重试。';
+      res.write(JSON.stringify({ type: 'text', data: text }) + '\n');
+      res.write(JSON.stringify({ type: 'done', data: { text, files: [] } }) + '\n');
     }
   } finally {
     clearInterval(heartbeat);

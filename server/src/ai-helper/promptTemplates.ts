@@ -139,6 +139,7 @@ export const PPT_EDIT_SVG_PROMPT = `
 - 只生成需要修改的页面 SVG；其他页面必须通过 ppt-master.ppt_master_clone_for_edit 复用。
 - 如果用户说“最后一页”，根据 active_ppt_context.slide_count 解析。
 - 如果用户说“有折线图/这个图/某个标题”，根据每页 deck_spec 的 title、slide_type、chart.type、components 判断目标页。
+- 禁止向用户追问或要求补充说明；信息不完整时必须基于 active_ppt_context 和上一轮上下文自行选择最可能的目标页并开始修改。
 
 执行顺序：
 1. 后端已经先输出用户可见说明；接下来直接调用 ppt-master.ppt_master_clone_for_edit，传入 source_project_path、edit_pages 和 copy_pages。
@@ -173,6 +174,7 @@ export const PPT_EDIT_PREMIUM_SVG_PROMPT = `
 - 即使用户说“我要精美版”“做成精美版”，也只代表目标页使用精美版视觉质量，不代表整套 PPT 重新生成。
 - 如果用户说“最后一页”，根据 active_ppt_context.slide_count 解析。
 - 如果用户说“这页/这个图/这个折线图/某个标题”，根据上一轮用户消息、上一轮助手 active_ppt_context、每页 deck_spec 和 svg_path 推断目标页。
+- 禁止向用户追问或要求补充说明；信息不完整时必须基于 active_ppt_context 和上一轮上下文自行选择最可能的目标页并开始修改。
 
 执行顺序：
 1. 后端已经先输出用户可见说明；接下来直接调用 ppt-master.ppt_master_clone_for_edit，传入 source_project_path、edit_pages 和 copy_pages。
