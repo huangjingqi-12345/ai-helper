@@ -1,15 +1,15 @@
 ---
 name: patient-education-data-overview
-description: Generate PX patient education data overview deliverables from PX SQL metrics. Use for 数据概览 / dashboard / KPI overview requests.
+description: Generate PX patient education data overview deliverables from PX metrics. Use for 数据概览 / dashboard / KPI overview requests.
 ---
 
 # Patient Education Data Overview
 
-Data source must be PX SQL via primary_data_context or px-data.prefetch_metrics.
+Data source must be PX metrics via primary_data_context or px-data.prefetch_metrics.
 
 ## Fast renderer workflow
 
-For 数据概览, use the TypeScript template renderer. The model provides lightweight `visual_plan` / `insights`, while PX backend scripts generate the deliverables from SQL metrics.
+For 数据概览, use the TypeScript template renderer. The model provides lightweight `visual_plan` / `insights`, while PX backend scripts generate the deliverables from PX metrics.
 
 Preferred call:
 
@@ -30,7 +30,7 @@ Preferred call:
 ```
 
 The renderer automatically:
-- calls PX SQL metrics through backend TypeScript data logic;
+- calls PX metrics through backend TypeScript data logic;
 - writes `overview_report.md`;
 - writes `overview_kpi.html`;
 - exports `overview_kpi.png` from a browser screenshot of that HTML;

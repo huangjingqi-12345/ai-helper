@@ -27,7 +27,16 @@ function eventLine(type: string, data: unknown): string {
 }
 
 function sanitizeUserVisibleText(value: string): string {
-  return value.replace(/管理层/g, '业务团队');
+  return value
+    .replace(/管理层/g, '业务团队')
+    .replace(/behavior_daily_metrics/gi, '行为指标数据')
+    .replace(/SQL database via Px backend\s*\([^)]*\)/gi, 'PX 指标数据')
+    .replace(/PX\s*SQL\s*聚合指标/gi, 'PX 指标数据')
+    .replace(/SQL\s*聚合指标/gi, '指标数据')
+    .replace(/后端\s*SQL\s*查询结果/g, '后端指标数据')
+    .replace(/\bSQL\b/gi, '指标数据')
+    .replace(/数据库字段名/g, '底层字段名')
+    .replace(/数据库/g, '数据源');
 }
 
 function sanitizeUserVisibleData<T>(value: T): T {
@@ -40,7 +49,18 @@ function sanitizeUserVisibleData<T>(value: T): T {
 }
 
 function requestLog(req: RunRequest): Record<string, unknown> {
-  return { conversation_id: req.conversation_id, run_id: req.run_id, message: req.message, command: req.command, shortcut: req.shortcut, data_scope: req.data_scope };
+  return {
+    conversation_id: req.conversation_id,
+    run_id: req.run_id,
+    message: req.message,
+    command: req.command,
+    shortcut: req.shortcut,
+    data_scope: req.data_scope,
+    date_range: req.date_range,
+    compare_range: req.compare_range,
+    date_label: req.date_label,
+    granularity: req.granularity,
+  };
 }
 
 /**
@@ -522,6 +542,7 @@ type DateRange = { start: string; end: string };
 interface PrimaryDataScope {
   shortcut?: AiShortcut;
   data_scope?: AiDataScope;
+  is_explicit_date_range?: boolean;
   label: string;
   intended_use: string;
   granularity: NonNullable<PrefetchMetricsParams['granularity']>;
@@ -558,6 +579,10 @@ interface AssistantIntent {
   confidence: number;
   is_followup: boolean;
   is_modification: boolean;
+  date_range?: DateRange;
+  compare_range?: DateRange;
+  date_label?: string;
+  granularity?: NonNullable<PrefetchMetricsParams['granularity']>;
   reason?: string;
 }
 
@@ -573,6 +598,21 @@ function normalizeConfidence(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
+}
+
+function asGranularity(value: unknown): NonNullable<PrefetchMetricsParams['granularity']> | undefined {
+  return value === 'day' || value === 'week' || value === 'month' ? value : undefined;
+}
+
+function normalizeDateRangeValue(value: unknown): DateRange | undefined {
+  const item = obj(value);
+  const start = typeof item.start === 'string' ? item.start.trim() : '';
+  const end = typeof item.end === 'string' ? item.end.trim() : '';
+  if (!start || !end) return undefined;
+  const s = parseIsoDate(start);
+  const e = parseIsoDate(end);
+  if (!s || !e || s.getTime() > e.getTime()) return undefined;
+  return { start: fmtDate(s), end: fmtDate(e) };
 }
 
 function shortcutFromIntent(intent: AssistantIntent | undefined): AiShortcut | undefined {
@@ -593,10 +633,48 @@ function routeLabel(shortcut?: AiShortcut): string | undefined {
   return undefined;
 }
 
+function strongFallbackIntentFromText(req: RunRequest): AssistantIntent | undefined {
+  const text = `${req.message || ''}\n${req.command || ''}`.replace(/\s+/g, '');
+  if (!text) return undefined;
+  const wantsDeliverable = /(生成|制作|创建|导出|写|出|做|给我|我要|帮我)/.test(text);
+  if (wantsDeliverable && /(月报|月度报告|自然月复盘报告|月度复盘报告)/.test(text)) {
+    return {
+      task: 'monthly',
+      ppt_mode: 'unspecified',
+      confidence: 0.95,
+      is_followup: false,
+      is_modification: false,
+      reason: '规则兜底：明确月报交付',
+    };
+  }
+  if (wantsDeliverable && /(数据概览|运营概览|KPI概览|dashboard|Dashboard|看板|概览报告)/.test(text)) {
+    return {
+      task: 'overview',
+      ppt_mode: 'unspecified',
+      confidence: 0.95,
+      is_followup: false,
+      is_modification: false,
+      reason: '规则兜底：明确概览交付',
+    };
+  }
+  if (wantsDeliverable && /(PPT|ppt|幻灯片|演示文稿|汇报材料)/.test(text) && !/(修改|调整|替换|重画|优化|改第|显示不全|上一份|刚才)/.test(text)) {
+    return {
+      task: 'ppt',
+      ppt_mode: /精美|高级|高质量|视觉|SVG|svg/.test(text) ? 'premium' : 'fast',
+      confidence: 0.9,
+      is_followup: false,
+      is_modification: false,
+      reason: '规则兜底：明确PPT交付',
+    };
+  }
+  return undefined;
+}
+
 async function classifyAssistantIntent(req: RunRequest, rootDir: string, signal?: AbortSignal): Promise<AssistantIntent | undefined> {
   const userText = (req.message || req.command || '').trim();
   if (!userText) return undefined;
   const previousTurn = historyTurnForPrompt(req, 900);
+  const today = new Date().toISOString().slice(0, 10);
   const ai = new AIService({
     model: process.env.AI_HELPER_INTENT_MODEL || 'qwen3.7-max',
     timeoutMs: Math.max(8_000, Math.min(30_000, Number(process.env.AI_HELPER_INTENT_TIMEOUT_MS || 15_000) || 15_000)),
@@ -611,8 +689,13 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string, signal?
         'ppt_mode 只能是 fast、premium、unspecified；只有 task=ppt 或 ppt_edit 时才有意义。',
         'is_followup 必须是 boolean，判断本轮是否依赖上一轮上下文。',
         'is_modification 必须是 boolean，判断本轮是否在修改已有 PPT/报告/文件；不要细分修改类型。',
+        '如果用户明确指定时间范围（如 2月份、上个月、本月、最近14天、2月1日到2月20日、2026年Q1），必须输出 date_range={start,end}；未指定则为 null。',
+        '如果用户请求月报且有 date_range，compare_range 应输出上一自然月或紧邻等长对比周期；其他任务只有用户明确要求对比时才输出 compare_range。',
+        `省略年份时按当前日期 ${today} 推断最近的历史周期；日期必须是 YYYY-MM-DD。`,
+        'granularity 只能是 day、week、month；短周期/概览用 day，月报默认 week，长趋势可用 month。',
+        '不要输出 tenantId、userId、底层查询或底层字段；只输出可由后端安全执行的结构化时间参数。',
         '分类标准：',
-        '- data_qa：询问具体数据、指标变化、趋势表现、指标口径、数据来源、字段含义、为什么为空/为 0、互动数怎么算等，只需文字回答；例如“本月数据有什么变化”应归为 data_qa。',
+        '- data_qa：询问具体数据、指标变化、趋势表现、指标口径、数据来源、数据项含义、为什么为空/为 0、互动数怎么算等，只需文字回答；例如“本月数据有什么变化”应归为 data_qa。',
         '- overview：明确请求生成数据概览、dashboard、看板、KPI overview 等概览交付物。',
         '- monthly：明确请求生成月报、月度报告、按自然月复盘报告等报告交付物。',
         '- 如果用户只是问“本月/最近数据有什么变化、表现如何、趋势怎样”，没有说生成概览/月报/PPT/文件，归为 data_qa，不要归为 overview 或 monthly。',
@@ -635,7 +718,19 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string, signal?
       content: JSON.stringify({
         user_request: userText,
         previous_turn: previousTurn,
-        output_schema: { task: 'data_qa|overview|monthly|ppt|ppt_edit|chat', ppt_mode: 'fast|premium|unspecified', confidence: '0~1 number', is_followup: 'boolean', is_modification: 'boolean', reason: '不超过30字' },
+        current_date: today,
+        output_schema: {
+          task: 'data_qa|overview|monthly|ppt|ppt_edit|chat',
+          ppt_mode: 'fast|premium|unspecified',
+          confidence: '0~1 number',
+          is_followup: 'boolean',
+          is_modification: 'boolean',
+          date_range: { start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' },
+          compare_range: { start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' },
+          date_label: '例如 2026年2月 / 最近14天；无则 null',
+          granularity: 'day|week|month|null',
+          reason: '不超过30字',
+        },
       }, null, 2),
     },
   ];
@@ -659,12 +754,18 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string, signal?
     });
     const parsed = SkillExecutor.parseJsonObject(result.text);
     if (!parsed) return undefined;
+    const dateRange = normalizeDateRangeValue(parsed.date_range ?? parsed.dateRange);
+    const compareRange = normalizeDateRangeValue(parsed.compare_range ?? parsed.compareRange);
     return {
       task: asIntentTask(parsed.task),
       ppt_mode: asIntentPptMode(parsed.ppt_mode),
       confidence: normalizeConfidence(parsed.confidence),
       is_followup: parsed.is_followup === true,
       is_modification: parsed.is_modification === true,
+      date_range: dateRange,
+      compare_range: compareRange,
+      date_label: typeof parsed.date_label === 'string' ? parsed.date_label.slice(0, 40) : undefined,
+      granularity: asGranularity(parsed.granularity),
       reason: typeof parsed.reason === 'string' ? parsed.reason.slice(0, 80) : undefined,
     };
   } catch (err) {
@@ -687,7 +788,9 @@ async function classifyAssistantIntent(req: RunRequest, rootDir: string, signal?
 function parseIsoDate(value: string): Date | undefined {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   const [y, m, d] = value.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d));
+  const parsed = new Date(Date.UTC(y, m - 1, d));
+  if (parsed.getUTCFullYear() !== y || parsed.getUTCMonth() !== m - 1 || parsed.getUTCDate() !== d) return undefined;
+  return parsed;
 }
 
 function fmtDate(value: Date): string {
@@ -716,16 +819,304 @@ function range(start: Date, end: Date): DateRange {
   return { start: fmtDate(start), end: fmtDate(end) };
 }
 
+function daysInclusive(value: DateRange): number {
+  const start = parseIsoDate(value.start);
+  const end = parseIsoDate(value.end);
+  if (!start || !end) return 0;
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+}
+
+function isFullCalendarMonth(value: DateRange): boolean {
+  const start = parseIsoDate(value.start);
+  const end = parseIsoDate(value.end);
+  return Boolean(start && end && sameDay(start, startOfMonth(start)) && sameDay(end, endOfMonth(start)));
+}
+
+function previousComparableRange(value: DateRange): DateRange | undefined {
+  const start = parseIsoDate(value.start);
+  const end = parseIsoDate(value.end);
+  if (!start || !end) return undefined;
+  if (isFullCalendarMonth(value)) {
+    const compareEnd = addDays(start, -1);
+    return range(startOfMonth(compareEnd), compareEnd);
+  }
+  const days = daysInclusive(value);
+  const compareEnd = addDays(start, -1);
+  return range(addDays(compareEnd, -(days - 1)), compareEnd);
+}
+
+function monthRange(year: number, month1: number): DateRange | undefined {
+  if (!Number.isInteger(year) || !Number.isInteger(month1) || month1 < 1 || month1 > 12) return undefined;
+  const start = new Date(Date.UTC(year, month1 - 1, 1));
+  return range(start, endOfMonth(start));
+}
+
+function quarterRange(year: number, quarter: number): DateRange | undefined {
+  if (!Number.isInteger(year) || !Number.isInteger(quarter) || quarter < 1 || quarter > 4) return undefined;
+  const start = new Date(Date.UTC(year, (quarter - 1) * 3, 1));
+  const end = endOfMonth(new Date(Date.UTC(year, quarter * 3 - 1, 1)));
+  return range(start, end);
+}
+
+function inferYearForMonth(month1: number, anchor: Date): number {
+  const anchorYear = anchor.getUTCFullYear();
+  const anchorMonth = anchor.getUTCMonth() + 1;
+  return month1 > anchorMonth ? anchorYear - 1 : anchorYear;
+}
+
+function parseMonthToken(value: string): number | undefined {
+  const raw = value.trim();
+  if (/^\d{1,2}$/.test(raw)) {
+    const n = Number(raw);
+    return n >= 1 && n <= 12 ? n : undefined;
+  }
+  const map: Record<string, number> = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+    十一: 11,
+    十二: 12,
+    正: 1,
+    腊: 12,
+  };
+  return map[raw];
+}
+
+function parseDayToken(value: string): number | undefined {
+  const raw = value.trim();
+  if (/^\d{1,2}$/.test(raw)) {
+    const n = Number(raw);
+    return n >= 1 && n <= 31 ? n : undefined;
+  }
+  const digit: Record<string, number> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (digit[raw]) return digit[raw];
+  if (raw === '十') return 10;
+  let match = raw.match(/^十([一二三四五六七八九])$/);
+  if (match) return 10 + digit[match[1]];
+  match = raw.match(/^([一二三])十([一二三四五六七八九])?$/);
+  if (match) return digit[match[1]] * 10 + (match[2] ? digit[match[2]] : 0);
+  return undefined;
+}
+
+function dateFromParts(year: number, month1: number, day: number): Date | undefined {
+  if (!Number.isInteger(year) || !Number.isInteger(month1) || !Number.isInteger(day)) return undefined;
+  const iso = `${String(year).padStart(4, '0')}-${String(month1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return parseIsoDate(iso);
+}
+
+function labelForRange(dateRange: DateRange, fallback = '用户指定周期'): string {
+  if (isFullCalendarMonth(dateRange)) {
+    const start = parseIsoDate(dateRange.start);
+    if (start) return `${start.getUTCFullYear()}年${start.getUTCMonth() + 1}月`;
+  }
+  return dateRange.start === dateRange.end ? dateRange.start : `${dateRange.start} 至 ${dateRange.end}`;
+}
+
+function cleanDateLabel(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 60) : undefined;
+}
+
+function findExplicitDateScope(req: RunRequest, anchorDate: Date): { dateRange: DateRange; compareRange?: DateRange; dateLabel?: string; granularity?: NonNullable<PrefetchMetricsParams['granularity']> } | undefined {
+  const rawReq = obj(req);
+  const directRange = normalizeDateRangeValue(req.date_range ?? rawReq.dateRange);
+  const directCompare = normalizeDateRangeValue(req.compare_range ?? rawReq.compareRange);
+  if (directRange) {
+    return {
+      dateRange: directRange,
+      compareRange: directCompare,
+      dateLabel: cleanDateLabel(req.date_label ?? rawReq.dateLabel) || labelForRange(directRange),
+      granularity: asGranularity(req.granularity),
+    };
+  }
+
+  const text = `${req.message || ''}\n${req.command || ''}`.trim();
+  if (!text) return undefined;
+  const normalized = text.replace(/[－—–~～]/g, '-').replace(/\s+/g, '');
+  const anchorYear = anchorDate.getUTCFullYear();
+  const anchorMonth = anchorDate.getUTCMonth() + 1;
+
+  let match = normalized.match(/(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:到|至|--?|—|－|~|～)(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?/);
+  if (match) {
+    const start = dateFromParts(Number(match[1]), Number(match[2]), Number(match[3]));
+    const end = dateFromParts(Number(match[4]), Number(match[5]), Number(match[6]));
+    if (start && end && start <= end) {
+      const dateRange = range(start, end);
+      return { dateRange, dateLabel: labelForRange(dateRange), granularity: 'day' };
+    }
+  }
+
+  match = normalized.match(/(\d{1,2})月(\d{1,2})日?(?:到|至|--?|—|－|~|～)(\d{1,2})月(\d{1,2})日?/);
+  if (match) {
+    const startMonth = Number(match[1]);
+    const endMonth = Number(match[3]);
+    const startYear = inferYearForMonth(startMonth, anchorDate);
+    const endYear = endMonth < startMonth ? startYear + 1 : startYear;
+    const start = dateFromParts(startYear, startMonth, Number(match[2]));
+    const end = dateFromParts(endYear, endMonth, Number(match[4]));
+    if (start && end && start <= end) {
+      const dateRange = range(start, end);
+      return { dateRange, dateLabel: labelForRange(dateRange), granularity: 'day' };
+    }
+  }
+
+  match = normalized.match(/(\d{4})年(\d{1,2})月(\d{1,2})日?(?:到|至|--?|—|－|~|～)(\d{1,2})日?/);
+  if (match) {
+    const year = Number(match[1]);
+    const month1 = Number(match[2]);
+    const start = dateFromParts(year, month1, Number(match[3]));
+    const end = dateFromParts(year, month1, Number(match[4]));
+    if (start && end && start <= end) {
+      const dateRange = range(start, end);
+      return { dateRange, dateLabel: labelForRange(dateRange), granularity: 'day' };
+    }
+  }
+
+  match = normalized.match(/(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?/);
+  if (match) {
+    const day = dateFromParts(Number(match[1]), Number(match[2]), Number(match[3]));
+    if (day) {
+      const dateRange = range(day, day);
+      return { dateRange, dateLabel: labelForRange(dateRange), granularity: 'day' };
+    }
+  }
+
+  match = normalized.match(/(\d{4})年?Q([1-4])|(\d{4})年?第?([一二三四1234])季度/);
+  if (match) {
+    const year = Number(match[1] || match[3]);
+    const quarter = Number(match[2] || parseMonthToken(match[4]));
+    const dateRange = quarterRange(year, quarter);
+    if (dateRange) return { dateRange, compareRange: previousComparableRange(dateRange), dateLabel: `${year}年Q${quarter}`, granularity: 'month' };
+  }
+
+  match = normalized.match(/今年第?([一二三四1234])季度|今年Q([1-4])/);
+  if (match) {
+    const quarter = Number(match[2] || parseMonthToken(match[1]));
+    const dateRange = quarterRange(anchorYear, quarter);
+    if (dateRange) return { dateRange, compareRange: previousComparableRange(dateRange), dateLabel: `${anchorYear}年Q${quarter}`, granularity: 'month' };
+  }
+
+  match = normalized.match(/(\d{1,2})月(\d{1,2})日/);
+  if (match) {
+    const month1 = Number(match[1]);
+    const year = inferYearForMonth(month1, anchorDate);
+    const day = dateFromParts(year, month1, Number(match[2]));
+    if (day) {
+      const dateRange = range(day, day);
+      return { dateRange, dateLabel: labelForRange(dateRange), granularity: 'day' };
+    }
+  }
+
+  match = normalized.match(/(\d{4})[-/.年](\d{1,2})(?:月)?(?![\d-/.])(?:份|月报|月度报告|数据概览|概览|数据|报告)?/);
+  if (match) {
+    const dateRange = monthRange(Number(match[1]), Number(match[2]));
+    if (dateRange) return { dateRange, compareRange: previousComparableRange(dateRange), dateLabel: labelForRange(dateRange), granularity: 'week' };
+  }
+
+  match = normalized.match(/([0-9一二两三四五六七八九十]{1,3})月(?:份)?(?:的)?(?:月报|月度报告|数据概览|概览|数据|报告|复盘)?/);
+  if (match) {
+    const month1 = parseMonthToken(match[1]);
+    if (month1) {
+      const dateRange = monthRange(inferYearForMonth(month1, anchorDate), month1);
+      if (dateRange) return { dateRange, compareRange: previousComparableRange(dateRange), dateLabel: labelForRange(dateRange), granularity: 'week' };
+    }
+  }
+
+  match = normalized.match(/最近|近|过去/);
+  if (match) {
+    const recent = normalized.match(/(?:最近|近|过去)(\d{1,3})(天|日|周|星期|个月|月)/);
+    if (recent) {
+      const amount = Math.max(1, Math.min(400, Number(recent[1])));
+      const unit = recent[2];
+      if (unit === '天' || unit === '日') {
+        const dateRange = range(addDays(anchorDate, -(amount - 1)), anchorDate);
+        return { dateRange, dateLabel: `最近${amount}天`, granularity: 'day' };
+      }
+      if (unit === '周' || unit === '星期') {
+        const days = amount * 7;
+        const dateRange = range(addDays(anchorDate, -(days - 1)), anchorDate);
+        return { dateRange, dateLabel: `最近${amount}周`, granularity: 'day' };
+      }
+      if (unit === '个月' || unit === '月') {
+        const start = startOfMonth(new Date(Date.UTC(anchorYear, anchorMonth - amount, 1)));
+        const dateRange = range(start, anchorDate);
+        return { dateRange, dateLabel: `最近${amount}个月`, granularity: amount > 3 ? 'month' : 'week' };
+      }
+    }
+  }
+
+  if (/上上个月|上上月/.test(normalized)) {
+    const end = endOfMonth(new Date(Date.UTC(anchorYear, anchorMonth - 3, 1)));
+    const dateRange = range(startOfMonth(end), end);
+    return { dateRange, compareRange: previousComparableRange(dateRange), dateLabel: labelForRange(dateRange), granularity: 'week' };
+  }
+  if (/上个月|上月/.test(normalized)) {
+    const end = endOfMonth(new Date(Date.UTC(anchorYear, anchorMonth - 2, 1)));
+    const dateRange = range(startOfMonth(end), end);
+    return { dateRange, compareRange: previousComparableRange(dateRange), dateLabel: labelForRange(dateRange), granularity: 'week' };
+  }
+  if (/本月|这个月|当月/.test(normalized)) {
+    const dateRange = range(startOfMonth(anchorDate), anchorDate);
+    return { dateRange, compareRange: previousComparableRange(dateRange), dateLabel: `${anchorYear}年${anchorMonth}月`, granularity: 'week' };
+  }
+
+  return undefined;
+}
+
+function explicitLimitForRange(dateRange: DateRange, granularity: NonNullable<PrefetchMetricsParams['granularity']>): number {
+  const days = daysInclusive(dateRange);
+  if (granularity === 'month') return Math.max(12, Math.min(60, Math.ceil(days / 28) + 4));
+  if (granularity === 'week') return Math.max(12, Math.min(120, Math.ceil(days / 7) + 8));
+  return Math.max(14, Math.min(800, days + 10));
+}
+
 function resolvePrimaryDataScope(req: RunRequest, latestMetricDate: string): PrimaryDataScope {
   const shortcut = asShortcut(req.shortcut);
   const dataScope = asDataScope(req.data_scope) || defaultDataScope(shortcut);
-  const latest = parseIsoDate(latestMetricDate);
+  const latest = parseIsoDate(latestMetricDate) || parseIsoDate(new Date().toISOString().slice(0, 10));
+
+  if (latest) {
+    const explicit = findExplicitDateScope(req, latest);
+    if (explicit) {
+      const shouldCompare = shortcut === 'monthly' || dataScope === 'latest_complete_month';
+      const compareRange = explicit.compareRange || (shouldCompare ? previousComparableRange(explicit.dateRange) : undefined);
+      const granularity = explicit.granularity
+        || asGranularity(req.granularity)
+        || (shortcut === 'monthly' ? 'week' : isPptShortcut(shortcut) && daysInclusive(explicit.dateRange) > 120 ? 'month' : 'day');
+      const label = explicit.dateLabel || labelForRange(explicit.dateRange);
+      const params: PrefetchMetricsParams = {
+        dateRange: explicit.dateRange,
+        ...(compareRange ? { compareRange } : {}),
+        granularity,
+        limit: explicitLimitForRange(explicit.dateRange, granularity),
+        purpose: `用户指定数据周期：${label}`,
+      };
+      return {
+        shortcut,
+        data_scope: dataScope,
+        is_explicit_date_range: true,
+        label,
+        intended_use: '按用户自然语言指定的时间范围聚合本轮主数据',
+        granularity,
+        dateRange: explicit.dateRange,
+        compareRange,
+        params,
+      };
+    }
+  }
 
   if (!dataScope || !latest) {
     return {
       shortcut,
       data_scope: dataScope,
-      label: latest ? '默认全局数据' : '当前数据库暂无可用统计日期',
+      label: latest ? '默认全局数据' : '当前暂无可用统计日期',
       intended_use: '作为本轮任务的默认主数据',
       granularity: 'month',
       params: {},
@@ -792,7 +1183,7 @@ function compactMetricsForContext(metrics: PrefetchMetrics): Record<string, unkn
       total_points: metrics.dailyTrend.length,
       included_points: dailyTrend.length,
       included_range: { start: dailyTrend[0]?.date || '', end: dailyTrend.at(-1)?.date || '' },
-      note: 'coreKpi/monthlyTrend/topContent/projects are complete SQL aggregates for the requested range; dailyTrend is compacted for model context.',
+      note: 'coreKpi/monthlyTrend/topContent/projects are complete metric aggregates for the requested range; dailyTrend is compacted for model context.',
     },
     monthlyTrend: metrics.monthlyTrend.slice(-12),
     topContent: metrics.topContent.slice(0, 10),
@@ -1011,14 +1402,14 @@ function buildTaskMetrics(shortcut: AiShortcut | undefined, primaryMetrics: Pref
   };
 }
 
-function tenantScopedParams(params: PrefetchMetricsParams = {}, tenantId?: string): PrefetchMetricsParams {
-  return tenantId ? { ...params, tenantId } : params;
+function tenantScopedParams(params: PrefetchMetricsParams = {}, enforcedTenantId?: string): PrefetchMetricsParams {
+  return enforcedTenantId ? { ...params, tenantId: enforcedTenantId } : params;
 }
 
-async function buildPrimaryDataContext(req: RunRequest, rootDir: string, tenantId?: string): Promise<Record<string, unknown>> {
-  const defaultMetrics = await prefetchMetrics(tenantScopedParams({}, tenantId));
+async function buildPrimaryDataContext(req: RunRequest, rootDir: string, enforcedTenantId?: string): Promise<Record<string, unknown>> {
+  const defaultMetrics = await prefetchMetrics(tenantScopedParams({}, enforcedTenantId));
   const scope = resolvePrimaryDataScope(req, defaultMetrics.range.end);
-  const primaryMetrics = scope.params.dateRange ? await prefetchMetrics(tenantScopedParams(scope.params, tenantId)) : defaultMetrics;
+  const primaryMetrics = scope.params.dateRange ? await prefetchMetrics(tenantScopedParams(scope.params, enforcedTenantId)) : defaultMetrics;
   const supplemental: Record<string, unknown> = {};
   const storeGroups: Array<{ prefix: string; label: string; metrics: PrefetchMetrics }> = [
     { prefix: 'primary', label: '主数据', metrics: primaryMetrics },
@@ -1030,7 +1421,7 @@ async function buildPrimaryDataContext(req: RunRequest, rootDir: string, tenantI
       granularity: 'week',
       limit: 40,
       purpose: '月报环比对比',
-    }, tenantId));
+    }, enforcedTenantId));
     supplemental.previous_period = {
       label: '前一个完整自然月',
       dateRange: scope.compareRange,
@@ -1040,7 +1431,7 @@ async function buildPrimaryDataContext(req: RunRequest, rootDir: string, tenantI
   }
 
   const latest = parseIsoDate(defaultMetrics.range.end);
-  if (scope.data_scope === 'last_1_year' && latest) {
+  if (scope.data_scope === 'last_1_year' && latest && !scope.is_explicit_date_range) {
     const recent30 = range(addDays(latest, -29), latest);
     const previous30 = range(addDays(latest, -59), addDays(latest, -30));
     const recent30Label = directPptRangeLabel(recent30, '重点观察期');
@@ -1050,13 +1441,13 @@ async function buildPrimaryDataContext(req: RunRequest, rootDir: string, tenantI
       granularity: 'day',
       limit: 40,
       purpose: `PPT 核心结论重点观察期数据：${recent30Label}`,
-    }, tenantId));
+    }, enforcedTenantId));
     const previous30Metrics = await prefetchMetrics(tenantScopedParams({
       dateRange: previous30,
       granularity: 'day',
       limit: 40,
       purpose: `PPT 核心结论对比观察期数据：${previous30Label}`,
-    }, tenantId));
+    }, enforcedTenantId));
     supplemental.recent_30_days = {
       label: recent30Label,
       dateRange: recent30,
@@ -1077,6 +1468,7 @@ async function buildPrimaryDataContext(req: RunRequest, rootDir: string, tenantI
     scope: {
       shortcut: scope.shortcut,
       data_scope: scope.data_scope,
+      is_explicit_date_range: scope.is_explicit_date_range,
       label: scope.label,
       intended_use: scope.intended_use,
       dateRange: scope.dateRange,
@@ -1095,10 +1487,10 @@ async function buildMessages(
   rootDir: string,
   registry: SkillRegistry,
   executor: SkillExecutor,
-  options: { includePreviousTurn?: boolean; tenantId?: string } = {},
+  options: { includePreviousTurn?: boolean; enforcedTenantId?: string } = {},
 ): Promise<{ messages: ChatMessage[]; initialSkills: string[]; primaryDataContext: Record<string, unknown> }> {
   const userText = (req.message || req.command || '').trim() || '请根据我的需求完成分析并交付。';
-  const primaryDataContext = await buildPrimaryDataContext(req, rootDir, options.tenantId);
+  const primaryDataContext = await buildPrimaryDataContext(req, rootDir, options.enforcedTenantId);
   const catalog = registry.buildPromptContext();
   const primaryDataStr = `primary_data_context（本轮快捷入口默认主数据；可按需调用 px-data 补取）：\n${JSON.stringify(primaryDataContext, null, 2)}`;
   const actionSpecMode = actionSpecModeForRequest(req);
@@ -1709,7 +2101,7 @@ function buildMonthlyReportMarkdown(current: PrefetchMetrics, previous: Prefetch
 
 **报告周期**：${dateRange.start} 至 ${dateRange.end}  
 **对比周期**：${compareRange.start} 至 ${compareRange.end}  
-**数据来源**：PX SQL 聚合指标
+**数据来源**：PX 指标数据
 
 > **核心判断**：${headline}
 
@@ -1781,7 +2173,7 @@ ${insights.recommendations.map((item, index) => `${index + 1}. **行动 ${index 
 
 ## 附：阅读口径说明
 
-阅读人数、阅读次数、互动次数、完读率和平均阅读时长均来自 PX SQL 聚合指标。项目与内容排名按本报告周期内阅读次数排序。环比使用本报告周期与对比周期的同口径核心指标计算。
+阅读人数、阅读次数、互动次数、完读率和平均阅读时长均来自 PX 指标数据。项目与内容排名按本报告周期内阅读次数排序。环比使用本报告周期与对比周期的同口径核心指标计算。
 `;
 }
 
@@ -2640,12 +3032,22 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   const explicitShortcut = asShortcut(req.shortcut);
   const hasPreviousTurn = previousHistoryTurn(req).length > 0;
   const classifiedIntent = !explicitShortcut ? await classifyAssistantIntent(req, rootDir, signal) : undefined;
-  const classifiedPptEdit = Boolean(classifiedIntent?.task === 'ppt_edit' || (classifiedIntent?.task === 'ppt' && classifiedIntent.is_modification));
+  const classifiedShortcut = shortcutFromIntent(classifiedIntent);
+  const fallbackIntent = !explicitShortcut && !classifiedShortcut ? strongFallbackIntentFromText(req) : undefined;
+  const effectiveIntent = classifiedShortcut ? classifiedIntent : (fallbackIntent || classifiedIntent);
+  const classifiedPptEdit = Boolean(effectiveIntent?.task === 'ppt_edit' || (effectiveIntent?.task === 'ppt' && effectiveIntent.is_modification));
   const includePreviousTurn = Boolean(classifiedPptEdit && hasPreviousTurn);
-  const shortcut = explicitShortcut || shortcutFromIntent(classifiedIntent);
+  const shortcut = explicitShortcut || classifiedShortcut || shortcutFromIntent(fallbackIntent);
+  const reqWithIntentRange: RunRequest = {
+    ...req,
+    date_range: normalizeDateRangeValue(req.date_range ?? obj(req).dateRange) || effectiveIntent?.date_range || req.date_range,
+    compare_range: normalizeDateRangeValue(req.compare_range ?? obj(req).compareRange) || effectiveIntent?.compare_range || req.compare_range,
+    date_label: cleanDateLabel(req.date_label ?? obj(req).dateLabel) || effectiveIntent?.date_label || req.date_label,
+    granularity: asGranularity(req.granularity) || effectiveIntent?.granularity || req.granularity,
+  };
   const effectiveReq: RunRequest = shortcut
-    ? { ...req, shortcut, data_scope: asDataScope(req.data_scope) || defaultDataScope(shortcut) }
-    : req;
+    ? { ...reqWithIntentRange, shortcut, data_scope: asDataScope(reqWithIntentRange.data_scope) || defaultDataScope(shortcut) }
+    : reqWithIntentRange;
   const isPremiumPptSvg = shortcut === 'ppt_svg';
   const uploadContext: AiHelperUploadContext = {
     userId: options.userId,
@@ -2679,22 +3081,25 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     return eventLine(type, safeData);
   };
 
-  runtimeLog('request_start', { mode: 'new-ai-ts', rootDir, runtime_log_path: RUNTIME_LOG_PATH, model_io_log_path: MODEL_IO_LOG_PATH, run_model_io_log_path: path.join(rootDir, 'model_io.md'), classified_intent: classifiedIntent, include_previous_turn: includePreviousTurn, inferred_shortcut: !explicitShortcut && shortcut ? shortcut : undefined, ...requestLog(effectiveReq) });
+  runtimeLog('request_start', { mode: 'new-ai-ts', rootDir, runtime_log_path: RUNTIME_LOG_PATH, model_io_log_path: MODEL_IO_LOG_PATH, run_model_io_log_path: path.join(rootDir, 'model_io.md'), classified_intent: classifiedIntent, fallback_intent: fallbackIntent, include_previous_turn: includePreviousTurn, inferred_shortcut: !explicitShortcut && shortcut ? shortcut : undefined, ...requestLog(effectiveReq) });
   yield emit('status', '开始处理请求...');
-  const routeNote = !explicitShortcut && shortcut === 'ppt' && classifiedIntent?.task === 'ppt' && classifiedIntent.ppt_mode === 'unspecified'
+  const routeNote = !explicitShortcut && shortcut === 'ppt' && effectiveIntent?.task === 'ppt' && effectiveIntent.ppt_mode === 'unspecified'
     ? '已为你选择 PPT 快速版；如需更强视觉效果，可使用 PPT 精美版。'
     : undefined;
   if (shortcut) {
     yield emit('route', {
       shortcut,
       data_scope: effectiveReq.data_scope,
+      date_range: effectiveReq.date_range,
+      compare_range: effectiveReq.compare_range,
+      date_label: effectiveReq.date_label,
       label: routeLabel(shortcut),
       inferred: !explicitShortcut,
-      task: classifiedIntent?.task,
-      ppt_mode: shortcut === 'ppt_svg' ? 'premium' : shortcut === 'ppt' ? 'fast' : classifiedIntent?.ppt_mode,
-      confidence: classifiedIntent?.confidence,
-      is_followup: classifiedIntent?.is_followup,
-      is_modification: classifiedIntent?.is_modification,
+      task: effectiveIntent?.task,
+      ppt_mode: shortcut === 'ppt_svg' ? 'premium' : shortcut === 'ppt' ? 'fast' : effectiveIntent?.ppt_mode,
+      confidence: effectiveIntent?.confidence,
+      is_followup: effectiveIntent?.is_followup,
+      is_modification: effectiveIntent?.is_modification,
       history_included: includePreviousTurn,
       note: routeNote,
     });
@@ -2706,7 +3111,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     const trace: AgentDonePayload['trace'] = [];
     const skillsUsed = new Set<string>(['patient-education-data-overview', 'md-to-pdf']);
     try {
-      yield emit('progress', { phase: 'data', message: '正在聚合最近 7 天核心指标、项目贡献与内容表现', step: 1 });
+      yield emit('progress', { phase: 'data', message: '正在聚合本轮数据周期的核心指标、项目贡献与内容表现', step: 1 });
       const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir, enforcedTenantId);
       const summaryText = buildOverviewSummaryText(primaryDataContext);
       const emitTextResult = await executor.execute({
@@ -2772,7 +3177,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     const trace: AgentDonePayload['trace'] = [];
     const skillsUsed = new Set<string>(['ppt-master']);
     const editExecutor = new SkillExecutor(rootDir, { allowManualPptSvg: true, signal, publishFiles, tenantId: enforcedTenantId });
-    const isPremiumLocalEdit = shortcut === 'ppt_svg' || classifiedIntent?.ppt_mode === 'premium';
+    const isPremiumLocalEdit = shortcut === 'ppt_svg' || effectiveIntent?.ppt_mode === 'premium';
     let expectedEditPages: number[] = [];
     const writtenEditPages = new Set<number>();
     let exported = false;
@@ -2813,7 +3218,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
           content: [
             '你是 PX 医疗患教数据助手。当前用户要修改上一份 PPT。',
             '请先输出一段给用户看的中文说明，说明你理解到的修改目标、将优先定位相关页面并完成局部修改。',
-            '要求：只输出自然语言，不要 JSON，不要 Markdown 表格，不要提 skill、工具、内部路径、数据库字段、run_id/conversation_id 等底层细节。',
+            '要求：只输出自然语言，不要 JSON，不要 Markdown 表格，不要提 skill、工具、内部路径、底层字段、run_id/conversation_id 等底层细节。',
             '控制在 80 字以内，语气直接、明确。',
           ].join('\n'),
         },
@@ -3300,7 +3705,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     const trace: AgentDonePayload['trace'] = [];
     const skillsUsed = new Set<string>(['monthly-template', 'md-to-pdf']);
     try {
-      yield emit('progress', { phase: 'data', message: '正在聚合本月与上月指标', step: 1 });
+      yield emit('progress', { phase: 'data', message: '正在聚合报告周期与对比周期指标', step: 1 });
       const defaultMetrics = await prefetchMetrics(tenantScopedParams({}, enforcedTenantId));
       const scope = resolvePrimaryDataScope(effectiveReq, defaultMetrics.range.end);
       if (!scope.dateRange || !scope.compareRange) throw new Error('无法解析月报周期或对比周期');
@@ -3378,7 +3783,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   let messages: ChatMessage[];
   let primaryDataContext: Record<string, unknown>;
   try {
-    ({ messages, primaryDataContext } = await buildMessages(effectiveReq, rootDir, registry, executor, { includePreviousTurn, tenantId: enforcedTenantId }));
+    ({ messages, primaryDataContext } = await buildMessages(effectiveReq, rootDir, registry, executor, { includePreviousTurn, enforcedTenantId }));
   } catch (err) {
     if (isAbortError(err)) throw err;
     const text = `PX 数据预取失败：${err instanceof Error ? err.message : String(err)}`;

@@ -55,7 +55,10 @@ CMD ["nginx", "-g", "daemon off;"]
 # ============================================
 FROM node:20-alpine AS backend
 
-RUN apk add --no-cache ca-certificates tzdata python3 make g++ chromium nss freetype harfbuzz font-noto-cjk
+# PPT export no longer depends on Python/Pillow; the SVG→PPTX path is TS/OOXML.
+RUN apk add --no-cache \
+    ca-certificates tzdata \
+    cairo pango gdk-pixbuf chromium nss freetype harfbuzz font-noto-cjk
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 WORKDIR /app

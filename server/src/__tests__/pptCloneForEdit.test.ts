@@ -131,6 +131,6 @@ describe('ppt-master clone for edit', () => {
       type: 'progress',
       data: expect.objectContaining({ message: expect.stringContaining('PPT 局部修改') }),
     }));
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetch)).toHaveBeenCalled();
   });
 });

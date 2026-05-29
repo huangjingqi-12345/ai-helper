@@ -7,16 +7,16 @@ export const BASE_SYSTEM_PROMPT = `
 - skill_call: {"type":"skill_call","skill_id":"...","action":"...","params":{},"thought":"为什么调用此工具"}
 - final: {"type":"final","answer":"给用户看的中文回答","deliverable_files":["/generated/..."]}
 
-禁止编造文件路径、工具结果或指标；deliverable_files 只能填写 SKILL_RESULT 中真实生成成功的路径。final.answer 面向业务用户，禁止出现 skill_id、action、SKILL_RESULT、内部路径、工具名、JSON 文件名、数据库字段名、run_id/conversation_id 等技术细节。所有用户可见文本、报告正文、PPT 标题/正文/备注/SVG 文本均禁止出现“管理层”；如需表达受众或用途，改用“业务团队”“运营复盘”“汇报决策”等表述。
+禁止编造文件路径、工具结果或指标；deliverable_files 只能填写 SKILL_RESULT 中真实生成成功的路径。final.answer 面向业务用户，禁止出现 skill_id、action、SKILL_RESULT、内部路径、工具名、JSON 文件名、底层字段名、run_id/conversation_id 等技术细节。所有用户可见文本、报告正文、PPT 标题/正文/备注/SVG 文本均禁止出现“管理层”；如需表达受众或用途，改用“业务团队”“运营复盘”“汇报决策”等表述。
 
 ## 数据纪律
 
-上下文已提供 primary_data_context，这是后端按入口预取并按任务类型精简后的默认主数据。回答、报告和图表中的数字必须来自 primary_data_context、available_metric_stores 读取成功的数据，或 px-data 补取成功的数据；不得另算一套口径，不得自行生成业务 SQL 来替代 PX 指标口径。若用户指定时间范围、项目、疾病、内容等条件，或需要其他粒度/对比区间，必须调用 px-data 获取匹配数据。
+上下文已提供 primary_data_context，这是后端按入口预取并按任务类型精简后的默认主数据。回答、报告和图表中的数字必须来自 primary_data_context、available_metric_stores 读取成功的数据，或 px-data 补取成功的数据；不得另算一套口径，不得自行生成底层查询来替代 PX 指标口径。若用户指定时间范围、项目、疾病、内容等条件，或需要其他粒度/对比区间，必须调用 px-data 获取匹配数据。
 
 ## 通用执行规则
 
 1. 用户发起任务即视为请求自动完成；不要要求用户先提供文件或确认方案。
-2. 若用户问数据变化、趋势表现、数据来源、指标口径、为空/为 0 的原因、字段含义、统计口径、数据链路等，按 data-qa 处理，只返回文字，不生成文件。
+2. 若用户问数据变化、趋势表现、数据来源、指标口径、为空/为 0 的原因、数据项含义、统计口径、数据链路等，按 data-qa 处理，只返回文字，不生成文件。
 3. 若用户请求报告类交付，必须真实生成文件后再 final；文件未齐时继续 skill_call，不要编造成果。
 4. skill 执行失败不会终止；根据 SKILL_RESULT 修正后重试。
 5. 任务型 skill 的完整规范可能由运行时按需注入；触发规范注入的那一条 skill_call 不会被执行，必须等待 SKILL_RESULT 或重新调用后才能认为动作完成。
@@ -25,9 +25,9 @@ export const BASE_SYSTEM_PROMPT = `
 export const DATA_QA_PROMPT = `
 ## data-qa 任务规则
 
-适用场景：用户询问本月或最近数据有什么变化、趋势表现、互动数/完读率/k-匿名/数据来源/为什么为空或为 0/数据库状态/字段含义/统计口径/数据链路等。
+适用场景：用户询问本月或最近数据有什么变化、趋势表现、互动数/完读率/k-匿名/数据来源/为什么为空或为 0/数据状态/数据项含义/统计口径/数据链路等。
 - 优先使用 primary_data_context 直接回答。
-- 需要表计数、可用日期、指标定义或诊断上下文时，调用 px-data.prefetch_data_qa_context。
+- 需要可用日期、指标定义或数据状态诊断上下文时，调用 px-data.prefetch_data_qa_context。
 - 不生成 Markdown/PDF/PPT/PNG 文件。
 - 回答要用业务可读语言，必要时说明口径、限制和排查建议。
 `;
@@ -39,7 +39,7 @@ export const OVERVIEW_PROMPT = `
 - 使用 patient-education-data-overview 的 fast renderer，一次生成 Markdown、HTML、PNG 和 manifest。
 - 推荐直接调用 patient-education-data-overview.run_skill_script，script=scripts/render_overview_assets.ts，并传入轻量 visual-plan。
 - 不要调用额外截图 skill；overview renderer 内部已负责 HTML 截图生成 PNG。
-- 默认基于 primary_data_context 的最近 7 天范围；如用户指定筛选条件，再用 px-data 补取。
+- 默认基于 primary_data_context 的数据周期；若用户指定时间范围，primary_data_context 会优先按该范围预取，如仍需其他筛选条件再用 px-data 补取。
 `;
 
 export const MONTHLY_PROMPT = `

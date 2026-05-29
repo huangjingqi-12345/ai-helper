@@ -1,50 +1,28 @@
 # Patient Education Metric Catalog
 
-## Field Sources
+## Data Sources
 
-- Daily metrics: `behavior_daily_metrics`
-- Content metadata and cumulative metrics: `content`
-- Project metadata and cumulative metrics: `projects`
-- Channel/distribution: `distribution_records`, `distribution_strategies`
-- Tags: `content_tags`, `tags`, or `content.tags`
+- Daily behavior metrics
+- Content metadata and cumulative metrics
+- Project metadata and cumulative metrics
+- Channel/distribution metrics
+- Content tags and disease/topic dimensions
 
 ## Core Formulas
 
 | Metric | Formula | Notes |
 |---|---|---|
-| Published content | `count(content.id)` with `published_at is not null` | Use `status` only when publish semantics are known. |
-| Push volume | `sum(push_count)` | Prefer daily table for date ranges. |
-| Delivered volume | `sum(delivered_count)` | Nullable; guard division. |
-| Reading users | `sum(read_users)` | Daily aggregate, not necessarily deduplicated monthly users. |
-| Read count | `sum(read_count)` | Primary traffic metric. |
-| Interaction count | `sum(interaction_count)` or components | Components: like, dislike, bookmark, share. |
-| Delivery rate | `delivered_count / push_count` | Use safe divide. |
-| Read rate | `read_users / delivered_count` | If delivered missing, use push denominator with caveat. |
-| Interaction rate | `interaction_count / read_count` | Use read_count denominator. |
-| Finish rate | `sum(finish_rate * read_count) / sum(read_count)` | Weighted average preferred. |
-| Avg read seconds | `sum(avg_read_sec * read_count) / sum(read_count)` | Weighted average preferred. |
-
-## Baseline SQL Pattern
-
-```sql
-with base as (
-  select *
-  from behavior_daily_metrics
-  where metric_date >= :start_date
-    and metric_date < :end_date
-    and (:tenant_id is null or tenant_id = :tenant_id)
-    and (:project_id is null or project_id = :project_id)
-)
-select
-  sum(push_count) as push_count,
-  sum(delivered_count) as delivered_count,
-  sum(read_users) as read_users,
-  sum(read_count) as read_count,
-  sum(interaction_count) as interaction_count,
-  sum(finish_rate * read_count) / nullif(sum(read_count), 0) as weighted_finish_rate,
-  sum(avg_read_sec * read_count) / nullif(sum(read_count), 0) as weighted_avg_read_sec
-from base;
-```
+| Published content | 已发布内容数 | Use status/publish semantics from the metrics payload. |
+| Push volume | 推送次数汇总 | Use the requested date range. |
+| Delivered volume | 送达次数汇总 | Guard division when denominator is zero. |
+| Reading users | 阅读人数聚合 | Daily aggregate, not necessarily deduplicated monthly users. |
+| Read count | 阅读次数汇总 | Primary traffic metric. |
+| Interaction count | 互动次数汇总 | Includes like, bookmark, share and related actions when available. |
+| Delivery rate | 送达次数 / 推送次数 | Use safe divide. |
+| Read rate | 阅读人数 / 送达次数 | If delivered missing, use push denominator with caveat. |
+| Interaction rate | 互动次数 / 阅读次数 | Use read count denominator. |
+| Finish rate | 按阅读次数加权平均 | Weighted average preferred. |
+| Avg read seconds | 按阅读次数加权平均 | Weighted average preferred. |
 
 ## Quality Score Suggestion
 

@@ -1,8 +1,8 @@
 import fs from 'fs/promises';
-import fsSync from 'fs';
 import path from 'path';
 import { execFile } from 'child_process';
 import { AI_HELPER_ROOT, PROJECTS_DIR, safeGeneratedPath, toAssetPath } from './paths.js';
+import { exportPptProjectToPptxSync, finalizePptSvgSync, validateEditablePptxSync, type PptExportRun } from './pptxNativeExporter.js';
 
 export interface PptMasterSlidePlan {
   file_name: string;
@@ -31,56 +31,6 @@ export interface PptMasterExportResult {
   slideCount: number;
   scripts: Array<{ script: string; args: string[]; command: string; duration_ms: number; stdout: string; stderr: string }>;
   validation?: unknown;
-}
-
-const SERVER_ROOT = path.resolve(AI_HELPER_ROOT, '..');
-const WORKSPACE_ROOT = path.resolve(SERVER_ROOT, '../..');
-const LEGACY_AI_HELPER_ROOT = path.join(WORKSPACE_ROOT, 'ai-helper');
-const PPT_MASTER_SCRIPTS = path.join(LEGACY_AI_HELPER_ROOT, 'skills', 'ppt-master', 'scripts');
-
-function pythonExecutable(): string {
-  const configured = (process.env.PPT_MASTER_PYTHON || '').trim();
-  if (configured) return configured;
-  const venvPython = path.join(LEGACY_AI_HELPER_ROOT, '.venv', 'bin', 'python');
-  if (fsSync.existsSync(venvPython)) return venvPython;
-  return 'python3';
-}
-
-function commandFor(script: string, args: string[]): string {
-  return [pythonExecutable(), script, ...args].join(' ');
-}
-
-async function runPythonScript(scriptName: string, args: string[], timeout = 600_000): Promise<PptMasterExportResult['scripts'][number]> {
-  const script = path.join(PPT_MASTER_SCRIPTS, scriptName);
-  const started = Date.now();
-  const command = commandFor(script, args);
-  try {
-    const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      execFile(
-        pythonExecutable(),
-        [script, ...args],
-        {
-          cwd: LEGACY_AI_HELPER_ROOT,
-          timeout,
-          maxBuffer: 50 * 1024 * 1024,
-          env: process.env,
-        },
-        (error, stdout, stderr) => {
-          if (error) {
-            reject(Object.assign(error, { stdout, stderr }));
-          } else {
-            resolve({ stdout, stderr });
-          }
-        },
-      );
-    });
-    return { script, args, command, duration_ms: Date.now() - started, stdout, stderr };
-  } catch (err) {
-    const stdout = typeof (err as { stdout?: unknown }).stdout === 'string' ? String((err as { stdout: string }).stdout) : '';
-    const stderr = typeof (err as { stderr?: unknown }).stderr === 'string' ? String((err as { stderr: string }).stderr) : '';
-    const detail = [stderr, stdout].filter(Boolean).join('\n').trim();
-    throw new Error(`ppt-master 脚本执行失败：${scriptName}\n${command}\n${detail || (err instanceof Error ? err.message : String(err))}`);
-  }
 }
 
 export function parseJsonObject<T = Record<string, unknown>>(raw: string, label: string): T {
@@ -170,24 +120,31 @@ export function normalizePptSlideContent(raw: string, plan: PptMasterSlidePlan):
   return { file_name: plan.file_name, title: plan.title, svg, notes };
 }
 
-async function initProject(): Promise<{ projectPath: string; script: PptMasterExportResult['scripts'][number] }> {
-  await fs.mkdir(PROJECTS_DIR, { recursive: true });
-  const projectName = `px_ai_ppt_run_${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 17)}`;
-  const script = await runPythonScript('project_manager.py', ['init', projectName, '--format', 'ppt169', '--dir', PROJECTS_DIR], 120_000);
-  const match = script.stdout.match(/Project created:\s*(.+)\s*$/m);
-  const projectPath = match ? path.resolve(match[1].trim()) : path.join(PROJECTS_DIR, `${projectName}_ppt169_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
-  return { projectPath, script };
+function scriptFromRun(name: string, run: PptExportRun, args: string[] = []): PptMasterExportResult['scripts'][number] {
+  return { script: name, args, command: run.command, duration_ms: run.duration_ms, stdout: run.stdout, stderr: run.stderr };
 }
 
-function pickEditableNativePptx(exportsDir: string): string {
-  const blocked = ['compat', 'keynote', '_svg', 'legacy'];
-  const files = fsSync
-    .readdirSync(exportsDir)
-    .filter((name) => name.toLowerCase().endsWith('.pptx'))
-    .filter((name) => !blocked.some((token) => path.basename(name, '.pptx').toLowerCase().includes(token)))
-    .map((name) => path.join(exportsDir, name));
-  if (!files.length) throw new Error('ppt-master 导出完成但 exports/ 中未找到可编辑原生 PPTX');
-  return files.sort((a, b) => fsSync.statSync(b).mtimeMs - fsSync.statSync(a).mtimeMs)[0];
+async function initProject(): Promise<{ projectPath: string; script: PptMasterExportResult['scripts'][number] }> {
+  const started = Date.now();
+  await fs.mkdir(PROJECTS_DIR, { recursive: true });
+  const projectName = `px_ai_ppt_run_${new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 17)}`;
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const projectPath = path.join(PROJECTS_DIR, `${projectName}_ppt169_${date}`);
+  for (const rel of ['svg_output', 'svg_final', 'images', 'notes', 'templates', 'sources', 'exports']) {
+    await fs.mkdir(path.join(projectPath, rel), { recursive: true });
+  }
+  await fs.writeFile(path.join(projectPath, 'README.md'), `# ${projectName}\n\n- Canvas format: ppt169\n- Created: ${date}\n`, 'utf8');
+  return {
+    projectPath,
+    script: {
+      script: 'node-ts project init',
+      args: ['ppt169'],
+      command: `node-ts init ${projectPath}`,
+      duration_ms: Date.now() - started,
+      stdout: `Project created: ${projectPath}`,
+      stderr: '',
+    },
+  };
 }
 
 export async function exportPptMasterDeck(plan: PptMasterPlan, slides: PptMasterSlideContent[], rootDir: string): Promise<PptMasterExportResult> {
@@ -211,27 +168,23 @@ export async function exportPptMasterDeck(plan: PptMasterPlan, slides: PptMaster
     .join('\n---\n\n');
   await fs.writeFile(path.join(notesDir, 'total.md'), totalNotes, 'utf8');
 
-  for (const [scriptName, args] of [
-    ['svg_text_wrap.py', [projectPath]],
-    ['total_md_split.py', [projectPath]],
-    ['finalize_svg.py', [projectPath]],
-    ['svg_to_pptx.py', [projectPath, '--only', 'native', '-a', 'none', '-t', 'none', '--no-notes']],
-  ] as Array<[string, string[]]>) {
-    scripts.push(await runPythonScript(scriptName, args));
-  }
-
-  const nativePptx = pickEditableNativePptx(path.join(projectPath, 'exports'));
-  const validationScript = await runPythonScript('validate_editable_pptx.py', [nativePptx, '--json'], 120_000);
-  scripts.push(validationScript);
+  const finalized = finalizePptSvgSync(projectPath);
+  scripts.push(scriptFromRun('node-ts finalize svg', finalized));
+  const exported = exportPptProjectToPptxSync(projectPath, { projectName: path.basename(projectPath), format: 'ppt169' });
+  scripts.push(scriptFromRun('node-ts svg to pptx', exported.run));
+  const validationRun = validateEditablePptxSync(exported.pptxPath);
+  scripts.push(scriptFromRun('node-ts validate editable pptx', validationRun));
+  if (!validationRun.ok) throw new Error('PPTX 未包含可编辑形状');
   let validation: unknown;
   try {
-    validation = JSON.parse(validationScript.stdout || '{}');
+    validation = JSON.parse(validationRun.stdout || '{}');
   } catch {
-    validation = validationScript.stdout;
+    validation = validationRun.stdout;
   }
 
+  await fs.mkdir(rootDir, { recursive: true });
   const pptxPath = safeGeneratedPath(rootDir, `ppt_${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}.pptx`);
-  await fs.copyFile(nativePptx, pptxPath);
+  await fs.copyFile(exported.pptxPath, pptxPath);
   if (process.platform === 'darwin') {
     execFile('xattr', ['-c', pptxPath], () => undefined);
   }

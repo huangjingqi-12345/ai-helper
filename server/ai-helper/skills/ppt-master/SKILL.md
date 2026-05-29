@@ -12,7 +12,7 @@ This skill supports two PX assistant PPT generation modes. Both modes must produ
 Use this mode when the user chooses `/ppt` / “PPT 快速版”, or when the backend direct PPT path is generating a stable deck in about 2-3 minutes.
 
 ```text
-user request + PX SQL metrics
+user request + PX metrics
 → ppt_master_bootstrap
 → render_ppt_from_specs with complete deck spec JSON
 → ppt_master_export
@@ -31,7 +31,7 @@ Fast mode priorities:
 Use this mode when the user chooses `/ppt-svg` / “PPT 精美版”. This mode is slower, usually about 5-10 minutes, because the model designs each 1280×720 SVG page directly.
 
 ```text
-user request + PX SQL metrics
+user request + PX metrics
 → emit_text summary and generation plan
 → ppt_master_bootstrap
 → write design_spec.md / spec_lock.md / notes/total.md in one write_project_files call
@@ -51,7 +51,7 @@ Premium mode priorities:
 
 ## Data source rules
 
-Use PX SQL metrics from `primary_data_context`, `available_metric_stores`, or successful `px-data` calls. Numbers, chart values, project/content names, conclusions, and speaker notes must come from the same PX data payload.
+Use PX metrics from `primary_data_context`, `available_metric_stores`, or successful `px-data` calls. Numbers, chart values, project/content names, conclusions, and speaker notes must come from the same PX data payload.
 
 Do not invent metrics, projects, content names, date ranges, rankings, or chart values. Ranking/bar charts must compare the same metric and unit; do not mix read counts, interaction averages, and finish rates in one ranking chart.
 

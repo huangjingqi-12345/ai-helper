@@ -20,10 +20,12 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install runtime deps for better-sqlite3
+# Install runtime deps for Chromium/Playwright and CJK font rendering.
+# PPT export no longer depends on Python/Pillow; the SVG→PPTX path is TS/OOXML.
 RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.aliyun.com/alpine#g' /etc/apk/repositories \
-    && apk add --no-cache ca-certificates tzdata python3 make g++ chromium nss freetype harfbuzz font-noto-cjk
-# RUN apk add --no-cache python3 make g++
+    && apk add --no-cache \
+      ca-certificates tzdata \
+      cairo pango gdk-pixbuf chromium nss freetype harfbuzz font-noto-cjk
 
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001

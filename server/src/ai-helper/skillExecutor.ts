@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { AI_HELPER_ROOT, GENERATED_DIR, PROJECTS_DIR, safeGeneratedPath, toAssetPath } from './paths.js';
 import { renderPptDeckFromSpecs } from './pptSpecRenderer.js';
 import { restoreAiHelperProjectFromOss } from './ossStorage.js';
+import { exportPptProjectToPptxSync, finalizePptSvgSync, validateEditablePptxSync } from './pptxNativeExporter.js';
 
 export interface SkillCall {
   type: 'skill_call';
@@ -55,9 +56,37 @@ const PPT_MANUAL_SVG_ENABLED = process.env.AI_HELPER_PPT_MANUAL_SVG === 'true';
 const DEFAULT_HIDDEN_SKILL_IDS = new Set(['data-autoload-from-data-dir', 'sql-pro']);
 const PPT_SAFE_FONT_STACK = 'Microsoft YaHei, Arial, sans-serif';
 const PPT_SAFE_FONTS = ['Microsoft YaHei', 'SimHei', 'SimSun', 'Arial', 'Calibri', 'Segoe UI', 'Times New Roman', 'Georgia', 'Consolas', 'Courier New', 'Impact', 'Arial Black', 'PingFang SC'];
+const PPT_CANVAS_FORMATS: Record<string, { name: string; dimensions: string; viewbox: string }> = {
+  ppt169: { name: 'PPT 16:9', dimensions: '1280×720', viewbox: '0 0 1280 720' },
+  ppt43: { name: 'PPT 4:3', dimensions: '1024×768', viewbox: '0 0 1024 768' },
+  wechat: { name: 'WeChat Article Header', dimensions: '900×383', viewbox: '0 0 900 383' },
+  xiaohongshu: { name: '小红书', dimensions: '1242×1660', viewbox: '0 0 1242 1660' },
+  moments: { name: 'Moments/Instagram', dimensions: '1080×1080', viewbox: '0 0 1080 1080' },
+  story: { name: 'Story/Vertical', dimensions: '1080×1920', viewbox: '0 0 1080 1920' },
+  banner: { name: 'Horizontal Banner', dimensions: '1920×1080', viewbox: '0 0 1920 1080' },
+  a4: { name: 'A4 Print', dimensions: '1240×1754', viewbox: '0 0 1240 1754' },
+};
+const PPT_CANVAS_FORMAT_ALIASES: Record<string, string> = {
+  xhs: 'xiaohongshu',
+  'wechat_moment': 'moments',
+  'wechat-moment': 'moments',
+  '朋友圈': 'moments',
+  '小红书': 'xiaohongshu',
+};
 
 function str(value: unknown): string { return String(value ?? '').trim(); }
-function sanitizeUserContent(value: string): string { return value.replace(/管理层/g, '业务团队'); }
+function sanitizeUserContent(value: string): string {
+  return value
+    .replace(/管理层/g, '业务团队')
+    .replace(/behavior_daily_metrics/gi, '行为指标数据')
+    .replace(/SQL database via Px backend\s*\([^)]*\)/gi, 'PX 指标数据')
+    .replace(/PX\s*SQL\s*聚合指标/gi, 'PX 指标数据')
+    .replace(/SQL\s*聚合指标/gi, '指标数据')
+    .replace(/后端\s*SQL\s*查询结果/g, '后端指标数据')
+    .replace(/\bSQL\b/gi, '指标数据')
+    .replace(/数据库字段名/g, '底层字段名')
+    .replace(/数据库/g, '数据源');
+}
 function sanitizeUserContentDeep<T>(value: T): T {
   if (typeof value === 'string') return sanitizeUserContent(value) as T;
   if (Array.isArray(value)) return value.map((item) => sanitizeUserContentDeep(item)) as T;
@@ -69,6 +98,11 @@ function sanitizeUserContentDeep<T>(value: T): T {
 function basenameOnly(value: string): string { return path.basename(value.replace(/\\/g, '/')); }
 function jsonResult(summary: string, detail: Record<string, unknown> = {}, extra: Record<string, unknown> = {}): SkillResult {
   return { ok: true, summary, detail, ...extra };
+}
+
+function normalizePptCanvasFormat(value: string): string {
+  const raw = (value || 'ppt169').trim();
+  return PPT_CANVAS_FORMAT_ALIASES[raw] || raw;
 }
 
 function safeUnder(base: string, rel: string): string {
@@ -280,9 +314,22 @@ function matchExistingNoteSections(content: string, svgStems: string[]): Map<str
     const n = Number((stem.match(/^(\d{1,3})/) || [])[1] || NaN);
     if (Number.isInteger(n)) byNo.set(n, [...(byNo.get(n) || []), stem]);
   }
-  const sections = [...content.matchAll(/^#{1,6}\s+(.+?)\s*$([\s\S]*?)(?=^#{1,6}\s+|\s*$)/gm)];
-  for (const match of sections) {
-    const heading = match[1].trim();
+
+  // Do not use a single lazy regex with `\s*$` under /m here. In JS that can
+  // match the blank line immediately after a heading, producing zero-length
+  // bodies for normal Markdown sections separated by blank lines / `---`.
+  const normalized = content.replace(/\r\n?/g, '\n');
+  const headings = [...normalized.matchAll(/^#{1,6}\s+(.+?)\s*$/gm)];
+  for (let index = 0; index < headings.length; index += 1) {
+    const match = headings[index];
+    const heading = String(match[1] || '').trim();
+    const bodyStart = (match.index || 0) + match[0].length;
+    const bodyEnd = index + 1 < headings.length ? (headings[index + 1].index || normalized.length) : normalized.length;
+    const body = normalized
+      .slice(bodyStart, bodyEnd)
+      .replace(/^\s*---+\s*$/gm, '')
+      .trim();
+
     let stem = exact.has(heading) ? heading : '';
     if (!stem) {
       const n = Number((heading.match(/^(\d{1,3})/) || [])[1] || NaN);
@@ -290,7 +337,7 @@ function matchExistingNoteSections(content: string, svgStems: string[]): Map<str
       if (candidates.length === 1) stem = candidates[0];
     }
     if (stem && !byStem.has(stem)) {
-      byStem.set(stem, match[2].trim());
+      byStem.set(stem, body);
     }
   }
   return byStem;
@@ -321,6 +368,184 @@ function repairPptNotesForSvgFilesSync(root: string): { repaired: boolean; missi
   if (next.trim() === original.trim()) return { repaired: false, missing: [], path: notesPath };
   fs.writeFileSync(notesPath, `${next.trim()}\n`, 'utf8');
   return { repaired: true, missing, path: notesPath };
+}
+
+function splitPptTotalNotesSync(root: string): ScriptRun & { generated: string[]; missing: string[] } {
+  const started = Date.now();
+  const svgDir = path.join(root, 'svg_output');
+  const notesDir = path.join(root, 'notes');
+  const totalPath = path.join(notesDir, 'total.md');
+  const svgFiles = fs.existsSync(svgDir)
+    ? sortSvgNames(fs.readdirSync(svgDir).filter((name) => name.toLowerCase().endsWith('.svg')))
+    : [];
+  if (!svgFiles.length) throw new SkillExecutionError('total notes split failed: no SVG files found');
+  if (!fs.existsSync(totalPath)) throw new SkillExecutionError('total notes split failed: notes/total.md not found');
+
+  const stems = svgFiles.map((name) => name.replace(/\.svg$/i, ''));
+  const content = fs.readFileSync(totalPath, 'utf8');
+  const notes = matchExistingNoteSections(content, stems);
+  const missing = stems.filter((stem) => !String(notes.get(stem) || '').trim());
+  if (missing.length) throw new SkillExecutionError(`total notes split failed: missing notes for ${missing.join(', ')}`);
+
+  fs.mkdirSync(notesDir, { recursive: true });
+  const generated: string[] = [];
+  for (const stem of stems) {
+    const out = path.join(notesDir, `${stem}.md`);
+    fs.writeFileSync(out, `${sanitizeUserContent(String(notes.get(stem) || '').trim())}\n`, 'utf8');
+    generated.push(relToHelper(out));
+  }
+  return {
+    generated,
+    missing,
+    command: `node-ts split notes/total.md -> notes/*.md (${stems.length} slides)`,
+    stdout: `Generated ${generated.length}/${stems.length} notes files`,
+    stderr: '',
+    duration_ms: Date.now() - started,
+  };
+}
+
+function svgFirstNumber(value: string | undefined, fallback = 0): number {
+  if (!value) return fallback;
+  const match = value.match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : fallback;
+}
+
+function svgAttr(attrs: string, name: string): string | undefined {
+  const match = attrs.match(new RegExp(`\\b${name}\\s*=\\s*(['"])(.*?)\\1`, 'i'));
+  return match ? match[2] : undefined;
+}
+
+function svgVisualWeight(ch: string): number {
+  if (/\s/.test(ch)) return 0.32;
+  if (/[\u4e00-\u9fff\u3000-\u303f]/.test(ch)) return 1.02;
+  if ('，。；：、（）【】《》“”‘’'.includes(ch)) return 0.8;
+  if (/[A-Z0-9]/.test(ch)) return 0.62;
+  return 0.54;
+}
+
+function svgEstimateTextWidth(text: string, fontSize: number): number {
+  return Array.from(text).reduce((sum, ch) => sum + svgVisualWeight(ch), 0) * fontSize;
+}
+
+function svgSplitTokens(text: string): string[] {
+  const tokens: string[] = [];
+  let buffer = '';
+  for (const ch of Array.from(text)) {
+    if (/\s/.test(ch)) {
+      if (buffer) tokens.push(buffer);
+      buffer = '';
+      tokens.push(ch);
+    } else if (/[\u4e00-\u9fff\u3000-\u303f]/.test(ch)) {
+      if (buffer) tokens.push(buffer);
+      buffer = '';
+      tokens.push(ch);
+    } else {
+      buffer += ch;
+    }
+  }
+  if (buffer) tokens.push(buffer);
+  return tokens;
+}
+
+function svgWrapTextLines(text: string, fontSize: number, maxWidth: number): string[] {
+  const tokens = svgSplitTokens(text.trim());
+  const lines: string[] = [];
+  let current = '';
+  for (const token of tokens) {
+    const candidate = /\s/.test(token) ? `${current}${token}`.trim() : `${current}${token}`;
+    if (current && svgEstimateTextWidth(candidate, fontSize) > maxWidth) {
+      lines.push(current.trim());
+      current = token.trim();
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.trim()) lines.push(current.trim());
+  return lines;
+}
+
+function escapeSvgText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function decodeBasicXmlText(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function svgCanvasSize(content: string): { width: number; height: number } {
+  const root = content.match(/<svg\b([^>]*)>/i)?.[1] || '';
+  const viewBox = svgAttr(root, 'viewBox') || '';
+  const parts = viewBox.split(/\s+/).map(Number).filter((n) => Number.isFinite(n));
+  if (parts.length === 4) return { width: Math.max(parts[2], 1), height: Math.max(parts[3], 1) };
+  return {
+    width: svgFirstNumber(svgAttr(root, 'width'), 1280),
+    height: svgFirstNumber(svgAttr(root, 'height'), 720),
+  };
+}
+
+function inferredSvgTextMaxWidth(attrs: string, canvasWidth: number): number {
+  const x = svgFirstNumber(svgAttr(attrs, 'x'), 0);
+  const fontSize = svgFirstNumber(svgAttr(attrs, 'font-size'), 18);
+  const margin = Math.max(48, canvasWidth * 0.045);
+  if (x < canvasWidth * 0.48) return Math.max(fontSize * 8, canvasWidth * 0.48 - x - margin * 0.35);
+  if (x < canvasWidth * 0.72) return Math.max(fontSize * 8, canvasWidth * 0.72 - x - margin * 0.35);
+  return Math.max(fontSize * 8, canvasWidth - x - margin);
+}
+
+function wrapSvgTextContent(content: string): { content: string; changed: number } {
+  const canvas = svgCanvasSize(content);
+  let changed = 0;
+  const next = content.replace(/<text\b([^>]*)>([^<]+)<\/text>/gi, (raw, attrs: string, body: string) => {
+    const anchor = (svgAttr(attrs, 'text-anchor') || '').toLowerCase();
+    if (anchor === 'middle' || anchor === 'end') return raw;
+    const text = decodeBasicXmlText(body).trim();
+    if (text.length < 18) return raw;
+    const fontSize = svgFirstNumber(svgAttr(attrs, 'font-size'), 18);
+    const maxWidth = inferredSvgTextMaxWidth(attrs, canvas.width);
+    if (svgEstimateTextWidth(text, fontSize) <= maxWidth) return raw;
+    const lines = svgWrapTextLines(text, fontSize, maxWidth);
+    if (lines.length <= 1) return raw;
+    const x = svgAttr(attrs, 'x') || '0';
+    const lineGap = Math.ceil(fontSize * 1.22);
+    const tspans = lines.map((line, index) => `<tspan x="${x}" dy="${index ? lineGap : 0}">${escapeSvgText(line)}</tspan>`).join('');
+    changed += 1;
+    return `<text${attrs}>${tspans}</text>`;
+  });
+  return { content: next, changed };
+}
+
+function wrapPptSvgTextSync(root: string): ScriptRun & { changed: number; files: string[] } {
+  const started = Date.now();
+  const svgDir = path.join(root, 'svg_output');
+  const svgFiles = fs.existsSync(svgDir)
+    ? sortSvgNames(fs.readdirSync(svgDir).filter((name) => name.toLowerCase().endsWith('.svg'))).map((name) => path.join(svgDir, name))
+    : [];
+  if (!svgFiles.length) {
+    return { command: 'node-ts svg text wrap (no svg files)', stdout: 'No SVG files found', stderr: '', duration_ms: Date.now() - started, changed: 0, files: [] };
+  }
+  let totalChanged = 0;
+  const changedFiles: string[] = [];
+  for (const file of svgFiles) {
+    const original = fs.readFileSync(file, 'utf8');
+    const wrapped = wrapSvgTextContent(original);
+    if (!wrapped.changed || wrapped.content === original) continue;
+    fs.writeFileSync(file, wrapped.content, 'utf8');
+    totalChanged += wrapped.changed;
+    changedFiles.push(relToHelper(file));
+  }
+  return {
+    command: `node-ts wrap long SVG text (${svgFiles.length} files)`,
+    stdout: `SVG text wrap complete: ${totalChanged} text node(s) wrapped across ${svgFiles.length} file(s)`,
+    stderr: '',
+    duration_ms: Date.now() - started,
+    changed: totalChanged,
+    files: changedFiles,
+  };
 }
 
 function compactParamsForError(params: Record<string, unknown>): Record<string, unknown> {
@@ -557,7 +782,11 @@ function hiddenSkillIds(): Set<string> {
 function scanSkillScripts(allowedSkillIds?: Set<string>): Record<string, string[]> {
   const result: Record<string, string[]> = {};
   if (!fs.existsSync(SKILLS_DIR)) return result;
-  const pptInternal = new Set([...PPT_MANUAL_EXPORT_SCRIPTS, 'project_manager.py', 'svg_text_wrap.py']);
+  const pptInternal = new Set([
+    ...PPT_MANUAL_EXPORT_SCRIPTS,
+    'project_manager.py', 'svg_text_wrap.py',
+    'project_manager.ts', 'svg_text_wrap.ts', 'total_md_split.ts', 'finalize_svg.ts', 'svg_to_pptx.ts', 'validate_editable_pptx.ts',
+  ]);
   const dedicatedActionSkills = new Set(['px-data']);
   const hidden = hiddenSkillIds();
   for (const skillEntry of fs.readdirSync(SKILLS_DIR, { withFileTypes: true })) {
@@ -614,7 +843,7 @@ export class SkillExecutor {
         skill_call_shape: { type: 'skill_call', skill_id: 'px-data', action: '<prefetch_data_qa_context|prefetch_metrics|read_metric_file>', params: {}, thought: '<reason>' },
         params: {
           ...pxMetricParams,
-          prefetch_data_qa_context: { skill_id: 'px-data', params: '无需参数；用于指标定义、表计数、数据状态和空值诊断' },
+          prefetch_data_qa_context: { skill_id: 'px-data', params: '无需参数；用于指标定义、数据可用性、数据状态和空值诊断' },
         },
       };
     }
@@ -695,7 +924,7 @@ export class SkillExecutor {
       skill_call_shape: { type: 'skill_call', skill_id: 'px-data | patient-education-data-overview | patient-education-monthly-report', action: '<action>', params: {}, thought: '<reason>' },
       params: {
         ...pxMetricParams,
-        prefetch_data_qa_context: { skill_id: 'px-data', params: '无需参数；用于指标定义、表计数、数据状态和空值诊断' },
+        prefetch_data_qa_context: { skill_id: 'px-data', params: '无需参数；用于指标定义、数据可用性、数据状态和空值诊断' },
         run_skill_script: { script: 'skill_id 目录下的脚本相对路径', available_scripts: overviewScripts, args: ['可选命令行参数'] },
         write_text_deliverable: { file_name: '纯文件名；概览/月报会按 skill 固定为 overview_report.md / monthly_report.md', content: '完整 Markdown 正文' },
       },
@@ -1025,12 +1254,41 @@ export class SkillExecutor {
     await fsp.mkdir(PROJECTS_DIR, { recursive: true });
     const name = str(params.project_name || 'px_ai_ppt').replace(/[^a-zA-Z0-9_.-]+/g, '_') || 'px_ai_ppt';
     const projectName = `${name}_run_${Date.now()}`;
-    const script = path.join(SKILLS_DIR, 'ppt-master', 'scripts', 'project_manager.py');
-    const run = await exec(pythonExecutable(), [script, 'init', projectName, '--format', str(params.format || 'ppt169'), '--dir', PROJECTS_DIR], SERVER_ROOT, 120_000);
-    const match = run.stdout.match(/Project created:\s*(.+)\s*$/m);
-    const abs = match ? path.resolve(match[1].trim()) : path.join(PROJECTS_DIR, `${projectName}_ppt169_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`);
+    const format = normalizePptCanvasFormat(str(params.format || 'ppt169'));
+    const canvas = PPT_CANVAS_FORMATS[format];
+    if (!canvas) throw new SkillExecutionError(`Unsupported canvas format: ${format}`);
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const abs = path.join(PROJECTS_DIR, `${projectName}_${format}_${date}`);
+    if (fs.existsSync(abs)) throw new SkillExecutionError(`Project directory already exists: ${path.relative(AI_HELPER_ROOT, abs)}`);
+
+    for (const rel of ['svg_output', 'svg_final', 'images', 'notes', 'templates', 'sources', 'exports']) {
+      await fsp.mkdir(path.join(abs, rel), { recursive: true });
+    }
+    await fsp.writeFile(path.join(abs, 'README.md'), [
+      `# ${projectName}`,
+      '',
+      `- Canvas format: ${format}`,
+      `- Created: ${date}`,
+      '',
+      '## Directories',
+      '',
+      '- `svg_output/`: raw SVG output',
+      '- `svg_final/`: finalized SVG output',
+      '- `images/`: presentation assets',
+      '- `notes/`: speaker notes',
+      '- `templates/`: project templates',
+      '- `sources/`: source materials and normalized markdown',
+      '- `exports/`: main native pptx (timestamped)',
+      '- `backup/<timestamp>/`: SVG snapshot pptx + svg_output/ archive (auto-created on export; safe to delete old timestamps)',
+      '',
+    ].join('\n'), 'utf8');
+
     const projectPath = path.relative(AI_HELPER_ROOT, abs).split(path.sep).join('/');
-    return jsonResult(`新建 PPT 项目 ${projectPath}`, { kind: 'bootstrap', project_path: projectPath, command: run.command }, { project_path: projectPath });
+    return jsonResult(
+      `新建 PPT 项目 ${projectPath}`,
+      { kind: 'bootstrap', project_path: projectPath, runtime: 'node-ts', canvas: { format, ...canvas } },
+      { project_path: projectPath },
+    );
   }
 
   private parsePageNumbers(value: unknown): number[] {
@@ -1104,21 +1362,19 @@ export class SkillExecutor {
     if (!pre.ok) throw new SkillExecutionError(`ppt-master 导出前置条件未满足: ${pre.missing.join(', ')}`);
     const project = pre.project_path || '';
     const projectAbs = safeUnder(AI_HELPER_ROOT, project);
-    const scripts = path.join(SKILLS_DIR, 'ppt-master', 'scripts');
     const runs: ScriptRun[] = [];
     const isProgrammaticSpecRender = fs.existsSync(path.join(projectAbs, 'renderer_meta.json'));
-    const exportSteps = [
-      ...(isProgrammaticSpecRender ? [] : [['svg_text_wrap.py', [projectAbs]] as [string, string[]]]),
-      ['total_md_split.py', [projectAbs]],
-      ['finalize_svg.py', [projectAbs]],
-      ['svg_to_pptx.py', [projectAbs, '--format', 'ppt169', '--only', 'native', '-a', 'none', '-t', 'none', '--no-notes']],
-    ] as Array<[string, string[]]>;
-    for (const [name, args] of exportSteps) {
-      runs.push(await exec(pythonExecutable(), [path.join(scripts, name), ...args], SERVER_ROOT, 600_000));
-    }
-    const exportsDir = safeUnder(AI_HELPER_ROOT, path.join(project, 'exports'));
-    const pptx = fs.readdirSync(exportsDir).filter((x) => x.endsWith('.pptx') && !/(compat|keynote|_svg|legacy)/i.test(x)).map((x) => path.join(exportsDir, x)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
-    if (!pptx) throw new SkillExecutionError('ppt-master 导出完成但未找到可编辑 PPTX');
+    runs.push(splitPptTotalNotesSync(projectAbs));
+    if (!isProgrammaticSpecRender) runs.push(wrapPptSvgTextSync(projectAbs));
+    runs.push(finalizePptSvgSync(projectAbs));
+    const exported = exportPptProjectToPptxSync(projectAbs, { projectName: path.basename(projectAbs), format: 'ppt169' });
+    runs.push(exported.run);
+    const pptx = exported.pptxPath;
+    if (!pptx || !fs.existsSync(pptx)) throw new SkillExecutionError('ppt-master 导出完成但未找到可编辑 PPTX');
+    const validation = validateEditablePptxSync(pptx);
+    runs.push(validation);
+    if (!validation.ok) throw new SkillExecutionError('ppt-master 导出完成但 PPTX 未包含可编辑形状');
+    await fsp.mkdir(this.outputDir, { recursive: true });
     const out = safeGeneratedPath(this.outputDir, `ppt_${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)}.pptx`);
     await fsp.copyFile(pptx, out);
     return jsonResult(

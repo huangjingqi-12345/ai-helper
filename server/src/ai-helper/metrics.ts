@@ -292,7 +292,7 @@ function buildInsights(metrics: Omit<PrefetchMetrics, 'insights'>): string[] {
   const insights: string[] = [];
   const k = metrics.coreKpi;
   if (!k.readCount && !k.pushCount && !k.interactionCount) {
-    insights.push('当前数据库 behavior_daily_metrics 暂无可分析行为指标记录，请先确认真实业务数据同步是否完成');
+    insights.push('当前周期暂无可分析的行为指标记录，请确认业务数据是否已完成同步');
     return insights;
   }
   if (metrics.monthDelta.readCountPct >= 10) insights.push(`最新月阅读量环比提升 ${metrics.monthDelta.readCountPct.toFixed(1)}%，内容触达效率改善`);
@@ -368,7 +368,7 @@ export async function prefetchMetrics(params: PrefetchMetricsParams = {}): Promi
   const trendLimit = Math.max(1, Math.min(800, Number(params.limit || (params.dateRange ? 400 : 120))));
 
   const partial: Omit<PrefetchMetrics, 'insights'> = {
-    source: `SQL database via Px backend (${DB_DRIVER})`,
+    source: 'PX 指标数据',
     generatedAt: new Date().toISOString(),
     range: {
       start: dailyTrend[0]?.date || '',
@@ -472,17 +472,17 @@ export async function prefetchDataQaContext(params: PrefetchMetricsParams = {}):
     tableCounts: Object.fromEntries(countRows),
     behaviorDailyMetrics: behavior,
     metricDefinitions: {
-      source: '所有问答只基于后端 SQL 查询结果与固定指标口径说明。',
-      pushCount: 'behavior_daily_metrics.push_count 按统计窗口求和。',
-      deliveredCount: 'behavior_daily_metrics.delivered_count 按统计窗口求和。',
-      readUsers: 'behavior_daily_metrics.read_users 按统计窗口聚合；具体去重口径取决于上游写入该字段时的统计方式。',
-      readCount: 'behavior_daily_metrics.read_count 按统计窗口求和。',
-      interactionCount: 'behavior_daily_metrics.interaction_count 按统计窗口求和；like/bookmark/share 字段会保留为拆分项。',
-      finishRate: '按 read_count 加权平均：sum(finish_rate * read_count) / sum(read_count)。',
-      avgReadSec: '按 read_count 加权平均：sum(avg_read_sec * read_count) / sum(read_count)。',
-      topContent: '从 behavior_daily_metrics 按 content_id 聚合后，LEFT JOIN content 获取标题、状态、项目等维度信息。',
-      projectContribution: '从 behavior_daily_metrics 按 project_id 聚合后，LEFT JOIN projects 获取项目名称等维度信息。',
-      emptyBehavior: '如果 behavior_daily_metrics 行数为 0，则核心 KPI、Top 内容、趋势与项目行为贡献都应为空或 0。',
+      source: '所有问答只基于后端指标数据与固定指标口径说明。',
+      pushCount: '推送次数按统计窗口汇总。',
+      deliveredCount: '送达次数按统计窗口汇总。',
+      readUsers: '阅读人数按统计窗口聚合；具体去重口径取决于上游统计方式。',
+      readCount: '阅读次数按统计窗口汇总。',
+      interactionCount: '互动次数按统计窗口汇总，包含点赞、收藏、分享等互动动作。',
+      finishRate: '完读率按阅读次数加权平均。',
+      avgReadSec: '平均阅读时长按阅读次数加权平均。',
+      topContent: '内容表现按统计窗口汇总后，结合内容标题、状态、项目等维度展示。',
+      projectContribution: '项目贡献按统计窗口汇总后，结合项目名称等维度展示。',
+      emptyBehavior: '如果当前周期无行为指标记录，则核心 KPI、TOP 内容、趋势与项目行为贡献都应为空或 0。',
     },
   };
 }

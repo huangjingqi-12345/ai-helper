@@ -1,6 +1,6 @@
 ---
 name: px-data
-description: PX 当前数据库数据工具。用于基于用户意图传入结构化参数，获取患教运营指标或数据问答诊断上下文。模型不得自行写 SQL；真实 SQL 由 TS 脚本和 PX 数据层生成。
+description: PX 当前指标数据工具。用于基于用户意图传入结构化参数，获取患教运营指标或数据问答诊断上下文。模型不得自行生成底层查询；真实数据获取由 TS 脚本和 PX 数据层完成。
 ---
 
 # PX Data Skill
@@ -26,7 +26,7 @@ Params:
 }
 ```
 
-Only pass parameters that are present in or directly implied by user intent. Do not write SQL. Tenant scoping is enforced by backend auth context and must not be supplied by the model.
+Only pass parameters that are present in or directly implied by user intent. Do not write low-level queries. Tenant scoping is enforced by backend auth context and must not be supplied by the model.
 
 ### prefetch_data_qa_context
 

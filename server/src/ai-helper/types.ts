@@ -22,6 +22,10 @@ export interface RunRequest {
   run_id?: string;
   shortcut?: AiShortcut;
   data_scope?: AiDataScope;
+  date_range?: { start?: string; end?: string };
+  compare_range?: { start?: string; end?: string };
+  date_label?: string;
+  granularity?: PrefetchMetricsParams['granularity'];
   history?: Array<{ role?: 'user' | 'assistant'; text?: string; files?: string[]; activePptContext?: unknown }>;
 }
 

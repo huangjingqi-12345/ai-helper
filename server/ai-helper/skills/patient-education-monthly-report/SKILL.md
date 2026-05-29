@@ -1,11 +1,11 @@
 ---
 name: patient-education-monthly-report
-description: Generate PX monthly patient education operation reports from PX SQL metrics. Use for 月报/月度复盘/业务复盘报告 requests.
+description: Generate PX monthly patient education operation reports from PX metrics. Use for 月报/月度复盘/业务复盘报告 requests.
 ---
 
 # Patient Education Monthly Report
 
-Data source must be PX SQL via primary_data_context or px-data.prefetch_metrics.
+Data source must be PX metrics via primary_data_context or px-data.prefetch_metrics.
 
 Deliverables:
 - `/generated/monthly_report.md` via write_text_deliverable

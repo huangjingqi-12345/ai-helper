@@ -110,7 +110,7 @@ function planParams(plan: VisualPlan): PrefetchMetricsParams {
     projectId: plan.projectId,
     contentId: plan.contentId,
     diseaseId: plan.diseaseId,
-    // `limit` is used by the backend both for top-content SQL cap and dailyTrend cap.
+    // `limit` is used by the backend both for top-content cap and dailyTrend cap.
     // Keep it high enough so weekly rhythm/anomaly modules have the full recent window;
     // visual top content count is still controlled by top_content_count below.
     limit: 120,
@@ -430,7 +430,7 @@ function renderMarkdown(metrics: PrefetchMetrics, plan: VisualPlan): string {
   const insights = insightList(metrics, plan, d).map((x) => `- ${x}`).join('\n');
   const top = metrics.topContent.slice(0, 8).map((x, i) => `| ${i + 1} | ${x.title.replace(/\|/g, ' ')} | ${x.projectName || '-'} | ${fmt(x.readCount)} | ${pct(x.finishRate)} |`).join('\n');
   const projects = metrics.projects.slice(0, 8).map((x, i) => `| ${i + 1} | ${x.name.replace(/\|/g, ' ')} | ${fmt(x.readCount)} | ${fmt(x.interactionCount)} | ${fmt(x.contentCount)} |`).join('\n');
-  return `# ${plan.title || '患教内容运营数据概览'}\n\n**数据周期**：${metrics.range.start} 至 ${metrics.range.end}（${metrics.range.days} 天）  \n**数据来源**：PX SQL 聚合指标\n\n## 核心 KPI\n\n| 指标 | 数值 |\n|---|---:|\n| 推送量 | ${fmt(k.pushCount)} |\n| 送达量 | ${fmt(k.deliveredCount)} |\n| 阅读人数 | ${fmt(k.readUsers)} |\n| 阅读次数 | ${fmt(k.readCount)} |\n| 互动次数 | ${fmt(k.interactionCount)} |\n| 完读率 | ${pct(k.finishRate)} |\n| 平均阅读时长 | ${(k.avgReadSec || 0).toFixed(0)} 秒 |\n\n## 结构诊断\n\n- 送达率：${pct(d.deliveryRate)}\n- 阅读转化率：${pct(d.readConversion)}\n- 互动/阅读：${pct(d.interactionRate)}\n- TOP3 阅读集中度：${pct(d.top3Share)}（${d.concentrationLevel}集中）\n\n## 运营洞察\n\n${insights}\n\n## 项目贡献\n\n| 排名 | 项目 | 阅读 | 互动 | 内容数 |\n|---:|---|---:|---:|---:|\n${projects}\n\n## TOP 内容\n\n| 排名 | 内容 | 项目 | 阅读次数 | 完读率 |\n|---:|---|---|---:|---:|\n${top}\n`;
+  return `# ${plan.title || '患教内容运营数据概览'}\n\n**数据周期**：${metrics.range.start} 至 ${metrics.range.end}（${metrics.range.days} 天）  \n**数据来源**：PX 指标数据\n\n## 核心 KPI\n\n| 指标 | 数值 |\n|---|---:|\n| 推送量 | ${fmt(k.pushCount)} |\n| 送达量 | ${fmt(k.deliveredCount)} |\n| 阅读人数 | ${fmt(k.readUsers)} |\n| 阅读次数 | ${fmt(k.readCount)} |\n| 互动次数 | ${fmt(k.interactionCount)} |\n| 完读率 | ${pct(k.finishRate)} |\n| 平均阅读时长 | ${(k.avgReadSec || 0).toFixed(0)} 秒 |\n\n## 结构诊断\n\n- 送达率：${pct(d.deliveryRate)}\n- 阅读转化率：${pct(d.readConversion)}\n- 互动/阅读：${pct(d.interactionRate)}\n- TOP3 阅读集中度：${pct(d.top3Share)}（${d.concentrationLevel}集中）\n\n## 运营洞察\n\n${insights}\n\n## 项目贡献\n\n| 排名 | 项目 | 阅读 | 互动 | 内容数 |\n|---:|---|---:|---:|---:|\n${projects}\n\n## TOP 内容\n\n| 排名 | 内容 | 项目 | 阅读次数 | 完读率 |\n|---:|---|---|---:|---:|\n${top}\n`;
 }
 
 const outputDir = path.resolve(arg('--output-dir', 'ai-helper/generated'));

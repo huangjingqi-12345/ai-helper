@@ -22,7 +22,7 @@ const compactMetrics = {
     total_points: metrics.dailyTrend.length,
     included_points: dailyTrend.length,
     included_range: { start: dailyTrend[0]?.date || '', end: dailyTrend.at(-1)?.date || '' },
-    note: 'coreKpi/monthlyTrend/topContent/projects are complete SQL aggregates for the requested range; dailyTrend is compacted for model context.',
+    note: 'coreKpi/monthlyTrend/topContent/projects are complete metric aggregates for the requested range; dailyTrend is compacted for model context.',
   },
   monthlyTrend: metrics.monthlyTrend.slice(-12),
   topContent: metrics.topContent.slice(0, 8),
@@ -38,5 +38,5 @@ console.log(JSON.stringify({
   kind: 'px_metrics',
   params,
   metrics: compactMetrics,
-  note: 'metrics is SQL-aggregated KPI payload only; it does not include raw behavior rows.',
+  note: 'metrics is aggregated KPI payload only; it does not include raw behavior rows.',
 }));
