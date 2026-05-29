@@ -1960,7 +1960,7 @@ function localSvgPathForProjectFile(projectPath: string, file: string): string |
 
 function upsertSlideContext(map: Map<number, ActivePptSlideContext>, slide: ActivePptSlideContext): void {
   const existing = map.get(slide.slideNo);
-  map.set(slide.slideNo, {
+  const merged: ActivePptSlideContext = {
     ...existing,
     ...slide,
     title: slide.title || existing?.title,
@@ -1969,7 +1969,10 @@ function upsertSlideContext(map: Map<number, ActivePptSlideContext>, slide: Acti
     assetUrl: slide.assetUrl || existing?.assetUrl,
     source: slide.source || existing?.source,
     deckSpec: slide.deckSpec || existing?.deckSpec,
-  });
+  };
+  // 有 OSS URL 时，对外上下文和前端预览只使用 OSS，避免同一页同时出现本地 /projects 路径和 OSS URL。
+  if (merged.assetUrl && /^https?:\/\//i.test(merged.assetUrl)) delete merged.svgPath;
+  map.set(slide.slideNo, merged);
 }
 
 function activePptContextFromTrace(trace: AgentDonePayload['trace'], fallback?: ActivePptContext): ActivePptContext | undefined {

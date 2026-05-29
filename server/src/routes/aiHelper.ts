@@ -51,6 +51,25 @@ function expiresAtFrom(updatedAt = Date.now()): string {
   return new Date(updatedAt + AI_SESSION_TTL_MS).toISOString();
 }
 
+
+function sanitizeActivePptContextForSession(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return undefined;
+  const root = { ...(value as Record<string, unknown>) };
+  if (Array.isArray(root.slides)) {
+    root.slides = root.slides.map((item) => {
+      if (!item || typeof item !== 'object') return item;
+      const slide = { ...(item as Record<string, unknown>) };
+      const assetUrl = typeof slide.assetUrl === 'string' ? slide.assetUrl : typeof slide.asset_url === 'string' ? slide.asset_url : '';
+      if (/^https?:\/\//i.test(assetUrl)) {
+        delete slide.svgPath;
+        delete slide.svg_path;
+      }
+      return slide;
+    });
+  }
+  return root;
+}
+
 async function cleanupExpiredAiSessions(): Promise<void> {
   const now = nowIso();
   await dbRun('DELETE FROM ai_helper_sessions WHERE expires_at <= ?', [now]);
@@ -75,7 +94,7 @@ function sanitizeMessages(value: unknown): PersistedChatMessage[] {
       ? obj.files.filter((file): file is string => typeof file === 'string' && file.length <= 1000).slice(0, 80)
       : undefined;
     const pptSvgProgress = obj.pptSvgProgress && typeof obj.pptSvgProgress === 'object' ? obj.pptSvgProgress : undefined;
-    const activePptContext = obj.activePptContext && typeof obj.activePptContext === 'object' ? obj.activePptContext : undefined;
+    const activePptContext = obj.activePptContext && typeof obj.activePptContext === 'object' ? sanitizeActivePptContextForSession(obj.activePptContext) : undefined;
     const loadingStatus = typeof obj.loadingStatus === 'string' ? obj.loadingStatus.slice(0, 500) : undefined;
     const loadingElapsed = typeof obj.loadingElapsed === 'string' ? obj.loadingElapsed.slice(0, 80) : undefined;
     const loadingStartedAt = typeof obj.loadingStartedAt === 'number' && Number.isFinite(obj.loadingStartedAt) ? obj.loadingStartedAt : undefined;
@@ -171,6 +190,42 @@ function isPptSvgSlidePath(value: string): boolean {
   return lower.endsWith('.svg') && lower.includes('/svg_output/');
 }
 
+
+function slideNoFromSvgPath(value: string): number | undefined {
+  const name = fileNameFromPath(value);
+  const match = name.match(/^(\d{1,2})[_-]/);
+  const slideNo = match ? Number(match[1]) : NaN;
+  return Number.isInteger(slideNo) && slideNo > 0 ? slideNo : undefined;
+}
+
+function isRemoteAsset(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function pptSvgSlideKey(value: string, fallbackIndex = 0): string {
+  const slideNo = slideNoFromSvgPath(value);
+  if (slideNo) return `slide:${slideNo}`;
+  const name = fileNameFromPath(value).toLowerCase();
+  return name ? `file:${name}` : `idx:${fallbackIndex}`;
+}
+
+function preferPptSvgAsset(next: string, current?: string): boolean {
+  if (!current) return true;
+  const nextRemote = isRemoteAsset(next);
+  const currentRemote = isRemoteAsset(current);
+  if (nextRemote !== currentRemote) return nextRemote;
+  return true;
+}
+
+function uniquePptSvgSlideAssets(paths: string[]): string[] {
+  const bySlide = new Map<string, string>();
+  paths.map(normalizeAssetPath).filter(isPptSvgSlidePath).forEach((item, index) => {
+    const key = pptSvgSlideKey(item, index);
+    if (preferPptSvgAsset(item, bySlide.get(key))) bySlide.set(key, item);
+  });
+  return sortedUniqueAssetPaths([...bySlide.values()]);
+}
+
 function isPptxPath(value: string): boolean {
   return normalizeAssetPath(value).toLowerCase().endsWith('.pptx');
 }
@@ -223,9 +278,10 @@ function activePptContextFiles(value: unknown): string[] {
   for (const item of slides) {
     if (!item || typeof item !== 'object') continue;
     const slide = item as Record<string, unknown>;
-    for (const key of ['svgPath', 'svg_path', 'assetUrl', 'asset_url']) {
-      if (typeof slide[key] === 'string') files.push(slide[key] as string);
-    }
+    const remote = typeof slide.assetUrl === 'string' ? slide.assetUrl : typeof slide.asset_url === 'string' ? slide.asset_url : '';
+    const local = typeof slide.svgPath === 'string' ? slide.svgPath : typeof slide.svg_path === 'string' ? slide.svg_path : '';
+    if (remote) files.push(remote);
+    else if (local) files.push(local);
   }
   return files;
 }
@@ -245,7 +301,7 @@ function runFilesFromEvents(run: StreamRun): string[] {
 function pptProgressFromFiles(files: string[] = [], existing: unknown): unknown {
   const current = existing && typeof existing === 'object' ? existing as Record<string, unknown> : {};
   const currentSlides = Array.isArray(current.slides) ? current.slides.filter((item): item is string => typeof item === 'string') : [];
-  const slides = sortedUniqueAssetPaths([...currentSlides, ...files.filter(isPptSvgSlidePath)]);
+  const slides = uniquePptSvgSlideAssets([...currentSlides, ...files.filter(isPptSvgSlidePath)]);
   if (!slides.length && !Object.keys(current).length) return undefined;
   const exportedPpt = files.find(isPptxPath) || (typeof current.exportedPpt === 'string' ? current.exportedPpt : undefined);
   return {

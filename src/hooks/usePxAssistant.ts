@@ -48,8 +48,66 @@ function sortedUnique(paths: string[]): string[] {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
+
+function isOssLikePath(path: string): boolean {
+  return /^https?:\/\//i.test(path);
+}
+
+function pptSvgSlideKey(path: string, fallbackIndex = 0): string {
+  const normalized = normalizeDeliverableUrl(path).replace(/\\/g, '/');
+  const slideNo = slideNoFromPath(normalized);
+  if (slideNo) return `slide:${slideNo}`;
+  const name = normalized.split('?')[0]?.split('/').pop()?.toLowerCase() || '';
+  return name ? `file:${name}` : `idx:${fallbackIndex}`;
+}
+
+function preferPptSvgPath(next: string, current?: string): boolean {
+  if (!current) return true;
+  const nextIsOss = isOssLikePath(next);
+  const currentIsOss = isOssLikePath(current);
+  if (nextIsOss !== currentIsOss) return nextIsOss;
+  // 同类地址时以后到的为准，保证编辑同一页时展示最新版本。
+  return true;
+}
+
+function dedupePptSvgSlides(paths: string[]): string[] {
+  const bySlide = new Map<string, string>();
+  paths.map(normalizeDeliverableUrl).filter(isPptSvgSlidePath).forEach((path, index) => {
+    const key = pptSvgSlideKey(path, index);
+    if (preferPptSvgPath(path, bySlide.get(key))) bySlide.set(key, path);
+  });
+  return [...bySlide.values()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function projectPathFromPptSvgPath(path: string): string {
+  const normalized = normalizeDeliverableUrl(path).replace(/\\/g, '/').replace(/^\/+/, '');
+  const projectsAt = normalized.indexOf('projects/');
+  if (projectsAt < 0) return '';
+  const fromProjects = normalized.slice(projectsAt);
+  const markerAt = fromProjects.indexOf('/svg_output/');
+  if (markerAt < 0) return '';
+  return fromProjects.slice(0, markerAt);
+}
+
+function activePptContextSlidePaths(ctx: ActivePptContext): string[] {
+  return dedupePptSvgSlides((ctx.slides || []).map((slide) => slide.assetUrl || slide.svgPath || '').filter(Boolean));
+}
+
+
+function preferOssActivePptContext(ctx: ActivePptContext): ActivePptContext {
+  return {
+    ...ctx,
+    slides: (ctx.slides || []).map((slide) => {
+      if (!slide.assetUrl || !isOssLikePath(slide.assetUrl)) return slide;
+      const next = { ...slide };
+      delete next.svgPath;
+      return next;
+    }),
+  };
+}
+
 function extractPptSvgSlides(data: unknown): string[] {
-  return sortedUnique(collectStringFiles(data).filter(isPptSvgSlidePath));
+  return dedupePptSvgSlides(collectStringFiles(data));
 }
 
 function extractPptxFiles(data: unknown): string[] {
@@ -64,7 +122,7 @@ function slideNoFromPath(path: string): number | undefined {
 }
 
 function extractActivePptContext(done: { files?: string[]; trace?: unknown; activePptContext?: ActivePptContext }): ActivePptContext | undefined {
-  if (done.activePptContext?.projectPath && done.activePptContext.slides?.length) return done.activePptContext;
+  if (done.activePptContext?.projectPath && done.activePptContext.slides?.length) return preferOssActivePptContext(done.activePptContext);
   const trace = Array.isArray(done.trace) ? done.trace : [];
   const renderEntry = trace.find((entry) => {
     const call = entry && typeof entry === 'object' ? (entry as { call?: { action?: unknown } }).call : undefined;
@@ -102,10 +160,10 @@ function extractActivePptContext(done: { files?: string[]; trace?: unknown; acti
 }
 
 function activePptContextFromProgress(msg: ChatMessage): ActivePptContext | undefined {
-  const slides = sortedUnique(msg.pptSvgProgress?.slides || []);
+  const slides = dedupePptSvgSlides(msg.pptSvgProgress?.slides || []);
   if (!slides.length) return undefined;
   const first = slides[0] || '';
-  const projectPath = first.replace(/^\/+/, '').split('/svg_output/')[0] || '';
+  const projectPath = msg.activePptContext?.projectPath || projectPathFromPptSvgPath(first);
   if (!projectPath.startsWith('projects/')) return undefined;
   return {
     projectPath,
@@ -113,7 +171,8 @@ function activePptContextFromProgress(msg: ChatMessage): ActivePptContext | unde
     slideCount: slides.length,
     slides: slides.map((svgPath, index) => ({
       slideNo: slideNoFromPath(svgPath) || index + 1,
-      svgPath,
+      svgPath: isOssLikePath(svgPath) ? undefined : svgPath,
+      assetUrl: isOssLikePath(svgPath) ? svgPath : undefined,
       source: 'generated',
       title: svgPath.split('/').pop()?.replace(/^\d{1,2}[_-]/, '').replace(/\.svg$/i, ''),
     })),
@@ -123,9 +182,10 @@ function activePptContextFromProgress(msg: ChatMessage): ActivePptContext | unde
 function activePptContextForMessage(msg: ChatMessage): ActivePptContext | undefined {
   const progressContext = activePptContextFromProgress(msg);
   if (!msg.activePptContext) return progressContext;
-  if (!progressContext) return msg.activePptContext;
-  if (progressContext.projectPath !== msg.activePptContext.projectPath) {
-    const byNo = new Map(msg.activePptContext.slides.map((slide) => [slide.slideNo, slide]));
+  const activeContext = preferOssActivePptContext(msg.activePptContext);
+  if (!progressContext) return activeContext;
+  if (progressContext.projectPath !== activeContext.projectPath) {
+    const byNo = new Map(activeContext.slides.map((slide) => [slide.slideNo, slide]));
     return {
       ...progressContext,
       slides: progressContext.slides.map((slide) => {
@@ -139,7 +199,7 @@ function activePptContextForMessage(msg: ChatMessage): ActivePptContext | undefi
       }),
     };
   }
-  return msg.activePptContext;
+  return activeContext;
 }
 
 function persistedMessagesForModel(messages: ChatMessage[]): Array<Pick<ChatMessage, 'role' | 'text' | 'files' | 'activePptContext'>> {
@@ -159,7 +219,7 @@ function normalizePersistedMessages(messages: ChatMessage[]): ChatMessage[] {
           mode: 'spec' as const,
           title: 'PPT 快速版页面预览',
           ...msg.pptSvgProgress,
-          slides: msg.pptSvgProgress?.slides?.length ? msg.pptSvgProgress.slides : slides,
+          slides: msg.pptSvgProgress?.slides?.length ? dedupePptSvgSlides(msg.pptSvgProgress.slides) : slides,
           completed: Boolean(msg.pptSvgProgress?.completed) || Boolean(exportedPpt),
           exportedPpt: msg.pptSvgProgress?.exportedPpt || exportedPpt,
         }
@@ -356,7 +416,7 @@ export function usePxAssistant() {
         pptSvgProgress = {
           ...base,
           ...patch,
-          slides: patch.slides ? sortedUnique(patch.slides) : base.slides,
+          slides: patch.slides ? dedupePptSvgSlides(patch.slides) : dedupePptSvgSlides(base.slides),
         };
         updateAssistant(assistantId, { pptSvgProgress });
       };
@@ -422,7 +482,7 @@ export function usePxAssistant() {
           if (isPptPreviewShortcut && evt.type === 'skill_result') {
             const newSlides = extractPptSvgSlides(evt.data);
             if (newSlides.length) {
-              const slides = sortedUnique([...(pptSvgProgress?.slides || []), ...newSlides]);
+              const slides = dedupePptSvgSlides([...(pptSvgProgress?.slides || []), ...newSlides]);
               updatePptSvgProgress({ slides, completed: false });
               pushLoadingStatus(
                 activeShortcut === 'ppt_svg'
@@ -440,15 +500,15 @@ export function usePxAssistant() {
             const activePptContext = evt.data as ActivePptContext;
             activeShortcut = activeShortcut || 'ppt_svg';
             isPptPreviewShortcut = true;
-            const contextSlides = sortedUnique((activePptContext.slides || []).flatMap((slide) => [slide.assetUrl, slide.svgPath].filter((x): x is string => Boolean(x))));
-            if (contextSlides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...contextSlides]), completed: Boolean(activePptContext.exportedPptx), exportedPpt: activePptContext.exportedPptx });
-            updateAssistant(assistantId, { activePptContext });
+            const contextSlides = activePptContextSlidePaths(activePptContext);
+            if (contextSlides.length) updatePptSvgProgress({ slides: dedupePptSvgSlides([...(pptSvgProgress?.slides || []), ...contextSlides]), completed: Boolean(activePptContext.exportedPptx), exportedPpt: activePptContext.exportedPptx });
+            updateAssistant(assistantId, { activePptContext: preferOssActivePptContext(activePptContext) });
           }
           if (evt.type === 'files') {
             const files = Array.isArray(evt.data) ? (evt.data as string[]) : [];
             turnFiles = filterVisibleDeliverables([...turnFiles, ...files]);
             const slides = isPptPreviewShortcut ? extractPptSvgSlides(files) : [];
-            if (slides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...slides]) });
+            if (slides.length) updatePptSvgProgress({ slides: dedupePptSvgSlides([...(pptSvgProgress?.slides || []), ...slides]) });
             const exported = isPptPreviewShortcut ? extractPptxFiles(files)[0] : undefined;
             if (exported) updatePptSvgProgress({ completed: true, exportedPpt: exported });
             updateAssistant(assistantId, { files: turnFiles });
@@ -459,7 +519,7 @@ export function usePxAssistant() {
             if (Array.isArray(done.files) && done.files.length) {
               turnFiles = filterVisibleDeliverables(done.files);
               const slides = isPptPreviewShortcut ? extractPptSvgSlides(done.files) : [];
-              if (slides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...slides]) });
+              if (slides.length) updatePptSvgProgress({ slides: dedupePptSvgSlides([...(pptSvgProgress?.slides || []), ...slides]) });
               const exported = isPptPreviewShortcut ? extractPptxFiles(done.files)[0] : undefined;
               if (exported) updatePptSvgProgress({ completed: true, exportedPpt: exported });
             }
@@ -623,7 +683,7 @@ export function usePxAssistant() {
         pptSvgProgress = {
           ...base,
           ...patch,
-          slides: patch.slides ? sortedUnique(patch.slides) : base.slides,
+          slides: patch.slides ? dedupePptSvgSlides(patch.slides) : dedupePptSvgSlides(base.slides),
         };
         updateAssistant(assistantId, { pptSvgProgress });
       };
@@ -734,7 +794,7 @@ export function usePxAssistant() {
             if (isPptPreviewShortcut && evt.type === 'skill_result') {
               const newSlides = extractPptSvgSlides(evt.data);
               if (newSlides.length) {
-                const slides = sortedUnique([...(pptSvgProgress?.slides || []), ...newSlides]);
+                const slides = dedupePptSvgSlides([...(pptSvgProgress?.slides || []), ...newSlides]);
                 updatePptSvgProgress({ slides, completed: false });
                 pushLoadingStatus(
                   activeShortcut === 'ppt_svg'
@@ -753,15 +813,15 @@ export function usePxAssistant() {
               const activePptContext = evt.data as ActivePptContext;
               activeShortcut = activeShortcut || 'ppt_svg';
               isPptPreviewShortcut = true;
-              const contextSlides = sortedUnique((activePptContext.slides || []).flatMap((slide) => [slide.assetUrl, slide.svgPath].filter((x): x is string => Boolean(x))));
-              if (contextSlides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...contextSlides]), completed: Boolean(activePptContext.exportedPptx), exportedPpt: activePptContext.exportedPptx });
-              updateAssistant(assistantId, { activePptContext });
+              const contextSlides = activePptContextSlidePaths(activePptContext);
+              if (contextSlides.length) updatePptSvgProgress({ slides: dedupePptSvgSlides([...(pptSvgProgress?.slides || []), ...contextSlides]), completed: Boolean(activePptContext.exportedPptx), exportedPpt: activePptContext.exportedPptx });
+              updateAssistant(assistantId, { activePptContext: preferOssActivePptContext(activePptContext) });
             }
             if (evt.type === 'files') {
               const files = Array.isArray(evt.data) ? (evt.data as string[]) : [];
               turnFiles = filterVisibleDeliverables([...turnFiles, ...files]);
               const slides = isPptPreviewShortcut ? extractPptSvgSlides(files) : [];
-              if (slides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...slides]) });
+              if (slides.length) updatePptSvgProgress({ slides: dedupePptSvgSlides([...(pptSvgProgress?.slides || []), ...slides]) });
               const exported = isPptPreviewShortcut ? extractPptxFiles(files)[0] : undefined;
               if (exported) updatePptSvgProgress({ completed: true, exportedPpt: exported });
               updateAssistant(assistantId, { files: turnFiles });
@@ -772,7 +832,7 @@ export function usePxAssistant() {
               if (Array.isArray(done.files) && done.files.length) {
                 turnFiles = filterVisibleDeliverables(done.files);
                 const slides = isPptPreviewShortcut ? extractPptSvgSlides(done.files) : [];
-                if (slides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...slides]) });
+                if (slides.length) updatePptSvgProgress({ slides: dedupePptSvgSlides([...(pptSvgProgress?.slides || []), ...slides]) });
                 const exported = isPptPreviewShortcut ? extractPptxFiles(done.files)[0] : undefined;
                 if (exported) updatePptSvgProgress({ completed: true, exportedPpt: exported });
               }
@@ -791,7 +851,7 @@ export function usePxAssistant() {
                   loadingStartedAt: startedAt,
                 });
               } else if (activePptContext) {
-                updateAssistant(assistantId, { activePptContext });
+                updateAssistant(assistantId, { activePptContext: preferOssActivePptContext(activePptContext) });
               }
             }
           }

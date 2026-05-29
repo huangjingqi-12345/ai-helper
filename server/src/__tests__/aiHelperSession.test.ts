@@ -179,7 +179,15 @@ describe('AI helper current session persistence', () => {
     const restored = (restoreRes.body as { data: { messages: Array<{ files?: string[]; activePptContext?: unknown }> } }).data.messages[1];
 
     expect(restored.files).toEqual(['/generated/conv-1/run-1/ppt_20260529120000.pptx']);
-    expect(restored.activePptContext).toEqual(messages[1].activePptContext);
+    expect(restored.activePptContext).toEqual({
+      projectPath: 'projects/ppt-demo',
+      slideCount: 1,
+      slides: [{
+        slideNo: 1,
+        title: '封面',
+        assetUrl: 'https://dev-px-agent.example/ai-helper/tenant/user/projects/ppt-demo/svg_output/01_slide.svg',
+      }],
+    });
   });
 
   it('keeps only the authenticated user session and delete clears only that user', async () => {
