@@ -18,11 +18,13 @@ export function resolveAiHelperAssetUrl(url: string): string {
 function isDeliverablePath(url: string): boolean {
   const raw = normalizeDeliverableUrl(url);
   if (!raw) return false;
-  if (/^https?:\/\//i.test(raw)) return true;
+  const assetPath = assetPathFromUrl(raw);
+  const lowerPath = assetPath.toLowerCase();
+  if (lowerPath.includes('/projects/') || lowerPath.startsWith('projects/')) return false;
+  if (lowerPath.startsWith('/data/') || lowerPath.startsWith('data/')) return false;
+  if (/^https?:\/\//i.test(raw)) return lowerPath.includes('/generated/');
   const lower = raw.toLowerCase();
-  if (lower.startsWith('/data/') || lower.startsWith('data/')) return false;
   if (lower.startsWith('/generated/') || lower.startsWith('generated/')) return true;
-  if (lower.startsWith('/projects/') || lower.startsWith('projects/')) return true;
   return false;
 }
 
@@ -31,15 +33,25 @@ export function isStreamDeliverable(url: string): boolean {
   const name = fileNameFromUrl(url).toLowerCase();
   const ext = name.includes('.') ? name.split('.').pop() || '' : '';
   const lower = url.toLowerCase();
-  if (ext === 'json' || ext === 'csv') return false;
-  if (name.includes('manifest') || name.endsWith('_qa.json') || name.includes('_qa.')) {
+  if (ext === 'json' || ext === 'csv' || ext === 'svg') return false;
+  if (['design_spec.md', 'spec_lock.md', 'total.md', 'renderer_meta.json'].includes(name)) return false;
+  if (name.includes('manifest') || name.includes('metrics') || name.endsWith('_qa.json') || name.includes('_qa.')) {
     return false;
   }
   if (lower.includes('/projects/') || lower.startsWith('projects/')) return false;
   if (name.includes('compat') || name.includes('keynote') || name.endsWith('_svg.pptx')) {
     return false;
   }
-  return ['md', 'pdf', 'html', 'htm', 'png', 'ppt', 'pptx'].includes(ext);
+  return ['md', 'pdf', 'html', 'htm', 'png', 'jpg', 'jpeg', 'webp', 'ppt', 'pptx'].includes(ext);
+}
+
+function assetPathFromUrl(url: string): string {
+  const raw = url || '';
+  try {
+    return /^https?:\/\//i.test(raw) ? decodeURIComponent(new URL(raw).pathname) : raw;
+  } catch {
+    return raw;
+  }
 }
 
 export function isUserVisibleDeliverable(url: string): boolean {

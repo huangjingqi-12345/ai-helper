@@ -425,13 +425,30 @@ function fileName(file: string): string {
   }
 }
 
+function assetPathForFile(file: string): string {
+  const normalized = file.replace(/\\/g, '/');
+  try {
+    return /^https?:\/\//i.test(normalized) ? decodeURIComponent(new URL(normalized).pathname) : normalized;
+  } catch {
+    return normalized;
+  }
+}
+
 function visibleDeliverables(files: string[]): string[] {
-  const allowed = new Set(['md', 'svg', 'png', 'pdf', 'ppt', 'pptx', 'html', 'htm']);
+  const allowed = new Set(['md', 'png', 'jpg', 'jpeg', 'webp', 'pdf', 'ppt', 'pptx', 'html', 'htm']);
   return [...new Set(files)]
     .map((f) => (f.startsWith('generated/') || f.startsWith('projects/') ? `/${f}` : f))
-    .filter((f) => f.startsWith('/generated/') || f.startsWith('/projects/') || /^https?:\/\//i.test(f))
+    .filter((f) => {
+      const assetPath = assetPathForFile(f).toLowerCase();
+      if (assetPath.includes('/projects/') || assetPath.startsWith('projects/')) return false;
+      return assetPath.startsWith('/generated/') || assetPath.startsWith('generated/') || assetPath.includes('/generated/');
+    })
     .filter((f) => allowed.has((fileName(f).split('.').pop() || '').toLowerCase()))
-    .filter((f) => !/manifest|metrics|qa/i.test(fileName(f)));
+    .filter((f) => {
+      const name = fileName(f).toLowerCase();
+      if (['design_spec.md', 'spec_lock.md', 'total.md', 'renderer_meta.json'].includes(name)) return false;
+      return !/manifest|metrics|qa|compat|keynote/i.test(name) && !name.endsWith('_svg.pptx');
+    });
 }
 
 function resultFiles(result?: SkillResult): string[] {

@@ -152,6 +152,15 @@ function fileNameFromPath(value: string): string {
   return decodeURIComponent(pathName.split('?')[0]?.split('/').pop() || '');
 }
 
+function assetPathFromValue(value: string): string {
+  const normalized = normalizeAssetPath(value);
+  try {
+    return /^https?:\/\//i.test(normalized) ? decodeURIComponent(new URL(normalized).pathname) : normalized;
+  } catch {
+    return normalized;
+  }
+}
+
 function sortedUniqueAssetPaths(paths: string[]): string[] {
   return [...new Set(paths.map(normalizeAssetPath).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
@@ -169,16 +178,17 @@ function isPptxPath(value: string): boolean {
 function isVisibleSessionFile(value: string): boolean {
   const normalized = normalizeAssetPath(value);
   if (!normalized) return false;
-  if (/^https?:\/\//i.test(normalized)) return true;
-  const lower = normalized.toLowerCase();
+  const assetPath = assetPathFromValue(normalized);
+  const lower = assetPath.toLowerCase();
   if (lower.startsWith('/data/') || lower.startsWith('data/')) return false;
   // /projects 下的 SVG/设计中间产物只用于页面预览和上下文，不作为下载文件展示。
-  if (lower.startsWith('/projects/') || lower.startsWith('projects/')) return false;
-  if (!lower.startsWith('/generated/') && !lower.startsWith('generated/')) return false;
+  if (lower.includes('/projects/')) return false;
+  if (!lower.startsWith('/generated/') && !lower.startsWith('generated/') && !lower.includes('/generated/')) return false;
   const name = fileNameFromPath(normalized).toLowerCase();
   const ext = name.includes('.') ? name.split('.').pop() || '' : '';
-  if (ext === 'json' || ext === 'csv') return false;
-  if (name.includes('manifest') || name.endsWith('_qa.json') || name.includes('_qa.')) return false;
+  if (ext === 'json' || ext === 'csv' || ext === 'svg') return false;
+  if (['design_spec.md', 'spec_lock.md', 'total.md', 'renderer_meta.json'].includes(name)) return false;
+  if (name.includes('manifest') || name.includes('metrics') || name.endsWith('_qa.json') || name.includes('_qa.')) return false;
   if (name.includes('compat') || name.includes('keynote') || name.endsWith('_svg.pptx')) return false;
   return ['md', 'pdf', 'html', 'htm', 'png', 'jpg', 'jpeg', 'webp', 'ppt', 'pptx'].includes(ext);
 }

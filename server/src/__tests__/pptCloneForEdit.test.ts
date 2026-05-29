@@ -466,11 +466,7 @@ describe('ppt-master clone for edit', () => {
     const done = events.find((event) => event.type === 'done');
     const doneData = done?.data && typeof done.data === 'object' ? done.data as Record<string, unknown> : {};
     expect(doneData.text).toBe('这次 PPT 没有成功导出为 PPTX，但已保留上一轮生成的 SVG 页面，可继续基于这些页面修改。');
-    expect(doneData.files).toEqual(expect.arrayContaining([
-      expect.stringMatching(/test_draft_edit_target.*\/svg_output\/01_slide\.svg/),
-      expect.stringMatching(/test_draft_edit_target.*\/svg_output\/02_slide\.svg/),
-    ]));
-    expect(doneData.files).not.toContain('/generated/old/ppt.pptx');
+    expect(doneData.files).toEqual([]);
     const active = doneData.activePptContext as { projectPath?: string; exportedPptx?: string; slides?: Array<{ slideNo: number; svgPath?: string; source?: string }> };
     expect(active.projectPath).toMatch(/^projects\/test_draft_edit_target/);
     expect(active.exportedPptx).toBeUndefined();

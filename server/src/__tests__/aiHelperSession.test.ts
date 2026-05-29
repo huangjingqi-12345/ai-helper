@@ -145,6 +145,43 @@ describe('AI helper current session persistence', () => {
     expect((restoreRes.body as { data: { messages: typeof messages } }).data.messages).toEqual(messages);
   });
 
+  it('does not expose PPT project internals as downloadable session files', async () => {
+    const messages = [
+      { id: 'm1', role: 'user', text: '生成 PPT' },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: '已生成',
+        runId: 'run-1',
+        files: [
+          'https://dev-px-agent.example/ai-helper/tenant/user/projects/ppt-demo/design_spec.md',
+          'https://dev-px-agent.example/ai-helper/tenant/user/projects/ppt-demo/spec_lock.md',
+          'https://dev-px-agent.example/ai-helper/tenant/user/projects/ppt-demo/notes/total.md',
+          'https://dev-px-agent.example/ai-helper/tenant/user/projects/ppt-demo/svg_output/01_slide.svg',
+          '/generated/conv-1/run-1/ppt_20260529120000.pptx',
+          '/generated/conv-1/run-1/overview_metrics.json',
+        ],
+        activePptContext: {
+          projectPath: 'projects/ppt-demo',
+          slideCount: 1,
+          slides: [{
+            slideNo: 1,
+            title: '封面',
+            svgPath: '/projects/ppt-demo/svg_output/01_slide.svg',
+            assetUrl: 'https://dev-px-agent.example/ai-helper/tenant/user/projects/ppt-demo/svg_output/01_slide.svg',
+          }],
+        },
+      },
+    ];
+
+    await call(putAiHelperSession, reqFor('user-a', { conversation_id: 'conv-1', messages }));
+    const restoreRes = await call(getAiHelperSession, reqFor('user-a'));
+    const restored = (restoreRes.body as { data: { messages: Array<{ files?: string[]; activePptContext?: unknown }> } }).data.messages[1];
+
+    expect(restored.files).toEqual(['/generated/conv-1/run-1/ppt_20260529120000.pptx']);
+    expect(restored.activePptContext).toEqual(messages[1].activePptContext);
+  });
+
   it('keeps only the authenticated user session and delete clears only that user', async () => {
     await call(putAiHelperSession, reqFor('user-a', {
       conversation_id: 'conv-a',
