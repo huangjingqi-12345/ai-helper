@@ -4,6 +4,7 @@ import {
   BarChart3,
   CheckCircle2,
   CalendarDays,
+  Download,
   FileText,
   Loader2,
   MessageSquare,
@@ -84,6 +85,31 @@ function assistantStatusText(msg: ChatMessage): string | undefined {
     : (msg.loadingStatus || '正在生成，请稍候…');
 }
 
+async function downloadPreviewAsset(url: string, fileName: string): Promise<void> {
+  try {
+    const resp = await fetch(url, { mode: 'cors' });
+    if (!resp.ok) throw new Error(`download failed: ${resp.status}`);
+    const blob = await resp.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  } catch {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+}
+
 function PptSvgProgressPreview({ progress, loading = false }: { progress: PptSvgProgress; loading?: boolean }): JSX.Element | null {
   const slides = progress.slides;
   const [activeIndex, setActiveIndex] = useState(0);
@@ -99,6 +125,8 @@ function PptSvgProgressPreview({ progress, loading = false }: { progress: PptSvg
 
   const safeIndex = slides.length ? Math.min(activeIndex, slides.length - 1) : 0;
   const activeSlide = slides[safeIndex];
+  const activeSlideUrl = activeSlide ? resolveAiHelperAssetUrl(activeSlide) : '';
+  const activeSlideName = activeSlide ? fileNameFromUrl(activeSlide) : 'ppt-slide.svg';
   if (!loading && !activeSlide) return null;
   const generatedRatio = progress.completed
     ? 100
@@ -113,9 +141,22 @@ function PptSvgProgressPreview({ progress, loading = false }: { progress: PptSvg
           {progress.completed ? <CheckCircle2 className="h-4 w-4 text-emerald-200" /> : <Images className="h-4 w-4 text-violet-200" />}
           {title}
         </div>
-        <span className="rounded-full border border-violet-200/25 bg-violet-200/10 px-2 py-0.5 text-[11px] text-violet-50">
-          {progress.completed ? '已导出 PPT' : slides.length ? `已生成 ${slides.length} 页` : '正在生成页面'}
-        </span>
+        <div className="inline-flex flex-wrap items-center gap-2">
+          {activeSlide && (
+            <button
+              type="button"
+              onClick={() => void downloadPreviewAsset(activeSlideUrl, activeSlideName)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200/30 bg-cyan-200/10 px-2.5 py-1 text-[11px] font-medium text-cyan-50 transition hover:border-cyan-100/60 hover:bg-cyan-200/20"
+              title={`下载当前 SVG：${activeSlideName}`}
+            >
+              <Download className="h-3.5 w-3.5" />
+              下载当前 SVG
+            </button>
+          )}
+          <span className="rounded-full border border-violet-200/25 bg-violet-200/10 px-2 py-0.5 text-[11px] text-violet-50">
+            {progress.completed ? '已导出 PPT' : slides.length ? `已生成 ${slides.length} 页` : '正在生成页面'}
+          </span>
+        </div>
       </div>
 
       <div className="px-3.5 py-3">
@@ -130,7 +171,7 @@ function PptSvgProgressPreview({ progress, loading = false }: { progress: PptSvg
           <>
             <div className="overflow-hidden rounded-xl border border-slate-600/50 bg-white shadow-[0_14px_34px_rgba(0,0,0,.22)]">
               <img
-                src={resolveAiHelperAssetUrl(activeSlide)}
+                src={activeSlideUrl}
                 alt={`PPT SVG 第 ${safeIndex + 1} 页预览`}
                 className="aspect-video w-full object-contain"
                 loading="lazy"
