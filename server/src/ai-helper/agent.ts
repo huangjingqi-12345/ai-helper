@@ -75,7 +75,10 @@ function sanitizePptEditFinalText(raw: string): string {
   return asksForClarification ? fallback : text;
 }
 
-function pptEditFailureFallbackText(ctx?: { exportedPptx?: string }): string {
+function pptEditFailureFallbackText(ctx?: { exportedPptx?: string }, hasSvgDraft = false): string {
+  if (hasSvgDraft && !ctx?.exportedPptx) {
+    return '这次 PPT 没有成功导出为 PPTX，但已保留上一轮生成的 SVG 页面，可继续基于这些页面修改。';
+  }
   return ctx?.exportedPptx
     ? '这次 PPT 局部修改没有成功完成，已保留上一版 PPT 不变。你可以稍后重试，或换一种更明确的修改描述。'
     : '这次 PPT 局部修改没有成功完成，请稍后重试。';
@@ -1683,6 +1686,7 @@ type ActivePptSlideContext = {
   title?: string;
   slideType?: string;
   svgPath?: string;
+  source?: 'generated' | 'copied' | 'missing';
   deckSpec?: Record<string, unknown>;
 };
 
@@ -1710,6 +1714,7 @@ function normalizeActivePptContext(value: unknown): ActivePptContext | undefined
       title: typeof slide.title === 'string' ? slide.title.slice(0, 120) : undefined,
       slideType: typeof slide.slideType === 'string' ? slide.slideType.slice(0, 80) : typeof slide.slide_type === 'string' ? slide.slide_type.slice(0, 80) : undefined,
       svgPath: typeof slide.svgPath === 'string' ? slide.svgPath.slice(0, 1000) : typeof slide.svg_path === 'string' ? slide.svg_path.slice(0, 1000) : undefined,
+      source: slide.source === 'generated' || slide.source === 'copied' || slide.source === 'missing' ? slide.source : undefined,
       deckSpec: Object.keys(deckSpec).length ? deckSpec : undefined,
     }];
   });
@@ -1787,6 +1792,7 @@ function historyTurnForPrompt(req: RunRequest, maxTextChars = 1200): Array<Recor
         title: slide.title,
         slide_type: slide.slideType,
         svg_path: slide.svgPath,
+        source: slide.source,
         deck_spec: slide.deckSpec,
       })),
     } : undefined,
@@ -1803,9 +1809,29 @@ function activePptContextForPrompt(ctx: ActivePptContext): Record<string, unknow
       title: slide.title,
       slide_type: slide.slideType,
       svg_path: slide.svgPath,
+      source: slide.source,
       deck_spec: slide.deckSpec,
     })),
   };
+}
+
+function copiedSlidePathInProject(projectPath: string, slide: ActivePptSlideContext): string | undefined {
+  const normalizedProject = projectPath.replace(/^\/+/, '').replace(/\/+$/, '');
+  const svgDir = path.join(AI_HELPER_ROOT, normalizedProject, 'svg_output');
+  if (!fs.existsSync(svgDir) || !fs.statSync(svgDir).isDirectory()) return undefined;
+  const previousName = slide.svgPath?.replace(/\\/g, '/').split('/').pop();
+  if (previousName) {
+    const candidate = path.join(svgDir, previousName);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      return `/${normalizedProject}/svg_output/${previousName}`;
+    }
+  }
+  const prefix = String(slide.slideNo).padStart(2, '0');
+  const match = fs.readdirSync(svgDir)
+    .filter((name) => name.toLowerCase().endsWith('.svg'))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    .find((name) => name === `${prefix}.svg` || name.startsWith(`${prefix}_`) || name.startsWith(`${prefix}-`));
+  return match ? `/${normalizedProject}/svg_output/${match}` : undefined;
 }
 
 function activePptContextFromEditTrace(source: ActivePptContext, trace: AgentDonePayload['trace']): ActivePptContext | undefined {
@@ -1813,19 +1839,28 @@ function activePptContextFromEditTrace(source: ActivePptContext, trace: AgentDon
   const projectPath = String(clone?.project_path || obj(clone?.detail).project_path || '');
   if (!projectPath) return undefined;
   const exported = trace.find((entry) => entry.call?.action === 'ppt_master_export')?.result;
-  const exportedPptx = typeof exported?.file === 'string' ? exported.file : source.exportedPptx;
-  const byNo = new Map(source.slides.map((slide) => [slide.slideNo, { ...slide }]));
+  const exportedPptx = exported?.ok !== false && typeof exported?.file === 'string' ? exported.file : undefined;
+  const byNo = new Map<number, ActivePptSlideContext>(source.slides.map((slide) => {
+    const copiedPath = copiedSlidePathInProject(projectPath, slide);
+    return [slide.slideNo, {
+      ...slide,
+      svgPath: copiedPath,
+      source: copiedPath ? 'copied' as const : 'missing' as const,
+    }];
+  }));
   for (const entry of trace) {
-    if (entry.call?.action !== 'write_ppt_svg_slide') continue;
+    if (entry.call?.action !== 'write_ppt_svg_slide' || entry.result?.ok === false) continue;
     const detail = obj(entry.result?.detail);
     const slideNo = Number(detail.slide_no);
     if (!Number.isInteger(slideNo)) continue;
     const previous = byNo.get(slideNo);
+    const svgPath = typeof detail.path === 'string' ? detail.path : copiedSlidePathInProject(projectPath, { slideNo, svgPath: previous?.svgPath });
     byNo.set(slideNo, {
       slideNo,
       title: typeof detail.title === 'string' ? detail.title : previous?.title,
       slideType: previous?.slideType,
-      svgPath: typeof detail.path === 'string' ? detail.path : previous?.svgPath,
+      svgPath,
+      source: svgPath ? 'generated' : 'missing',
       deckSpec: {
         ...(previous?.deckSpec || {}),
         slide_no: slideNo,
@@ -3133,7 +3168,6 @@ function buildOverviewSummaryText(primaryDataContext: Record<string, unknown>): 
     for (const item of insights.slice(0, 3)) lines.push(`- ${item}`);
     lines.push('');
   }
-  lines.push('我会继续生成 Markdown、HTML 和 PNG 概览文件，稍后可直接下载查看。');
   return lines.join('\n');
 }
 
@@ -3373,9 +3407,9 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       const files = collectFiles(trace);
       if (files.length) yield emit('files', files);
       const finalAnswer = pdfResult.ok === false
-        ? '数据概览已生成：上方已先输出文字总结，Markdown、HTML 和 PNG 文件可在下方查看与下载；但 PDF 自动转换未完成，可先下载已生成文件。'
-        : '数据概览已生成：上方已先输出文字总结，Markdown、HTML、PNG 和 PDF 文件可在下方查看与下载。';
-      yield emit('text', finalAnswer);
+        ? '数据概览已生成：\n上方已先输出文字总结。\nMarkdown、HTML 和 PNG 文件可在下方查看与下载。\nPDF 自动转换未完成，可先下载已生成文件。'
+        : '数据概览已生成：\n上方已先输出文字总结。\nMarkdown、HTML、PNG 和 PDF 文件可在下方查看与下载。';
+      yield emit('text', `\n\n${finalAnswer}`);
       yield emit('progress', { phase: pdfResult.ok === false ? 'error' : 'complete', message: pdfResult.ok === false ? '数据概览 PDF 转换失败' : '数据概览生成完成', step: 5, ok: pdfResult.ok !== false });
       yield emit('done', { text: `${summaryText}\n\n${finalAnswer}`, files, skills_used: [...skillsUsed], trace, background_jobs: [] });
       runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: [], direct_overview_pipeline: true, ...requestLog(effectiveReq) });
@@ -3613,15 +3647,22 @@ ${failureHint}
       throw new Error('PPT 局部修改步骤过多，已停止');
     } catch (err) {
       if (isAbortError(err)) throw err;
-      const text = pptEditFailureFallbackText(activePptContext);
-      const fallbackFiles = activePptContext.exportedPptx
-        ? visibleDeliverables([activePptContext.exportedPptx])
-        : collectFiles(trace);
+      const nextPptContext = activePptContextFromEditTrace(activePptContext, trace);
+      const draftSvgFiles = nextPptContext
+        ? nextPptContext.slides.map((slide) => slide.svgPath).filter((file): file is string => Boolean(file))
+        : [];
+      const activeContextForFailure = nextPptContext || activePptContext;
+      const text = pptEditFailureFallbackText(activeContextForFailure, draftSvgFiles.length > 0 && !nextPptContext?.exportedPptx);
+      const fallbackFiles = nextPptContext
+        ? visibleDeliverables([...(nextPptContext.exportedPptx ? [nextPptContext.exportedPptx] : []), ...draftSvgFiles])
+        : activePptContext.exportedPptx
+          ? visibleDeliverables([activePptContext.exportedPptx])
+          : collectFiles(trace);
       if (fallbackFiles.length) yield emit('files', fallbackFiles);
       yield emit('text', text);
-      yield emit('progress', { phase: 'error', message: 'PPT 局部修改未完成，已保留上一版', step: 99, ok: false });
-      yield emit('done', { text, files: fallbackFiles, skills_used: [...skillsUsed], trace, background_jobs: [], activePptContext });
-      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text, files: fallbackFiles, skills_used: [...skillsUsed], trace, direct_ppt_edit_pipeline: true, error: modelErrorLog(err), user_visible_error_sanitized: true, ...requestLog(effectiveReq) });
+      yield emit('progress', { phase: 'error', message: nextPptContext ? 'PPT 局部修改未完成，已保留 SVG 草稿' : 'PPT 局部修改未完成，已保留上一版', step: 99, ok: false });
+      yield emit('done', { text, files: fallbackFiles, skills_used: [...skillsUsed], trace, background_jobs: [], activePptContext: activeContextForFailure });
+      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text, files: fallbackFiles, skills_used: [...skillsUsed], trace, direct_ppt_edit_pipeline: true, error: modelErrorLog(err), user_visible_error_sanitized: true, active_ppt_context_from_draft: Boolean(nextPptContext), ...requestLog(effectiveReq) });
       return;
     }
   }
@@ -3674,6 +3715,8 @@ ${failureHint}
       let modelStep = 1;
       let priorBatchIssue = '';
       let skipRemainingSpecModel = false;
+      let pptSpecTimeoutCount = 0;
+      const pptSpecTimeoutSkipThreshold = Math.max(1, Number(process.env.AI_HELPER_PPT_SPEC_TIMEOUT_SKIP_THRESHOLD || 2) || 2);
       const emittedPreviewFiles = new Set<string>();
       const fallbackDeck = directPptTemplateDeck(primaryDataContext, totalSlides);
       const renderPreview = async (uptoSlide: number): Promise<{ fresh: string[]; count: number }> => {
@@ -3833,16 +3876,24 @@ ${failureHint}
             modelStep += 1;
             retryIssue = err instanceof Error ? err.message : String(err);
             if (attempt >= maxSpecAttempts) {
+              const isTimeoutError = /超时|timeout/i.test(retryIssue);
+              if (isTimeoutError) pptSpecTimeoutCount += 1;
+              const shouldSkipRemainingForTimeout = isTimeoutError && pptSpecTimeoutCount >= pptSpecTimeoutSkipThreshold;
               runtimeLog('direct_ppt_deck_spec_batch_fallback', {
                 rootDir,
                 batch_start: batchStart,
                 batch_end: batchEnd,
                 reason: retryIssue,
                 fallback: 'template_batch',
+                timeout_count: pptSpecTimeoutCount,
+                timeout_skip_threshold: pptSpecTimeoutSkipThreshold,
+                skip_remaining_spec_model: shouldSkipRemainingForTimeout,
                 ...requestLog(effectiveReq),
               });
-              priorBatchIssue = `第 ${batchStart}-${batchEnd} 页模型调用失败，原因：${retryIssue}；该批次已由模板补齐，后续批次请输出更短、更完整的 JSON。`;
-              if (/超时|timeout/i.test(retryIssue)) skipRemainingSpecModel = true;
+              priorBatchIssue = isTimeoutError && !shouldSkipRemainingForTimeout
+                ? `第 ${batchStart}-${batchEnd} 页模型调用超时，已由模板补齐；后续批次仍继续尝试模型生成，请输出更短、更完整的 JSON。`
+                : `第 ${batchStart}-${batchEnd} 页模型调用失败，原因：${retryIssue}；该批次已由模板补齐，后续批次请输出更短、更完整的 JSON。`;
+              if (shouldSkipRemainingForTimeout) skipRemainingSpecModel = true;
               break;
             }
           }
@@ -3858,10 +3909,12 @@ ${failureHint}
           yield emit('progress', {
             phase: 'analysis',
             message: skipRemainingSpecModel
-              ? `响应时间较长，已切换为模板快速生成第 ${batchStart}-${batchEnd} 页`
+              ? `模型已连续响应较慢，剩余页面将用模板快速补齐；正在生成第 ${batchStart}-${batchEnd} 页`
               : `第 ${batchStart}-${batchEnd} 页已用模板补齐，继续生成后续页面`,
             step: 3,
             generated_slides: Array.isArray(deck.slides) ? deck.slides.length : 0,
+            timeout_count: pptSpecTimeoutCount || undefined,
+            timeout_skip_threshold: pptSpecTimeoutSkipThreshold,
             fallback: true,
           });
         }

@@ -79,3 +79,12 @@ export async function postAiHelperStream(
 
   return resp;
 }
+
+export async function cancelAiHelperRun(conversationId: string, runId: string): Promise<void> {
+  if (!conversationId || !runId) return;
+  await fetch(`/api/ai-helper/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...aiHelperAuthHeaders() },
+    body: JSON.stringify({ conversation_id: conversationId }),
+  }).catch(() => undefined);
+}

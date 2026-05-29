@@ -25,4 +25,10 @@ describe('data overview HTML text rendering', () => {
     expect(source).not.toMatch(/text-overflow\s*:\s*ellipsis/i);
     expect(source).not.toMatch(/white-space\s*:\s*nowrap[^`]*text-overflow\s*:\s*ellipsis/i);
   });
+
+  it('does not include file-generation status copy in overview text content', async () => {
+    const source = await readProjectFile('src/ai-helper/agent.ts');
+
+    expect(source).not.toContain('我会继续生成 Markdown、HTML 和 PNG 概览文件，稍后可直接下载查看。');
+  });
 });

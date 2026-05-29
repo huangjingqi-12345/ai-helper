@@ -16,11 +16,12 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   await resetProject(sourceProject);
   await resetProject('projects/test_retry_edit_source');
+  await resetProject('projects/test_draft_edit_source');
   const projectsRoot = path.join(AI_HELPER_ROOT, 'projects');
   const names = await fs.readdir(projectsRoot).catch(() => []);
   await Promise.all(
     names
-      .filter((name) => name.startsWith('test_clone_for_edit_target') || name.startsWith('test_retry_edit_target'))
+      .filter((name) => name.startsWith('test_clone_for_edit_target') || name.startsWith('test_retry_edit_target') || name.startsWith('test_draft_edit_target'))
       .map((name) => fs.rm(path.join(projectsRoot, name), { recursive: true, force: true })),
   );
 });
@@ -356,5 +357,80 @@ describe('ppt-master clone for edit', () => {
     const trace = Array.isArray(doneData.trace) ? doneData.trace : [];
     expect(trace.some((entry) => JSON.stringify(entry).includes('页面内容校验未通过，正在自动修正。'))).toBe(true);
     expect(trace.some((entry) => JSON.stringify(entry).includes('ppt_export'))).toBe(true);
+  });
+
+  it('keeps the latest cloned SVG draft as active context when PPT edit fails before export', async () => {
+    const draftSource = 'projects/test_draft_edit_source';
+    const root = path.join(AI_HELPER_ROOT, draftSource);
+    await fs.mkdir(path.join(root, 'svg_output'), { recursive: true });
+    await fs.mkdir(path.join(root, 'notes'), { recursive: true });
+    await fs.writeFile(path.join(root, 'svg_output', '01_slide.svg'), '<svg width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#fff"/><text x="80" y="100" font-size="32">第一页旧版</text></svg>', 'utf8');
+    await fs.writeFile(path.join(root, 'svg_output', '02_slide.svg'), '<svg width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#fff"/><text x="80" y="100" font-size="32">第二页旧版</text></svg>', 'utf8');
+    await fs.writeFile(path.join(root, 'notes', 'total.md'), '# 01_slide\n\n第一页备注\n\n---\n\n# 02_slide\n\n第二页备注', 'utf8');
+
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://example.test/v1');
+    vi.stubEnv('TEXT_MODEL', 'test-model');
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body || '{}')) as { messages?: Array<{ role: string; content: string }> };
+      const messages = body.messages || [];
+      const joined = messages.map((m) => m.content).join('\n');
+      const last = messages[messages.length - 1]?.content || '';
+      if (joined.includes('output_schema') && joined.includes('ppt_edit')) {
+        return { ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ task: 'ppt_edit', ppt_mode: 'premium', confidence: 1, is_followup: true, is_modification: true, reason: '修改上一份PPT' }) } }] }) };
+      }
+      if (joined.includes('请先输出一段给用户看的中文说明')) {
+        return { ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: '我会定位第2页并直接完成局部修改。' } }] }) };
+      }
+      if (!joined.includes('SKILL_RESULT')) {
+        return { ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ type: 'skill_call', skill_id: 'ppt-master', action: 'ppt_master_clone_for_edit', params: { source_project_path: draftSource, edit_pages: [2], copy_pages: [1], project_name: 'test_draft_edit_target' } }) } }] }) };
+      }
+      if (last.includes('ppt_clone_for_edit')) {
+        return { ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ type: 'skill_call', skill_id: 'ppt-master', action: 'write_ppt_svg_slide', params: { slide_no: 2, title: '第二页新版', core_conclusion: '已生成 SVG 草稿', svg: '<svg width="1280" height="720" viewBox="0 0 1280 720"><rect width="1280" height="720" fill="#eef"/><text x="80" y="100" font-size="32">第二页新版</text></svg>' } }) } }] }) };
+      }
+      return { ok: false, status: 504, text: async () => '模型调用超时（>120000ms）：模型服务未在限定时间内返回' };
+    }));
+
+    const events: Array<{ type: string; data: unknown }> = [];
+    for await (const line of streamAssistant({
+      conversation_id: 'test-ppt-edit-draft-failure',
+      run_id: 'run-ppt-edit-draft-failure',
+      message: '修改第2页',
+      history: [
+        { role: 'user', text: '生成一份PPT' },
+        {
+          role: 'assistant',
+          text: '已生成PPT',
+          files: ['/generated/old/ppt.pptx'],
+          activePptContext: {
+            projectPath: draftSource,
+            exportedPptx: '/generated/old/ppt.pptx',
+            slideCount: 2,
+            slides: [
+              { slideNo: 1, title: '第一页', svgPath: `/${draftSource}/svg_output/01_slide.svg` },
+              { slideNo: 2, title: '第二页旧版', svgPath: `/${draftSource}/svg_output/02_slide.svg`, deckSpec: { slide_no: 2, title: '第二页旧版' } },
+            ],
+          },
+        },
+      ],
+    })) {
+      events.push(JSON.parse(line) as { type: string; data: unknown });
+    }
+
+    const done = events.find((event) => event.type === 'done');
+    const doneData = done?.data && typeof done.data === 'object' ? done.data as Record<string, unknown> : {};
+    expect(doneData.text).toBe('这次 PPT 没有成功导出为 PPTX，但已保留上一轮生成的 SVG 页面，可继续基于这些页面修改。');
+    expect(doneData.files).toEqual(expect.arrayContaining([
+      expect.stringMatching(/test_draft_edit_target.*\/svg_output\/01_slide\.svg/),
+      expect.stringMatching(/test_draft_edit_target.*\/svg_output\/02_slide\.svg/),
+    ]));
+    expect(doneData.files).not.toContain('/generated/old/ppt.pptx');
+    const active = doneData.activePptContext as { projectPath?: string; exportedPptx?: string; slides?: Array<{ slideNo: number; svgPath?: string; source?: string }> };
+    expect(active.projectPath).toMatch(/^projects\/test_draft_edit_target/);
+    expect(active.exportedPptx).toBeUndefined();
+    expect(active.slides).toEqual(expect.arrayContaining([
+      expect.objectContaining({ slideNo: 1, source: 'copied', svgPath: expect.stringMatching(/test_draft_edit_target.*\/svg_output\/01_slide\.svg/) }),
+      expect.objectContaining({ slideNo: 2, source: 'generated', svgPath: expect.stringMatching(/test_draft_edit_target.*\/svg_output\/02_slide\.svg/) }),
+    ]));
   });
 });

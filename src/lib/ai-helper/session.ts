@@ -13,6 +13,7 @@ function normalizeMessage(message: ChatMessage): ChatMessage {
     id: message.id,
     role: message.role,
     text: message.text || '',
+    runId: message.runId,
     files: message.files || [],
     activePptContext: message.activePptContext,
     loading: false,

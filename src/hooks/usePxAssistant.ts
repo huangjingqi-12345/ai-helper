@@ -5,7 +5,7 @@ import {
   formatElapsed,
   statusFromStreamEvent,
 } from '@/lib/ai-helper/loadingStatus';
-import { postAiHelperStream, readNdjsonStream } from '@/lib/ai-helper/stream';
+import { cancelAiHelperRun, postAiHelperStream, readNdjsonStream } from '@/lib/ai-helper/stream';
 import { deleteAiHelperSession, fetchAiHelperSession, saveAiHelperSession } from '@/lib/ai-helper/session';
 import type { ActivePptContext, AiShortcut, ChatMessage, PptSvgProgress, ShortcutPrompts, ShortcutRunOptions } from '@/lib/ai-helper/types';
 
@@ -101,8 +101,7 @@ function extractActivePptContext(done: { files?: string[]; trace?: unknown; acti
   };
 }
 
-function activePptContextForMessage(msg: ChatMessage): ActivePptContext | undefined {
-  if (msg.activePptContext) return msg.activePptContext;
+function activePptContextFromProgress(msg: ChatMessage): ActivePptContext | undefined {
   const slides = sortedUnique(msg.pptSvgProgress?.slides || []);
   if (!slides.length) return undefined;
   const first = slides[0] || '';
@@ -110,14 +109,37 @@ function activePptContextForMessage(msg: ChatMessage): ActivePptContext | undefi
   if (!projectPath.startsWith('projects/')) return undefined;
   return {
     projectPath,
-    exportedPptx: extractPptxFiles(msg.files || [])[0] || msg.pptSvgProgress?.exportedPpt,
+    exportedPptx: msg.pptSvgProgress?.exportedPpt || (msg.activePptContext?.projectPath === projectPath ? extractPptxFiles(msg.files || [])[0] : undefined),
     slideCount: slides.length,
     slides: slides.map((svgPath, index) => ({
       slideNo: slideNoFromPath(svgPath) || index + 1,
       svgPath,
+      source: 'generated',
       title: svgPath.split('/').pop()?.replace(/^\d{1,2}[_-]/, '').replace(/\.svg$/i, ''),
     })),
   };
+}
+
+function activePptContextForMessage(msg: ChatMessage): ActivePptContext | undefined {
+  const progressContext = activePptContextFromProgress(msg);
+  if (!msg.activePptContext) return progressContext;
+  if (!progressContext) return msg.activePptContext;
+  if (progressContext.projectPath !== msg.activePptContext.projectPath) {
+    const byNo = new Map(msg.activePptContext.slides.map((slide) => [slide.slideNo, slide]));
+    return {
+      ...progressContext,
+      slides: progressContext.slides.map((slide) => {
+        const previous = byNo.get(slide.slideNo);
+        return {
+          ...slide,
+          title: previous?.title || slide.title,
+          slideType: previous?.slideType,
+          deckSpec: previous?.deckSpec,
+        };
+      }),
+    };
+  }
+  return msg.activePptContext;
 }
 
 function persistedMessagesForModel(messages: ChatMessage[]): Array<Pick<ChatMessage, 'role' | 'text' | 'files' | 'activePptContext'>> {
@@ -155,7 +177,7 @@ export function usePxAssistant() {
   const [shortcutPrompts, setShortcutPrompts] = useState<ShortcutPrompts>({});
   const [serviceReady, setServiceReady] = useState<boolean | null>(null);
   const conversationIdRef = useRef(newId('conv'));
-  const activeRunRef = useRef<{ controller: AbortController; assistantId: string } | null>(null);
+  const activeRunRef = useRef<{ controller: AbortController; assistantId: string; conversationId: string; runId: string } | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
   const sessionLoadedRef = useRef(false);
   const skipNextPersistRef = useRef(false);
@@ -241,6 +263,7 @@ export function usePxAssistant() {
   const stopGeneration = useCallback(() => {
     const active = activeRunRef.current;
     if (!active) return;
+    void cancelAiHelperRun(active.conversationId, active.runId);
     active.controller.abort();
     setMessages((prev) => {
       const next = prev.map((m) =>
@@ -283,6 +306,8 @@ export function usePxAssistant() {
       const userMsg: ChatMessage = { id: newId('user'), role: 'user', text };
       const assistantId = newId('assistant');
       const startedAt = Date.now();
+      const conversationId = conversationIdRef.current;
+      const runId = newId('run');
       let activeShortcut = options.shortcut;
       let isPptPreviewShortcut = isPptShortcut(activeShortcut);
       const initialPptSvgProgress = pptProgressForShortcut(activeShortcut);
@@ -290,6 +315,7 @@ export function usePxAssistant() {
         id: assistantId,
         role: 'assistant',
         text: '',
+        runId,
         files: [],
         loading: true,
         loadingStatus: '等待后端响应…',
@@ -298,17 +324,14 @@ export function usePxAssistant() {
         pptSvgProgress: initialPptSvgProgress,
       };
 
-      setMessages((prev) => {
-        const next = [...prev, userMsg, assistantMsg];
-        messagesRef.current = next;
-        return next;
-      });
+      const initialMessagesForRun = [...messagesRef.current, userMsg, assistantMsg];
+      messagesRef.current = initialMessagesForRun;
+      setMessages(initialMessagesForRun);
+      persistSessionSnapshot(conversationId, initialMessagesForRun);
       setStreaming(true);
 
-      const conversationId = conversationIdRef.current;
-      const runId = newId('run');
       const abortController = new AbortController();
-      activeRunRef.current = { controller: abortController, assistantId };
+      activeRunRef.current = { controller: abortController, assistantId, conversationId, runId };
       let assistantText = '';
       let turnFiles: string[] = [];
       let sawDone = false;

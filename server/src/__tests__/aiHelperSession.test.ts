@@ -122,6 +122,7 @@ describe('AI helper current session persistence', () => {
         id: 'm2',
         role: 'assistant',
         text: '已生成',
+        runId: 'run-1',
         files: ['/generated/conv-1/run-1/overview_report.md'],
         activePptContext: {
           projectPath: 'projects/ppt-1',

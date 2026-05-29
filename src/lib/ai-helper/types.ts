@@ -14,6 +14,7 @@ export interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
+  runId?: string;
   files?: string[];
   activePptContext?: ActivePptContext;
   loading?: boolean;
@@ -29,6 +30,7 @@ export interface ActivePptSlideContext {
   title?: string;
   slideType?: string;
   svgPath?: string;
+  source?: 'generated' | 'copied' | 'missing';
   deckSpec?: Record<string, unknown>;
 }
 
