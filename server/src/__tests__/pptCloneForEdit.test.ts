@@ -21,12 +21,94 @@ afterEach(async () => {
   const names = await fs.readdir(projectsRoot).catch(() => []);
   await Promise.all(
     names
-      .filter((name) => name.startsWith('test_clone_for_edit_target') || name.startsWith('test_retry_edit_target') || name.startsWith('test_draft_edit_target'))
+      .filter((name) => name.startsWith('test_clone_for_edit_target') || name.startsWith('test_retry_edit_target') || name.startsWith('test_draft_edit_target') || name.startsWith('test_premium_bundle_ok'))
       .map((name) => fs.rm(path.join(projectsRoot, name), { recursive: true, force: true })),
   );
 });
 
 describe('ppt-master clone for edit', () => {
+  it('allows premium SVG slides after the design bundle has been written once', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://example.test/v1');
+    vi.stubEnv('TEXT_MODEL', 'test-model');
+
+    let modelCalls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body || '{}')) as { messages?: Array<{ content: string }> };
+      const joined = (body.messages || []).map((m) => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n');
+      const projectPath = joined.match(/project_path="([^"]+)"/)?.[1] || joined.match(/新建 PPT 项目 (projects\/[^\s"]+)/)?.[1] || '';
+      modelCalls += 1;
+      let content: string;
+      if (modelCalls === 1) {
+        content = JSON.stringify({
+          type: 'skill_call',
+          skill_id: 'ppt-master',
+          action: 'emit_text',
+          params: { content: '本报告基于最近一年患教运营数据，先给出核心判断：当前主数据暂无有效行为记录，因此本次精美版 PPT 将聚焦数据链路诊断、监控恢复和运营重启路径。页面将包含封面、核心结论、指标概览、趋势诊断、原因拆解和行动建议。' },
+        });
+      } else if (modelCalls === 2) {
+        content = JSON.stringify({
+          type: 'skill_call',
+          skill_id: 'ppt-master',
+          action: 'write_project_files',
+          params: {
+            project_path: projectPath,
+            files: [
+              { path: 'design_spec.md', content: '# 设计规范\n\n深色科技渐变、暗色卡片、统一图表风格。' },
+              { path: 'spec_lock.md', content: '# 规范锁定\n\n1280×720；Microsoft YaHei, Arial, sans-serif；禁止 foreignObject/script/style/外链。' },
+              { path: 'notes/total.md', content: '# 占位讲稿\n\n页1: 封面\n页2: 核心结论\n页3: 指标概览\n页4: 趋势诊断\n页5: 原因拆解\n页6: 行动建议' },
+            ],
+          },
+        });
+      } else {
+        content = JSON.stringify({
+          type: 'skill_call',
+          skill_id: 'ppt-master',
+          action: 'write_ppt_svg_slide',
+          params: {
+            project_path: projectPath,
+            slide_no: 1,
+            title: '封面',
+            core_conclusion: '明确汇报主题与数据诊断方向',
+            svg: '<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg"><rect width="1280" height="720" fill="#0B132B"/><text x="80" y="120" font-size="40" fill="#FFFFFF">患教运营年度复盘</text></svg>',
+          },
+        });
+      }
+      return { ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content } }] }) };
+    }));
+
+    const events: Array<{ type: string; data: unknown }> = [];
+    for await (const line of streamAssistant({
+      conversation_id: 'test-premium-design-bundle-ok',
+      run_id: 'run-premium-design-bundle-ok',
+      shortcut: 'ppt_svg',
+      data_scope: 'last_1_year',
+      message: '生成一份 PPT 精美版',
+    })) {
+      const event = JSON.parse(line) as { type: string; data: unknown };
+      events.push(event);
+      if (
+        event.type === 'skill_result' &&
+        typeof event.data === 'object' &&
+        event.data &&
+        String((event.data as { detail?: { kind?: string } }).detail?.kind || '') === 'write_ppt_svg_slide'
+      ) {
+        break;
+      }
+    }
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'skill_result',
+      data: expect.objectContaining({
+        summary: expect.stringContaining('写入第 1 页 SVG'),
+      }),
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: 'progress',
+      data: expect.objectContaining({ message: 'PPT 精美版执行顺序需修正，正在要求模型按阶段继续' }),
+    }));
+  });
+
   it('uses context fallback for vague page replacement without waiting for intent classification', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key');
     vi.stubEnv('OPENAI_BASE_URL', 'https://example.test/v1');

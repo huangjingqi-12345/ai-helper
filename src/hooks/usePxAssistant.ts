@@ -344,6 +344,7 @@ export function usePxAssistant() {
         updateAssistant(assistantId, {
           loadingStatus: line,
           loadingStep: step,
+          hasModelProgress: false,
           loadingStartedAt: startedAt,
         });
       };
@@ -470,6 +471,7 @@ export function usePxAssistant() {
               loading: false,
               loadingStatus: undefined,
               modelProgressStatus: undefined,
+              hasModelProgress: false,
               loadingElapsed: formatElapsed(Math.floor((Date.now() - startedAt) / 1000)),
               loadingStartedAt: startedAt,
             });
@@ -482,6 +484,7 @@ export function usePxAssistant() {
             loading: true,
             loadingStatus: latestLoadingStatus || running.loadingStatus,
             modelProgressStatus: undefined,
+            hasModelProgress: false,
             loadingStartedAt: startedAt,
           });
         }
@@ -504,6 +507,7 @@ export function usePxAssistant() {
             files: turnFiles,
             loadingStatus: undefined,
             modelProgressStatus: undefined,
+            hasModelProgress: false,
             loadingElapsed: undefined,
             loadingStep: undefined,
           });
@@ -607,6 +611,7 @@ export function usePxAssistant() {
         updateAssistant(assistantId, {
           loadingStatus: line,
           loadingStep: step,
+          hasModelProgress: false,
           loadingStartedAt: startedAt,
         });
       };
@@ -714,7 +719,7 @@ export function usePxAssistant() {
         );
         if (!resp.ok || !resp.body) {
           const errText = '请求失败，请确认 Px 后端 AI 助手已启用，且数据库连接与模型 Key 已配置。';
-          updateAssistant(assistantId, { loading: false, text: errText, loadingStatus: undefined, loadingElapsed: undefined, loadingStep: undefined });
+          updateAssistant(assistantId, { loading: false, text: errText, loadingStatus: undefined, modelProgressStatus: undefined, hasModelProgress: false, loadingElapsed: undefined, loadingStep: undefined });
           return;
         }
 
@@ -798,6 +803,8 @@ export function usePxAssistant() {
             text: assistantText.trim() ? `${assistantText}\n\n已暂停生成。` : '已暂停生成。',
             files: turnFiles,
             loadingStatus: undefined,
+            modelProgressStatus: undefined,
+            hasModelProgress: false,
             loadingElapsed: undefined,
             loadingStep: undefined,
           });
@@ -812,6 +819,7 @@ export function usePxAssistant() {
             loading: true,
             loadingStatus: latestLoadingStatus || assistantMsg.loadingStatus,
             modelProgressStatus: undefined,
+            hasModelProgress: false,
             loadingElapsed: formatElapsed(Math.floor((Date.now() - startedAt) / 1000)),
             loadingStartedAt: startedAt,
           });
@@ -827,6 +835,8 @@ export function usePxAssistant() {
           files: turnFiles,
           loading: false,
           loadingStatus: undefined,
+          modelProgressStatus: undefined,
+          hasModelProgress: false,
           loadingElapsed: undefined,
           loadingStep: undefined,
         });
@@ -837,6 +847,8 @@ export function usePxAssistant() {
             text: assistantText.trim() ? `${assistantText}\n\n已暂停生成。` : '已暂停生成。',
             files: turnFiles,
             loadingStatus: undefined,
+            modelProgressStatus: undefined,
+            hasModelProgress: false,
             loadingElapsed: undefined,
             loadingStep: undefined,
           });
@@ -846,6 +858,8 @@ export function usePxAssistant() {
           loading: false,
           text: assistantText.trim() || '连接已中断，请稍后重试。',
           loadingStatus: undefined,
+          modelProgressStatus: undefined,
+          hasModelProgress: false,
           loadingElapsed: undefined,
           loadingStep: undefined,
         });

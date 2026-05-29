@@ -90,11 +90,17 @@ export const PPT_PREMIUM_SVG_PROMPT = `
 - 允许比快速版耗时更久，但必须保证页面可读、风格统一、数据准确、最终可编辑导出。
 
 执行顺序：
-1. 第一条 skill_call 必须是 emit_text：先给用户输出 300-800 字中文说明，包括汇报摘要、页面大纲、预计耗时 5-10 分钟、接下来会逐页生成 SVG/PPT。
-2. 调用 ppt-master.ppt_master_bootstrap 新建项目。
-3. bootstrap 成功后的下一步必须只调用一次 ppt-master.write_project_files，同时写入 design_spec.md、spec_lock.md、notes/total.md；这一步不要写 SVG。
-4. 使用 ppt-master.write_ppt_svg_slide 逐页写入 SVG，每次只写 1 页。
+1. 第一条模型 skill_call 必须是 emit_text：先输出 300-800 字中文正式正文，内容应是有价值的汇报摘要、核心判断、页面大纲和数据口径说明；不要写“您好/正在准备/请稍候/预计耗时/接下来我会”等等待说明或进度占位。
+2. 系统会优先预取主数据并尽量自动完成 ppt-master.ppt_master_bootstrap；如果上下文已给出 project_path，不要重复 bootstrap。
+3. emit_text 成功后，下一步必须只调用一次 ppt-master.write_project_files，同时写入 design_spec.md、spec_lock.md、notes/total.md；这一步不要写 SVG。
+4. 使用 ppt-master.write_ppt_svg_slide 逐页写入 SVG，每次只写 1 页。这一步必须由模型亲自完成，是精美版的核心。
 5. 最后调用 ppt-master.ppt_master_export 导出可编辑 PPTX。
+
+数据读取：
+- primary_data_context 已包含本轮主数据、趋势、TOP 内容/项目和 available_metric_stores。
+- 如现有数据不足以支撑某页，可调用 px-data.read_metric_file 读取 available_metric_stores 中列出的文件，或调用 px-data.prefetch_metrics 补取不同日期/粒度/筛选条件的数据。
+- 必须相信 primary_data_context 中的数据是正确的；不要因为指标为 0 就怀疑数据错误或重复查询同一份主数据。
+- 如果主数据为 0，也要继续生成，并在页面中如实表达“当前周期暂无有效行为数据/需关注数据接入或运营空窗”；只有为了补充不同维度、不同粒度或某页需要的额外明细时才查数据。
 
 页面数量：
 - 建议 6-8 页。

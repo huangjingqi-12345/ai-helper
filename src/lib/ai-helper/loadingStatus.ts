@@ -17,7 +17,7 @@ function shortenBackendMessage(message: string, maxLen = 48): string {
 
 function statusForAction(action = '', detail = ''): string {
   const raw = `${action} ${detail}`.toLowerCase();
-  if (raw.includes('emit_text')) return '正在生成摘要';
+  if (raw.includes('emit_text')) return '正在生成汇报正文';
   if (raw.includes('read_skill_file')) return '正在读取生成要求';
   if (raw.includes('write_text_deliverable')) return '正在生成报告正文';
   if (raw.includes('write_ppt_svg_slide')) return '正在生成 PPT 第 1 页';

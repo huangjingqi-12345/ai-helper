@@ -495,9 +495,113 @@ function hasSuccessfulBootstrap(trace: AgentDonePayload['trace']): boolean {
   return trace.some((entry) => entry.call?.skill_id === 'ppt-master' && entry.call.action === 'ppt_master_bootstrap' && entry.result?.ok !== false);
 }
 
-function hasPremiumDesignBundle(trace: AgentDonePayload['trace']): boolean {
-  const names = new Set(collectFiles(trace).map(fileName));
-  return names.has('design_spec.md') && names.has('spec_lock.md') && names.has('total.md');
+function hasSuccessfulEmitText(trace: AgentDonePayload['trace']): boolean {
+  return trace.some((entry) => entry.call?.skill_id === 'ppt-master' && entry.call.action === 'emit_text' && entry.result?.ok !== false);
+}
+
+function detailObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+function collectStringValues(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') {
+    out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStringValues(item, out));
+    return out;
+  }
+  if (value && typeof value === 'object') {
+    const objValue = value as Record<string, unknown>;
+    for (const key of ['file', 'path', 'project_path', 'requested_path', 'normalized_path']) collectStringValues(objValue[key], out);
+    collectStringValues(objValue.files, out);
+    collectStringValues(objValue.results, out);
+  }
+  return out;
+}
+
+function collectDesignBundleHints(trace: AgentDonePayload['trace']): string[] {
+  const hints: string[] = [];
+  for (const entry of trace) {
+    if (entry.call?.skill_id === 'ppt-master') {
+      hints.push(...callProjectFilePaths(entry.call));
+      const params = (entry.call.params || {}) as Record<string, unknown>;
+      collectStringValues(params.project_path, hints);
+    }
+    hints.push(...resultFiles(entry.result));
+    if (entry.result) collectStringValues(entry.result.detail, hints);
+  }
+  return [...new Set(hints.map((item) => item.replace(/\\/g, '/')).filter(Boolean))];
+}
+
+function pathMatchesPremiumDesignFile(pathValue: string, target: 'design_spec.md' | 'spec_lock.md' | 'notes/total.md'): boolean {
+  const normalized = pathValue.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (target === 'notes/total.md') return normalized === 'notes/total.md' || normalized.endsWith('/notes/total.md') || fileName(normalized).toLowerCase() === 'total.md';
+  return normalized === target || normalized.endsWith(`/${target}`) || fileName(normalized).toLowerCase() === target;
+}
+
+function hintsContainPremiumDesignBundle(hints: string[]): boolean {
+  return hints.some((hint) => pathMatchesPremiumDesignFile(hint, 'design_spec.md'))
+    && hints.some((hint) => pathMatchesPremiumDesignFile(hint, 'spec_lock.md'))
+    && hints.some((hint) => pathMatchesPremiumDesignFile(hint, 'notes/total.md'));
+}
+
+function projectPathFromDesignBundleFile(filePath: string): string | undefined {
+  const normalized = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!normalized.startsWith('projects/')) return undefined;
+  for (const marker of ['/design_spec.md', '/spec_lock.md', '/notes/total.md', '/svg_output/']) {
+    const index = normalized.indexOf(marker);
+    if (index > 0) return normalized.slice(0, index);
+  }
+  return undefined;
+}
+
+function projectPathFromTrace(trace: AgentDonePayload['trace']): string | undefined {
+  for (const entry of [...trace].reverse()) {
+    const params = (entry.call?.params || {}) as Record<string, unknown>;
+    const fromCall = typeof params.project_path === 'string' ? params.project_path.replace(/^\/+/, '') : '';
+    if (fromCall) return fromCall;
+    const result = (entry.result || {}) as Record<string, unknown>;
+    const fromResult = typeof result.project_path === 'string' ? result.project_path.replace(/^\/+/, '') : '';
+    if (fromResult) return fromResult;
+    const detail = detailObject(result.detail);
+    const fromDetail = typeof detail.project_path === 'string' ? detail.project_path.replace(/^\/+/, '') : '';
+    if (fromDetail) return fromDetail;
+    const fromFile = collectStringValues(detail).map(projectPathFromDesignBundleFile).find(Boolean);
+    if (fromFile) return fromFile;
+  }
+  return undefined;
+}
+
+function designBundleExistsOnDisk(projectPath?: string): boolean {
+  if (!projectPath) return false;
+  try {
+    const root = safeProjectRoot(projectPath);
+    return fs.existsSync(path.join(root, 'design_spec.md'))
+      && fs.existsSync(path.join(root, 'spec_lock.md'))
+      && fs.existsSync(path.join(root, 'notes', 'total.md'));
+  } catch {
+    return false;
+  }
+}
+
+function successfulPremiumDesignBundleWriteCount(trace: AgentDonePayload['trace']): number {
+  return trace.filter((entry) => entry.result?.ok !== false && entry.call && callWritesPremiumDesignBundle(entry.call)).length;
+}
+
+function premiumDesignBundleState(trace: AgentDonePayload['trace'], projectPath?: string): { ok: boolean; source: 'trace_hints' | 'successful_write_call' | 'filesystem' | 'missing'; projectPath?: string; hints: string[]; successfulWrites: number } {
+  const hints = collectDesignBundleHints(trace);
+  const resolvedProjectPath = projectPath?.replace(/^\/+/, '') || projectPathFromTrace(trace);
+  const successfulWrites = successfulPremiumDesignBundleWriteCount(trace);
+  if (hintsContainPremiumDesignBundle(hints)) return { ok: true, source: 'trace_hints', projectPath: resolvedProjectPath, hints, successfulWrites };
+  if (successfulWrites > 0) return { ok: true, source: 'successful_write_call', projectPath: resolvedProjectPath, hints, successfulWrites };
+  if (designBundleExistsOnDisk(resolvedProjectPath)) return { ok: true, source: 'filesystem', projectPath: resolvedProjectPath, hints, successfulWrites };
+  return { ok: false, source: 'missing', projectPath: resolvedProjectPath, hints, successfulWrites };
+}
+
+function hasPremiumDesignBundle(trace: AgentDonePayload['trace'], projectPath?: string): boolean {
+  return premiumDesignBundleState(trace, projectPath).ok;
 }
 
 function projectRelPathFromParam(value: unknown): string {
@@ -534,18 +638,33 @@ function callWritesSvgFileDirectly(call: SkillCall): boolean {
 }
 
 function premiumPptStageInstruction(call: SkillCall, trace: AgentDonePayload['trace']): string | undefined {
-  if (call.skill_id !== 'ppt-master') return undefined;
-  if (call.action === 'emit_text') return undefined;
   const bootstrapped = hasSuccessfulBootstrap(trace);
-  if (!bootstrapped && call.action !== 'ppt_master_bootstrap') {
+  if (!bootstrapped && !(call.skill_id === 'ppt-master' && call.action === 'ppt_master_bootstrap')) {
     return [
       'PPT_PREMIUM_STAGE_ORDER:',
-      '当前是 PPT 精美版。emit_text 后必须先调用 ppt-master.ppt_master_bootstrap 新建项目。',
+      '当前是 PPT 精美版。必须先调用 ppt-master.ppt_master_bootstrap 新建项目。',
       '请只输出 ppt_master_bootstrap 的 skill_call。',
     ].join('\n');
   }
 
-  if (bootstrapped && !hasPremiumDesignBundle(trace)) {
+  if (bootstrapped && !hasSuccessfulEmitText(trace) && !(call.skill_id === 'ppt-master' && call.action === 'emit_text')) {
+    return [
+      'PPT_PREMIUM_FORMAL_SUMMARY_REQUIRED:',
+      '项目已创建。下一步必须调用 ppt-master.emit_text。',
+      'content 写 300-800 字中文正式汇报摘要、核心判断、页面大纲和数据口径说明。',
+      '不要写“您好/正在准备/请稍候/预计耗时/接下来我会”等等待说明或进度占位。',
+      '只输出 emit_text 的 skill_call。',
+    ].join('\n');
+  }
+
+  if (call.skill_id !== 'ppt-master') return undefined;
+
+  if (call.action === 'emit_text') return undefined;
+
+  const callProjectPath = typeof (call.params as Record<string, unknown> | undefined)?.project_path === 'string'
+    ? String((call.params as Record<string, unknown>).project_path)
+    : undefined;
+  if (bootstrapped && !hasPremiumDesignBundle(trace, callProjectPath)) {
     if (callWritesPremiumDesignBundle(call)) return undefined;
     return [
       'PPT_PREMIUM_DESIGN_BUNDLE_REQUIRED:',
@@ -1618,7 +1737,16 @@ async function buildMessages(
     });
   }
   if (asShortcut(req.shortcut) === 'ppt_svg') {
-    messages.push({ role: 'system', content: '运行时硬约束：shortcut=ppt_svg，必须使用 PPT 精美版直接 SVG 逐页设计链路；不要调用 render_ppt_from_specs。' });
+    messages.push({
+      role: 'system',
+      content: [
+        '运行时硬约束：shortcut=ppt_svg，必须使用 PPT 精美版直接 SVG 逐页设计链路；不要调用 render_ppt_from_specs。',
+        '模型第一步必须调用 emit_text，但内容必须是正式汇报摘要/核心判断/页面大纲/数据口径说明，不要写开场白、等待说明或预计耗时。',
+        '前端会同时显示 loading/progress 气泡；emit_text 正文只承载有价值内容，不承载进度占位。',
+        '模型仍可按需调用 px-data.read_metric_file / px-data.prefetch_metrics 补充不同范围、粒度、筛选条件或页面明细的数据。',
+        '必须相信 primary_data_context 是正确数据；不要因为指标为 0 就怀疑数据错误或重复拉取同一份主数据。',
+      ].join('\n'),
+    });
   }
   if (catalog) messages.push({ role: 'system', content: catalog });
   const history = options.includePreviousTurn ? previousHistoryTurn(req) : [];
@@ -3576,6 +3704,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   const skillsUsed = new Set<string>();
   let earlyTextEmitted = false;
   let earlyTextContent = '';
+  let premiumDesignBundleRequiredCount = 0;
   const maxSteps = Number(process.env.AI_HELPER_MAX_STEPS || 60);
   const modelTimeoutRetries = Math.max(1, Number(process.env.AI_HELPER_MODEL_TIMEOUT_RETRIES || 3) || 3);
 
@@ -3597,7 +3726,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     if (progress.action === 'render_ppt_from_specs') return `${donePrefix}正在生成 PPT 页面预览方案`;
     if (progress.action === 'ppt_master_export') return `${donePrefix}正在准备导出可编辑 PPTX`;
     if (progress.action === 'write_project_files' || progress.action === 'write_project_file') return `${donePrefix}正在整理 PPT 结构、设计规范和讲稿备注`;
-    if (progress.action === 'emit_text') return `${donePrefix}正在生成用户可见摘要`;
+    if (progress.action === 'emit_text') return `${donePrefix}正在生成汇报正文`;
     if (progress.action === 'read_metric_file' || progress.action === 'prefetch_metrics') return `${donePrefix}正在规划补充读取指标数据`;
     if (progress.responseType === 'final') return `${donePrefix}正在整理最终回复`;
 
@@ -4502,6 +4631,53 @@ ${isDraftPptEdit ? '请继续，直到完成目标 SVG 页面并 final；当前�
 
   yield emit('skills', registry.listSkills().map((x) => x.skill_id));
 
+  if (isPremiumPptSvg) {
+    const bootstrapCall: SkillCall = {
+      type: 'skill_call',
+      skill_id: 'ppt-master',
+      action: 'ppt_master_bootstrap',
+      params: { project_name: 'px_ai_ppt_premium', format: 'ppt169' },
+      thought: '后端确定性初始化精美版 PPT 项目；页面 SVG 仍由模型逐页设计。',
+    };
+    skillsUsed.add('ppt-master');
+    yield emit('skills', [...skillsUsed]);
+    yield emit('progress', {
+      phase: 'file_generation',
+      message: '正在初始化精美版 PPT 项目',
+      step: 0,
+      skill_id: bootstrapCall.skill_id,
+      action: bootstrapCall.action,
+    });
+    const bootstrapResult = await executor.execute(bootstrapCall);
+    trace.push({ step: 'auto_premium_bootstrap', call: compactCallForTrace(bootstrapCall, bootstrapResult), result: bootstrapResult });
+    yield emit('skill_result', bootstrapResult);
+    if (bootstrapResult.ok === false) {
+      const text = 'PPT 精美版初始化失败，请稍后重试。';
+      yield emit('text', text);
+      yield emit('done', { text, files: [], skills_used: [...skillsUsed], trace, background_jobs: [] });
+      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text, files: [], skills_used: [...skillsUsed], trace, background_jobs: [], premium_ppt_bootstrap_failed: true, ...requestLog(effectiveReq) });
+      return;
+    }
+    const projectPath = String(bootstrapResult.project_path || obj(bootstrapResult.detail).project_path || '');
+    messages.push({ role: 'assistant', content: JSON.stringify(bootstrapCall) });
+    messages.push({ role: 'user', content: SkillExecutor.observation(bootstrapResult) });
+    messages.push({
+      role: 'system',
+      content: [
+        'PPT 精美版运行时状态：',
+        `- 后端已完成 ppt_master_bootstrap，project_path="${projectPath}"。`,
+        '- 不要重复 bootstrap。',
+        '- 下一步必须调用 ppt-master.emit_text，输出 300-800 字中文正式汇报摘要/核心判断/页面大纲/数据口径说明。',
+        '- emit_text 正文不要写“您好/正在准备/请稍候/预计耗时/接下来我会”等等待说明或进度占位。',
+        '- emit_text 成功后再调用 ppt-master.write_project_files，一次写入 design_spec.md、spec_lock.md、notes/total.md。',
+        '- 之后继续用 ppt-master.write_ppt_svg_slide 逐页生成 SVG；每页必须由模型直接输出 SVG。',
+        '- 如某一页确实需要额外数据，可调用 px-data.read_metric_file 或 px-data.prefetch_metrics；不要因为主数据为 0 而重复拉取同一份主数据。',
+      ].join('\n'),
+    });
+    const draftContext = activePptContextFromTrace(trace);
+    if (draftContext) yield emit('active_ppt_context', draftContext);
+  }
+
   for (let step = 1; step <= maxSteps; step += 1) {
     yield emit('progress', { phase: 'planning', message: `第 ${step} 步：模型正在规划下一步`, step });
     yield emit('thought', `[step ${step}] 正在调用模型...\n`);
@@ -4642,29 +4818,52 @@ ${isDraftPptEdit ? '请继续，直到完成目标 SVG 页面并 final；当前�
       continue;
     }
 
-    if (isPremiumPptSvg && !earlyTextEmitted && call.action !== 'emit_text') {
-      messages.push({ role: 'assistant', content: compactSkillCallForContext(raw) });
-      messages.push({
-        role: 'user',
-        content: [
-          'PPT_SVG_REQUIRES_EARLY_TEXT:',
-          'PPT 精美版需要先输出用户可见文本，再慢慢生成 SVG/PPT。',
-          '请先调用 emit_text，content 写 300-800 字中文汇报摘要、页面大纲、预计耗时 5-10 分钟和生成计划。',
-          'emit_text 成功后再继续 ppt_master_bootstrap、写 SVG、导出 PPTX。',
-          '只输出一个 JSON 对象。',
-        ].join('\n'),
-      });
-      yield emit('progress', { phase: 'retry', message: 'PPT 精美版需先输出摘要，正在要求模型先输出文字', step, ok: false });
-      continue;
-    }
-
     if (isPremiumPptSvg) {
       const stageInstruction = premiumPptStageInstruction(call, trace);
       if (stageInstruction) {
-        messages.push({ role: 'assistant', content: compactSkillCallForContext(raw) });
-        messages.push({ role: 'user', content: stageInstruction });
-        yield emit('progress', { phase: 'retry', message: 'PPT 精美版执行顺序需修正，正在要求模型按阶段继续', step, ok: false });
-        continue;
+        if (stageInstruction.startsWith('PPT_PREMIUM_DESIGN_BUNDLE_REQUIRED')) {
+          premiumDesignBundleRequiredCount += 1;
+          const callProjectPath = typeof (call.params as Record<string, unknown> | undefined)?.project_path === 'string'
+            ? String((call.params as Record<string, unknown>).project_path)
+            : undefined;
+          const state = premiumDesignBundleState(trace, callProjectPath);
+          runtimeLog('premium_design_bundle_stage_reject', {
+            rootDir,
+            step,
+            action: call.action,
+            count: premiumDesignBundleRequiredCount,
+            bundle_state: {
+              ok: state.ok,
+              source: state.source,
+              projectPath: state.projectPath,
+              successfulWrites: state.successfulWrites,
+              hintCount: state.hints.length,
+              hints: state.hints.slice(0, 20),
+              fsExists: designBundleExistsOnDisk(state.projectPath),
+            },
+            ...requestLog(effectiveReq),
+          });
+          if (premiumDesignBundleRequiredCount >= 2 && call.action === 'write_ppt_svg_slide' && state.ok) {
+            runtimeLog('premium_design_bundle_stage_force_allow', {
+              rootDir,
+              step,
+              action: call.action,
+              count: premiumDesignBundleRequiredCount,
+              bundle_state: { source: state.source, projectPath: state.projectPath, successfulWrites: state.successfulWrites },
+              ...requestLog(effectiveReq),
+            });
+          } else {
+            messages.push({ role: 'assistant', content: compactSkillCallForContext(raw) });
+            messages.push({ role: 'user', content: stageInstruction });
+            yield emit('progress', { phase: 'retry', message: 'PPT 精美版执行顺序需修正，正在要求模型按阶段继续', step, ok: false });
+            continue;
+          }
+        } else {
+          messages.push({ role: 'assistant', content: compactSkillCallForContext(raw) });
+          messages.push({ role: 'user', content: stageInstruction });
+          yield emit('progress', { phase: 'retry', message: 'PPT 精美版执行顺序需修正，正在要求模型按阶段继续', step, ok: false });
+          continue;
+        }
       }
     }
 
@@ -4704,7 +4903,7 @@ ${isDraftPptEdit ? '请继续，直到完成目标 SVG 页面并 final；当前�
       }
       const job = scheduleBackgroundJob({ label, conversation_id: req.conversation_id, run_id: req.run_id, runner: () => executor.executeStrict(call) });
       backgroundJobs.push(job);
-      result = { ok: true, background: true, summary: `${label} 已转入后台生成`, detail: { kind: 'background_export', job_id: job.id, status: job.status, expected_files: job.expected_files }, files: [] } as SkillResult;
+      result = { ok: true, background: true, summary: `${label} 已提交导出任务`, detail: { kind: 'background_export', job_id: job.id, status: job.status, expected_files: job.expected_files }, files: [] } as SkillResult;
       yield emit('background_job', job);
     } else {
       result = await executor.execute(call);

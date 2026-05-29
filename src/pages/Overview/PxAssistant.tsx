@@ -79,7 +79,9 @@ function currentTime(): string {
 
 function assistantStatusText(msg: ChatMessage): string | undefined {
   if (!msg.loading) return undefined;
-  return msg.hasModelProgress ? msg.modelProgressStatus : msg.loadingStatus;
+  return msg.hasModelProgress && msg.modelProgressStatus
+    ? msg.modelProgressStatus
+    : (msg.loadingStatus || '正在生成，请稍候…');
 }
 
 function PptSvgProgressPreview({ progress, loading = false }: { progress: PptSvgProgress; loading?: boolean }): JSX.Element | null {

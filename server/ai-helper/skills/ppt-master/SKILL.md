@@ -32,8 +32,8 @@ Use this mode when the user chooses `/ppt-svg` / “PPT 精美版”. This mode 
 
 ```text
 user request + PX metrics
-→ emit_text summary and generation plan
-→ ppt_master_bootstrap
+→ ppt_master_bootstrap (may be completed by runtime before the first model step)
+→ emit_text formal report body
 → write design_spec.md / spec_lock.md / notes/total.md in one write_project_files call
 → write_ppt_svg_slide one page at a time into svg_output/
 → ppt_master_export
@@ -48,6 +48,7 @@ Premium mode priorities:
 - Cover page should include a main visual, not only title text.
 - Each page should look like a finished design draft, with clear title, takeaway, data chart/card/diagram, readable text, and enough whitespace.
 - Use only a small number of simple SVG paths/icons if helpful; do not depend on a full icon library.
+- The first model-visible text for premium mode must be a useful Chinese report body: formal summary, core judgment, page outline, and data scope. Do not put greetings, “please wait”, estimated duration, or generation-progress placeholders into `emit_text`; the frontend progress bubble displays those separately.
 
 ## Data source rules
 
