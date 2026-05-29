@@ -60,9 +60,21 @@ services:
       - TEXT_MODEL=${TEXT_MODEL:-GPT-5.4}
       - AI_HELPER_MODEL_TIMEOUT_MS=${AI_HELPER_MODEL_TIMEOUT_MS:-120000}
       - AI_HELPER_MODEL_TIMEOUT_RETRIES=${AI_HELPER_MODEL_TIMEOUT_RETRIES:-3}
+      # Optional OSS storage for AI helper deliverables. When these are empty,
+      # generated files stay on the persistent local fallback volumes below.
+      - ALI_OSS_ACCESS_KEY_ID=${ALI_OSS_ACCESS_KEY_ID:-}
+      - ALI_OSS_ACCESS_KEY_SECRET=${ALI_OSS_ACCESS_KEY_SECRET:-}
+      - ALI_OSS_BUCKET=${ALI_OSS_BUCKET:-}
+      - ALI_OSS_ENDPOINT=${ALI_OSS_ENDPOINT:-}
+      - ALI_OSS_PUBLIC_BASE_URL=${ALI_OSS_PUBLIC_BASE_URL:-}
+      - AI_HELPER_OSS_PREFIX=${AI_HELPER_OSS_PREFIX:-ai-helper}
+      - AI_HELPER_OSS_REQUIRED=${AI_HELPER_OSS_REQUIRED:-false}
     volumes:
       - pxlite-db:/app/data
       - pxlite-logs:/app/logs
+      - pxlite-ai-helper-generated:/app/ai-helper/generated
+      - pxlite-ai-helper-projects:/app/ai-helper/projects
+      - pxlite-ai-helper-logs:/app/ai-helper/logs
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/api/ready"]
@@ -77,6 +89,12 @@ volumes:
   pxlite-db:
     driver: local
   pxlite-logs:
+    driver: local
+  pxlite-ai-helper-generated:
+    driver: local
+  pxlite-ai-helper-projects:
+    driver: local
+  pxlite-ai-helper-logs:
     driver: local
 
 networks:

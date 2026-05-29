@@ -66,6 +66,10 @@ function asNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function safeAverage(total: number, count: number): number {
+  return count ? total / count : 0;
+}
+
 function asBool(value: unknown): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
@@ -233,10 +237,11 @@ async function enrichContentWithDxDetail(content: Record<string, unknown>): Prom
 // === Overview ===
 export async function getOverviewStats(scope?: QueryScope) {
   if (!isPxAdmin(scope)) {
-    const row = await dbGet<Record<string, unknown>>(`
+    const projectRow = await dbGet<Record<string, unknown>>(`
       SELECT
         COUNT(*) as project_count,
-        SUM(published_count) || '/' || SUM(content_count) as published_content,
+        COALESCE(SUM(published_count), 0) as published_count,
+        COALESCE(SUM(content_count), 0) as content_count,
         COALESCE(SUM(push_count), 0) as push_count,
         COALESCE(SUM(read_users), 0) as read_users,
         COALESCE(SUM(read_count), 0) as read_count,
@@ -245,7 +250,30 @@ export async function getOverviewStats(scope?: QueryScope) {
       FROM projects
       WHERE tenant_id = ?
     `, [scope!.tenantId]);
-    return row ? toCamel(row) : { lastUpdated: new Date().toISOString() };
+    const metricRow = await dbGet<Record<string, unknown>>(`
+      SELECT
+        COUNT(*) as metric_rows,
+        COALESCE(SUM(push_count), 0) as push_count,
+        COALESCE(SUM(read_users), 0) as read_users,
+        COALESCE(SUM(read_count), 0) as read_count,
+        COALESCE(SUM(interaction_count), 0) as interaction_count,
+        MAX(updated_at) as last_updated
+      FROM behavior_daily_metrics
+      WHERE tenant_id = ?
+    `, [scope!.tenantId]);
+    const hasMetricRows = asNumber(metricRow?.metric_rows) > 0;
+    const publishedCount = asNumber(projectRow?.published_count);
+    const contentCount = asNumber(projectRow?.content_count);
+    const statsSource = hasMetricRows ? metricRow : projectRow;
+    return {
+      projectCount: asNumber(projectRow?.project_count),
+      publishedContent: `${publishedCount}/${contentCount}`,
+      pushCount: asNumber(statsSource?.push_count),
+      readUsers: asNumber(statsSource?.read_users),
+      readCount: asNumber(statsSource?.read_count),
+      interactionCount: asNumber(statsSource?.interaction_count),
+      lastUpdated: asText(metricRow?.last_updated) || asText(projectRow?.last_updated) || new Date().toISOString(),
+    };
   }
   const row = await dbGet<Record<string, unknown>>('SELECT * FROM overview_stats WHERE id = 1');
   return row ? toCamel(row) : { lastUpdated: new Date().toISOString() };
@@ -1428,26 +1456,88 @@ export async function getBehaviorSummary(scope?: QueryScope) {
   const stats = await getOverviewStats(scope) as Record<string, unknown>;
   if (!isPxAdmin(scope)) {
     const daily = await dbAll<Record<string, unknown>>(`
-      SELECT metric_date, SUM(read_count) as read_count, SUM(interaction_count) as interaction_count
+      SELECT
+        metric_date,
+        SUM(push_count) as push_count,
+        SUM(read_users) as read_users,
+        SUM(read_count) as read_count,
+        SUM(interaction_count) as interaction_count,
+        SUM(COALESCE(avg_read_sec, 0) * COALESCE(read_count, 0)) as read_sec_weighted
       FROM behavior_daily_metrics
       WHERE tenant_id = ?
       GROUP BY metric_date
       ORDER BY metric_date ASC
     `, [scope!.tenantId]);
-    const totals = daily.reduce<{ reads: number; interactions: number }>((acc, row) => ({
+    const totals = daily.reduce<{ pushes: number; readUsers: number; reads: number; interactions: number; readSecWeighted: number }>((acc, row) => ({
+      pushes: acc.pushes + asNumber(row.push_count),
+      readUsers: acc.readUsers + asNumber(row.read_users),
       reads: acc.reads + asNumber(row.read_count),
       interactions: acc.interactions + asNumber(row.interaction_count),
-    }), { reads: 0, interactions: 0 });
+      readSecWeighted: acc.readSecWeighted + asNumber(row.read_sec_weighted),
+    }), { pushes: 0, readUsers: 0, reads: 0, interactions: 0, readSecWeighted: 0 });
+    const topRows = await dbAll<Record<string, unknown>>(`
+      SELECT
+        b.content_id,
+        COALESCE(c.title, b.content_id, '未命名内容') AS title,
+        COALESCE(p.disease, b.disease_id, '未分组') AS disease,
+        SUM(COALESCE(b.push_count, 0)) AS push_count,
+        SUM(COALESCE(b.read_users, 0)) AS read_users,
+        SUM(COALESCE(b.read_count, 0)) AS reads,
+        SUM(COALESCE(b.interaction_count, 0)) AS interactions
+      FROM behavior_daily_metrics b
+      LEFT JOIN content c ON c.id = b.content_id
+      LEFT JOIN projects p ON p.id = COALESCE(b.project_id, c.project_id)
+      WHERE b.tenant_id = ? AND b.content_id IS NOT NULL AND b.content_id <> ''
+      GROUP BY b.content_id, c.title, p.disease, b.disease_id
+      HAVING SUM(COALESCE(b.read_count, 0)) > 0
+          OR SUM(COALESCE(b.interaction_count, 0)) > 0
+          OR SUM(COALESCE(b.push_count, 0)) > 0
+      ORDER BY reads DESC, interactions DESC, push_count DESC
+      LIMIT 10
+    `, [scope!.tenantId]);
+    const byDiseaseRows = await dbAll<Record<string, unknown>>(`
+      SELECT
+        COALESCE(d.name, p.disease, b.disease_id, '未分组') AS disease,
+        SUM(COALESCE(b.read_count, 0)) AS reads,
+        SUM(COALESCE(b.interaction_count, 0)) AS interactions,
+        SUM(COALESCE(b.push_count, 0)) AS push_count
+      FROM behavior_daily_metrics b
+      LEFT JOIN projects p ON p.id = b.project_id
+      LEFT JOIN diseases d ON d.id = b.disease_id
+      WHERE b.tenant_id = ?
+      GROUP BY COALESCE(d.name, p.disease, b.disease_id, '未分组')
+      HAVING SUM(COALESCE(b.read_count, 0)) > 0
+          OR SUM(COALESCE(b.interaction_count, 0)) > 0
+          OR SUM(COALESCE(b.push_count, 0)) > 0
+      ORDER BY reads DESC, interactions DESC, push_count DESC
+      LIMIT 10
+    `, [scope!.tenantId]);
+    const contentCountRow = await dbGet<{ cnt: number | string }>('SELECT COUNT(*) as cnt FROM content WHERE tenant_id = ?', [scope!.tenantId]);
+    const avgSetting = await dbGet<{ value: string }>("SELECT value FROM platform_settings WHERE key = 'behaviorAvgReadDuration'");
     return {
-      pushCount: asNumber(stats.pushCount),
-      readUsers: asNumber(stats.readUsers),
-      totalReads: totals.reads,
-      totalInteractions: totals.interactions,
-      avgReadDuration: 0,
+      pushCount: totals.pushes || asNumber(stats.pushCount),
+      readUsers: totals.readUsers || asNumber(stats.readUsers),
+      totalReads: totals.reads || asNumber(stats.readCount),
+      totalInteractions: totals.interactions || asNumber(stats.interactionCount),
+      contentCount: asNumber(contentCountRow?.cnt),
+      avgReadDuration: safeAverage(totals.readSecWeighted, totals.reads) || asNumber(avgSetting?.value, 148),
       readTrend: daily.map((row) => ({ date: String(row.metric_date), value: asNumber(row.read_count) })),
       interactionTrend: daily.map((row) => ({ date: String(row.metric_date), value: asNumber(row.interaction_count) })),
-      topContent: [],
-      byDisease: [],
+      topContent: topRows.map((row) => ({
+        contentId: row.content_id,
+        title: row.title,
+        disease: row.disease,
+        pushCount: asNumber(row.push_count),
+        readUsers: asNumber(row.read_users),
+        reads: asNumber(row.reads),
+        interactions: asNumber(row.interactions),
+      })),
+      byDisease: byDiseaseRows.map((row) => ({
+        disease: row.disease,
+        reads: asNumber(row.reads),
+        interactions: asNumber(row.interactions),
+        pushCount: asNumber(row.push_count),
+      })),
       aggregateOnly: true,
     };
   }

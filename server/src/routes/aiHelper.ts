@@ -110,7 +110,7 @@ router.get('/system_prompt', (_req, res) => {
 
 router.get('/data/summary', async (_req, res, next) => {
   try {
-    res.json({ ok: true, metrics: await prefetchMetrics({ tenantId: _req.user?.tenantId }) });
+    res.json({ ok: true, metrics: await prefetchMetrics(_req.user?.tenantType === 'pharma' ? { tenantId: _req.user.tenantId } : {}) });
   } catch (err) {
     next(err);
   }
@@ -204,7 +204,7 @@ router.delete('/session', deleteAiHelperSession);
 
 router.post(['/run', '/command'], async (req, res, next) => {
   try {
-    res.json({ ok: true, ...(await runAssistant(req.body || {}, { userId: req.user?.id, tenantId: req.user?.tenantId })) });
+    res.json({ ok: true, ...(await runAssistant(req.body || {}, { userId: req.user?.id, tenantId: req.user?.tenantId, tenantType: req.user?.tenantType })) });
   } catch (err) {
     next(err);
   }
@@ -243,7 +243,7 @@ router.post(['/run/stream', '/command/stream'], async (req: Request, res: Respon
   });
 
   try {
-    for await (const line of streamAssistant(req.body || {}, { signal: abortController.signal, userId: req.user?.id, tenantId: req.user?.tenantId })) {
+    for await (const line of streamAssistant(req.body || {}, { signal: abortController.signal, userId: req.user?.id, tenantId: req.user?.tenantId, tenantType: req.user?.tenantType })) {
       if (res.destroyed || res.writableEnded) break;
       res.write(line);
     }

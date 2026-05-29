@@ -72,6 +72,11 @@ interface StreamAssistantOptions {
   signal?: AbortSignal;
   userId?: string;
   tenantId?: string;
+  tenantType?: 'ops' | 'pharma';
+}
+
+function enforcedTenantIdFromOptions(options: StreamAssistantOptions): string | undefined {
+  return options.tenantType === 'pharma' && options.tenantId ? options.tenantId : undefined;
 }
 
 function abortError(): Error {
@@ -2627,6 +2632,7 @@ async function generateMonthlyInsights(req: RunRequest, rootDir: string, current
 export async function* streamAssistant(req: RunRequest, options: StreamAssistantOptions = {}): AsyncGenerator<string> {
   const { rootDir } = createRunDirectory(req.conversation_id, req.run_id);
   const signal = options.signal;
+  const enforcedTenantId = enforcedTenantIdFromOptions(options);
   throwIfAborted(signal);
   const started = Date.now();
   const ai = new AIService();
@@ -2656,7 +2662,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     }
     return files.map((file) => publishedFileCache.get(file) || file);
   };
-  const executor = new SkillExecutor(rootDir, { allowManualPptSvg: isPremiumPptSvg, signal, publishFiles, tenantId: options.tenantId });
+  const executor = new SkillExecutor(rootDir, { allowManualPptSvg: isPremiumPptSvg, signal, publishFiles, tenantId: enforcedTenantId });
   const trace: AgentDonePayload['trace'] = [];
   const backgroundJobs: BackgroundJob[] = [];
   const injected = new Set<string>();
@@ -2701,7 +2707,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     const skillsUsed = new Set<string>(['patient-education-data-overview', 'md-to-pdf']);
     try {
       yield emit('progress', { phase: 'data', message: '正在聚合最近 7 天核心指标、项目贡献与内容表现', step: 1 });
-      const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir, options.tenantId);
+      const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir, enforcedTenantId);
       const summaryText = buildOverviewSummaryText(primaryDataContext);
       const emitTextResult = await executor.execute({
         type: 'skill_call',
@@ -2765,7 +2771,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   if (isPptLocalEdit) {
     const trace: AgentDonePayload['trace'] = [];
     const skillsUsed = new Set<string>(['ppt-master']);
-    const editExecutor = new SkillExecutor(rootDir, { allowManualPptSvg: true, signal, publishFiles, tenantId: options.tenantId });
+    const editExecutor = new SkillExecutor(rootDir, { allowManualPptSvg: true, signal, publishFiles, tenantId: enforcedTenantId });
     const isPremiumLocalEdit = shortcut === 'ppt_svg' || classifiedIntent?.ppt_mode === 'premium';
     let expectedEditPages: number[] = [];
     const writtenEditPages = new Set<number>();
@@ -2988,7 +2994,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       const skillsUsed = new Set<string>(['ppt-master']);
 
       yield emit('progress', { phase: 'data', message: '正在聚合 PPT 快速版所需核心指标、趋势、内容与项目数据', step: 1 });
-      const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir, options.tenantId);
+      const primaryDataContext = await buildPrimaryDataContext(effectiveReq, rootDir, enforcedTenantId);
       const totalSlides = Math.max(6, Math.min(8, Number(process.env.AI_HELPER_PPT_FAST_SLIDES || 7) || 7));
       const earlySummaryText = buildDirectPptEarlySummaryText(primaryDataContext, totalSlides);
       yield emit('text', earlySummaryText);
@@ -3295,7 +3301,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     const skillsUsed = new Set<string>(['monthly-template', 'md-to-pdf']);
     try {
       yield emit('progress', { phase: 'data', message: '正在聚合本月与上月指标', step: 1 });
-      const defaultMetrics = await prefetchMetrics(tenantScopedParams({}, options.tenantId));
+      const defaultMetrics = await prefetchMetrics(tenantScopedParams({}, enforcedTenantId));
       const scope = resolvePrimaryDataScope(effectiveReq, defaultMetrics.range.end);
       if (!scope.dateRange || !scope.compareRange) throw new Error('无法解析月报周期或对比周期');
       const currentMetrics = await prefetchMetrics(tenantScopedParams({
@@ -3304,13 +3310,13 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
         granularity: 'week',
         limit: 70,
         purpose: '后端模板月报：本月主数据',
-      }, options.tenantId));
+      }, enforcedTenantId));
       const previousMetrics = await prefetchMetrics(tenantScopedParams({
         dateRange: scope.compareRange,
         granularity: 'week',
         limit: 70,
         purpose: '后端模板月报：上月对比数据',
-      }, options.tenantId));
+      }, enforcedTenantId));
       writeMetricStores(rootDir, [
         { prefix: 'primary', label: '本月主数据', metrics: currentMetrics },
         { prefix: 'previous_period', label: '上月对比数据', metrics: previousMetrics },
@@ -3372,7 +3378,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   let messages: ChatMessage[];
   let primaryDataContext: Record<string, unknown>;
   try {
-    ({ messages, primaryDataContext } = await buildMessages(effectiveReq, rootDir, registry, executor, { includePreviousTurn, tenantId: options.tenantId }));
+    ({ messages, primaryDataContext } = await buildMessages(effectiveReq, rootDir, registry, executor, { includePreviousTurn, tenantId: enforcedTenantId }));
   } catch (err) {
     if (isAbortError(err)) throw err;
     const text = `PX 数据预取失败：${err instanceof Error ? err.message : String(err)}`;
