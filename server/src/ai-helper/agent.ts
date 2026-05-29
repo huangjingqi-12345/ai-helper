@@ -671,6 +671,35 @@ function shortcutFromIntent(intent: AssistantIntent | undefined): AiShortcut | u
   return intent.ppt_mode === 'premium' ? 'ppt_svg' : 'ppt';
 }
 
+function contextAwarePptEditFallbackIntentFromText(req: RunRequest): AssistantIntent | undefined {
+  const text = `${req.message || ''}\n${req.command || ''}`.replace(/\s+/g, '');
+  if (!text) return undefined;
+  const looksLikeContextEdit = /(不喜欢|不好看|不满意|太丑|换一个|重画|重做|重新画|改一下|调整|优化|替换|换风格|换版式|显示不全)/.test(text)
+    && /(这个|这页|页面|封面|上一|上个|刚才|刚刚|前面|当前|这版|那版|第\d{1,2}页|第[一二三四五六七八九十]+页)/.test(text);
+  if (!looksLikeContextEdit) return undefined;
+
+  const history = normalizedHistory(req);
+  const active = latestActivePptContext(req);
+  const historyFiles = history.flatMap((item) => item.files || []);
+  const historyText = history.map((item) => item.text).join('\n');
+  const hasPptContext = Boolean(active)
+    || historyFiles.some((file) => /(?:\/projects\/.*\/svg_output\/.*\.svg|\.pptx(?:$|\?)|_svg\.pptx(?:$|\?))/i.test(file))
+    || /(PPT|ppt|幻灯片|演示文稿|汇报材料|可编辑PPT|可编辑的PPT|SVG页面|高精度SVG|逐页设计|页面大纲|第\s*\d{1,2}\s*页|封面)/.test(historyText);
+  if (!hasPptContext) return undefined;
+
+  const isPremium = Boolean(active?.slides.some((slide) => slide.svgPath || slide.assetUrl))
+    || historyFiles.some((file) => /\/svg_output\/.*\.svg/i.test(file))
+    || /(精美版|高精度SVG|SVG页面|逐页设计|视觉完成度|深色科技感)/.test(historyText);
+  return {
+    task: 'ppt_edit',
+    ppt_mode: isPremium ? 'premium' : 'fast',
+    confidence: 0.98,
+    is_followup: true,
+    is_modification: true,
+    reason: '规则兜底：上下文PPT页面修改',
+  };
+}
+
 function routeLabel(shortcut?: AiShortcut): string | undefined {
   if (shortcut === 'data_qa') return '数据问答';
   if (shortcut === 'overview') return '数据概览';
@@ -3488,13 +3517,15 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
   const registry = new SkillRegistry();
   const explicitShortcut = asShortcut(req.shortcut);
   const hasPreviousTurn = previousHistoryTurn(req).length > 0;
-  const classifiedIntent = !explicitShortcut ? await classifyAssistantIntent(req, rootDir, signal) : undefined;
+  const contextFallbackIntent = !explicitShortcut ? contextAwarePptEditFallbackIntentFromText(req) : undefined;
+  const classifiedIntent = !explicitShortcut && !contextFallbackIntent ? await classifyAssistantIntent(req, rootDir, signal) : undefined;
+  const contextFallbackShortcut = shortcutFromIntent(contextFallbackIntent);
   const classifiedShortcut = shortcutFromIntent(classifiedIntent);
-  const fallbackIntent = !explicitShortcut && !classifiedShortcut ? strongFallbackIntentFromText(req) : undefined;
-  const effectiveIntent = classifiedShortcut ? classifiedIntent : (fallbackIntent || classifiedIntent);
+  const fallbackIntent = !explicitShortcut && !contextFallbackShortcut && !classifiedShortcut ? strongFallbackIntentFromText(req) : undefined;
+  const effectiveIntent = contextFallbackIntent || (classifiedShortcut ? classifiedIntent : (fallbackIntent || classifiedIntent));
   const classifiedPptEdit = Boolean(effectiveIntent?.task === 'ppt_edit' || (effectiveIntent?.task === 'ppt' && effectiveIntent.is_modification));
   const includePreviousTurn = Boolean(classifiedPptEdit && hasPreviousTurn);
-  const shortcut = explicitShortcut || classifiedShortcut || shortcutFromIntent(fallbackIntent);
+  const shortcut = explicitShortcut || contextFallbackShortcut || classifiedShortcut || shortcutFromIntent(fallbackIntent);
   const reqWithIntentRange: RunRequest = {
     ...req,
     date_range: normalizeDateRangeValue(req.date_range ?? obj(req).dateRange) || effectiveIntent?.date_range || req.date_range,
@@ -3637,7 +3668,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     return result;
   };
 
-  runtimeLog('request_start', { mode: 'new-ai-ts', rootDir, runtime_log_path: RUNTIME_LOG_PATH, model_io_log_path: MODEL_IO_LOG_PATH, run_model_io_log_path: path.join(rootDir, 'model_io.md'), classified_intent: classifiedIntent, fallback_intent: fallbackIntent, include_previous_turn: includePreviousTurn, inferred_shortcut: !explicitShortcut && shortcut ? shortcut : undefined, ...requestLog(effectiveReq) });
+  runtimeLog('request_start', { mode: 'new-ai-ts', rootDir, runtime_log_path: RUNTIME_LOG_PATH, model_io_log_path: MODEL_IO_LOG_PATH, run_model_io_log_path: path.join(rootDir, 'model_io.md'), classified_intent: classifiedIntent, context_fallback_intent: contextFallbackIntent, fallback_intent: fallbackIntent, include_previous_turn: includePreviousTurn, inferred_shortcut: !explicitShortcut && shortcut ? shortcut : undefined, ...requestLog(effectiveReq) });
   yield emit('status', '开始处理请求...');
   const routeNote = !explicitShortcut && shortcut === 'ppt' && effectiveIntent?.task === 'ppt' && effectiveIntent.ppt_mode === 'unspecified'
     ? '已为你选择 PPT 快速版；如需更强视觉效果，可使用 PPT 精美版。'

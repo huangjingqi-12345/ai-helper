@@ -27,6 +27,52 @@ afterEach(async () => {
 });
 
 describe('ppt-master clone for edit', () => {
+  it('uses context fallback for vague page replacement without waiting for intent classification', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://example.test/v1');
+    vi.stubEnv('TEXT_MODEL', 'test-model');
+    const fetchMock = vi.fn(async () => {
+      throw new Error('intent classifier should not be called for contextual PPT edit fallback');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    let route: { type: string; data: Record<string, unknown> } | undefined;
+    for await (const line of streamAssistant({
+      conversation_id: 'test-context-ppt-edit-fallback',
+      run_id: 'run-context-ppt-edit-fallback',
+      message: '我不喜欢这个页面，换一个',
+      history: [
+        { role: 'user', text: '请帮我生成一份患教运营汇报 PPT 精美版' },
+        {
+          role: 'assistant',
+          text: '正在逐页生成高精度 SVG 页面，当前已完成封面。',
+          activePptContext: {
+            projectPath: 'projects/context_fallback_ppt',
+            slideCount: 1,
+            slides: [
+              { slideNo: 1, title: '封面', svgPath: '/projects/context_fallback_ppt/svg_output/01_slide.svg' },
+            ],
+          },
+        },
+      ],
+    })) {
+      const event = JSON.parse(line) as { type: string; data: Record<string, unknown> };
+      if (event.type === 'route') {
+        route = event;
+        break;
+      }
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(route?.data).toEqual(expect.objectContaining({
+      shortcut: 'ppt_svg',
+      task: 'ppt_edit',
+      is_followup: true,
+      is_modification: true,
+      history_included: true,
+    }));
+  });
+
   it('copies an existing PPT project and removes only pages selected for editing', async () => {
     const root = path.join(AI_HELPER_ROOT, sourceProject);
     await fs.mkdir(path.join(root, 'svg_output'), { recursive: true });
