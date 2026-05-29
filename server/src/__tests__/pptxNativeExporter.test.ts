@@ -68,6 +68,34 @@ describe('pptxNativeExporter', () => {
     expect(validation.editableShapeCount).toBeGreaterThanOrEqual(4);
   });
 
+  it('preserves SVG gradient fills as editable PPT gradient fills', () => {
+    const root = createProject();
+    fs.writeFileSync(path.join(root, 'svg_output', '01_cover.svg'), `
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#050B14"/>
+      <stop offset="100%" stop-color="#0A192F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00F0FF" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#00F0FF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bgGrad)"/>
+  <circle cx="640" cy="360" r="300" fill="url(#glow)"/>
+  <text x="80" y="120" font-family="Microsoft YaHei" font-size="42" fill="#FFFFFF">科技感背景</text>
+</svg>`, 'utf8');
+
+    const exported = exportPptProjectToPptxSync(root, { projectName: 'unit_test_gradient' });
+    const slideXml = readStoredZipEntry(exported.pptxPath, 'ppt/slides/slide1.xml');
+    expect(slideXml).toContain('<a:gradFill');
+    expect(slideXml).toContain('<a:lin');
+    expect(slideXml).toContain('<a:path path="circle"');
+    expect(slideXml).toContain('050B14');
+    expect(slideXml).toContain('0A192F');
+  });
+
   it('exports long CJK SVG text as a wide non-wrapping PPT text box', () => {
     const root = createProject();
     fs.writeFileSync(path.join(root, 'svg_output', '01_cover.svg'), `

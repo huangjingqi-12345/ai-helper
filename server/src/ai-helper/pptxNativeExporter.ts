@@ -22,6 +22,19 @@ interface SvgNode {
   text: string;
 }
 
+interface SvgGradientStop {
+  offset: number;
+  color: string;
+  opacity: number;
+}
+
+interface SvgGradientDef {
+  id: string;
+  kind: 'linear' | 'radial';
+  attrs: Record<string, string>;
+  stops: SvgGradientStop[];
+}
+
 interface ConvertCtx {
   tx: number;
   ty: number;
@@ -30,6 +43,7 @@ interface ConvertCtx {
   opacity: number;
   inherited: Record<string, string>;
   canvasWidth: number;
+  gradients: Map<string, SvgGradientDef>;
 }
 
 interface SlideBuildCtx {
@@ -307,6 +321,83 @@ function colorHex(value: string | undefined): string | undefined {
   return named[v];
 }
 
+
+function opacityFromColor(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const rgba = value.trim().match(/^rgba\(([^)]+)\)$/i);
+  if (!rgba) return undefined;
+  const parts = rgba[1].split(',').map((p) => p.trim());
+  const alpha = Number(parts[3]);
+  return Number.isFinite(alpha) ? clamp(alpha, 0, 1) : undefined;
+}
+
+function parseGradientOffset(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const raw = value.trim();
+  if (raw.endsWith('%')) return clamp(Number(raw.slice(0, -1)) / 100, 0, 1);
+  const numValue = Number(raw);
+  return Number.isFinite(numValue) ? clamp(numValue, 0, 1) : fallback;
+}
+
+function gradientStops(node: SvgNode): SvgGradientStop[] {
+  const stops = node.children.filter((child) => localName(child.tag).toLowerCase() === 'stop');
+  const parsed = stops.map((stop, index) => {
+    const attrs = { ...parseStyle(stop.attrs.style), ...stop.attrs };
+    const colorValue = attrs['stop-color'] || '#000000';
+    const color = colorHex(colorValue) || '000000';
+    const colorOpacity = opacityFromColor(colorValue);
+    const opacity = clamp(Number(attrs['stop-opacity'] ?? colorOpacity ?? 1), 0, 1);
+    return { offset: parseGradientOffset(attrs.offset, stops.length <= 1 ? index : index / (stops.length - 1)), color, opacity };
+  }).filter((stop) => Boolean(stop.color));
+  if (!parsed.length) return [];
+  return parsed.sort((a, b) => a.offset - b.offset);
+}
+
+function collectGradientDefs(root: SvgNode): Map<string, SvgGradientDef> {
+  const gradients = new Map<string, SvgGradientDef>();
+  const walk = (node: SvgNode) => {
+    const tag = localName(node.tag).toLowerCase();
+    if ((tag === 'lineargradient' || tag === 'radialgradient') && node.attrs.id) {
+      const stops = gradientStops(node);
+      if (stops.length) gradients.set(node.attrs.id, { id: node.attrs.id, kind: tag === 'radialgradient' ? 'radial' : 'linear', attrs: node.attrs, stops });
+    }
+    node.children.forEach(walk);
+  };
+  walk(root);
+  return gradients;
+}
+
+function gradientIdFromPaint(value: string | undefined): string | undefined {
+  const match = String(value || '').trim().match(/^url\(#([^\)]+)\)$/i);
+  return match?.[1];
+}
+
+function gradientAngle(def: SvgGradientDef): number {
+  const x1 = num(def.attrs.x1, 0);
+  const y1 = num(def.attrs.y1, 0);
+  const x2 = num(def.attrs.x2, 1);
+  const y2 = num(def.attrs.y2, 0);
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const deg = Math.atan2(dy, dx) * 180 / Math.PI;
+  return Math.round(((deg + 360) % 360) * 60000);
+}
+
+function gradientFillXml(def: SvgGradientDef, opacity: number): string {
+  const stops = def.stops.length === 1
+    ? [def.stops[0], { ...def.stops[0], offset: 1 }]
+    : def.stops;
+  const gsLst = stops.map((stop) => {
+    const pos = clamp(Math.round(stop.offset * 100000), 0, 100000);
+    const stopOpacity = opacity * stop.opacity;
+    return `<a:gs pos="${pos}"><a:srgbClr val="${stop.color}">${alphaXml(stopOpacity)}</a:srgbClr></a:gs>`;
+  }).join('');
+  if (def.kind === 'radial') {
+    return `<a:gradFill flip="none" rotWithShape="1"><a:gsLst>${gsLst}</a:gsLst><a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path></a:gradFill>`;
+  }
+  return `<a:gradFill flip="none" rotWithShape="1"><a:gsLst>${gsLst}</a:gsLst><a:lin ang="${gradientAngle(def)}" scaled="1"/></a:gradFill>`;
+}
+
 function alphaXml(opacity: number): string {
   const val = clamp(Math.round(opacity * 100000), 0, 100000);
   return val >= 99999 ? '' : `<a:alpha val="${val}"/>`;
@@ -314,9 +405,14 @@ function alphaXml(opacity: number): string {
 
 function fillXml(attrs: Record<string, string>, ctx: ConvertCtx, defaultFill?: string): string {
   const fill = attrs.fill ?? defaultFill;
+  const opacity = ctx.opacity * clamp(Number(attrs['fill-opacity'] ?? 1), 0, 1);
+  const gradientId = gradientIdFromPaint(fill);
+  if (gradientId) {
+    const gradient = ctx.gradients.get(gradientId);
+    if (gradient) return gradientFillXml(gradient, opacity);
+  }
   const hex = colorHex(fill);
   if (!hex) return '<a:noFill/>';
-  const opacity = ctx.opacity * clamp(Number(attrs['fill-opacity'] ?? 1), 0, 1);
   return `<a:solidFill><a:srgbClr val="${hex}">${alphaXml(opacity)}</a:srgbClr></a:solidFill>`;
 }
 
@@ -857,6 +953,7 @@ export function exportPptProjectToPptxSync(projectRoot: string, options: { proje
       opacity: 1,
       inherited: {},
       canvasWidth: size.width,
+      gradients: collectGradientDefs(root),
     };
     const slide: SlideBuildCtx = { nextShapeId: 2, media: mediaFiles, mediaExts: allMediaExts, rels: [], nextRelId: 2, svgFile, projectRoot };
     const shapes = convertNode(root, ctx, slide).map((shape) => shape.xml).join('');
