@@ -5,7 +5,7 @@ import {
   formatElapsed,
   statusFromStreamEvent,
 } from '@/lib/ai-helper/loadingStatus';
-import { cancelAiHelperRun, postAiHelperStream, readNdjsonStream } from '@/lib/ai-helper/stream';
+import { attachAiHelperRunStream, cancelAiHelperRun, postAiHelperStream, readNdjsonStream } from '@/lib/ai-helper/stream';
 import { deleteAiHelperSession, fetchAiHelperSession, saveAiHelperSession } from '@/lib/ai-helper/session';
 import type { ActivePptContext, AiShortcut, ChatMessage, PptSvgProgress, ShortcutPrompts, ShortcutRunOptions } from '@/lib/ai-helper/types';
 
@@ -150,14 +150,33 @@ function persistedMessagesForModel(messages: ChatMessage[]): Array<Pick<ChatMess
 }
 
 function normalizePersistedMessages(messages: ChatMessage[]): ChatMessage[] {
-  return messages.map((msg) => ({
-    ...msg,
-    loading: false,
-    loadingStatus: undefined,
-    loadingElapsed: undefined,
-    loadingStep: undefined,
-    loadingStartedAt: undefined,
-  }));
+  return messages.map((msg) => {
+    const rawFiles = msg.files || [];
+    const slides = extractPptSvgSlides(rawFiles);
+    const exportedPpt = extractPptxFiles(rawFiles)[0];
+    const progress = msg.pptSvgProgress || slides.length
+      ? {
+          mode: 'spec' as const,
+          title: 'PPT 快速版页面预览',
+          ...msg.pptSvgProgress,
+          slides: msg.pptSvgProgress?.slides?.length ? msg.pptSvgProgress.slides : slides,
+          completed: Boolean(msg.pptSvgProgress?.completed) || Boolean(exportedPpt),
+          exportedPpt: msg.pptSvgProgress?.exportedPpt || exportedPpt,
+        }
+      : undefined;
+    return {
+      ...msg,
+      files: filterVisibleDeliverables(rawFiles),
+      pptSvgProgress: progress,
+      loading: Boolean(msg.loading),
+      loadingStatus: msg.loading ? msg.loadingStatus : undefined,
+      modelProgressStatus: msg.loading ? msg.modelProgressStatus : undefined,
+      hasModelProgress: msg.loading ? Boolean(msg.hasModelProgress) : false,
+      loadingElapsed: msg.loading ? msg.loadingElapsed : undefined,
+      loadingStep: undefined,
+      loadingStartedAt: msg.loading ? (msg.loadingStartedAt || Date.now()) : undefined,
+    };
+  });
 }
 
 function isPptShortcut(shortcut?: AiShortcut): boolean {
@@ -183,6 +202,7 @@ export function usePxAssistant() {
   const skipNextPersistRef = useRef(false);
   const localSessionTouchedRef = useRef(false);
   const saveAbortRef = useRef<AbortController | null>(null);
+  const resumedRunKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -216,6 +236,7 @@ export function usePxAssistant() {
         skipNextPersistRef.current = true;
         messagesRef.current = restored;
         setMessages(restored);
+        setStreaming(restored.some((message) => message.loading && message.runId));
       }
       sessionLoadedRef.current = true;
       setShortcutPrompts(prompts);
@@ -238,6 +259,7 @@ export function usePxAssistant() {
     }, streaming ? 1200 : 350);
     return () => window.clearTimeout(timeout);
   }, [messages, streaming, persistSessionSnapshot]);
+
 
   const resetConversation = useCallback(() => {
     localSessionTouchedRef.current = true;
@@ -262,12 +284,14 @@ export function usePxAssistant() {
 
   const stopGeneration = useCallback(() => {
     const active = activeRunRef.current;
-    if (!active) return;
-    void cancelAiHelperRun(active.conversationId, active.runId);
-    active.controller.abort();
+    const fallback = messagesRef.current.find((message) => message.loading && message.runId);
+    const target = active || (fallback?.runId ? { assistantId: fallback.id, conversationId: conversationIdRef.current, runId: fallback.runId, controller: undefined as AbortController | undefined } : undefined);
+    if (!target) return;
+    void cancelAiHelperRun(target.conversationId, target.runId);
+    target.controller?.abort();
     setMessages((prev) => {
       const next = prev.map((m) =>
-        m.id === active.assistantId
+        m.id === target.assistantId
           ? {
               ...m,
               loadingStatus: '正在暂停生成…',
@@ -279,6 +303,219 @@ export function usePxAssistant() {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    if (!sessionLoadedRef.current) return;
+    const running = messages.find((message) => message.role === 'assistant' && message.loading && message.runId);
+    if (!running?.runId) return;
+    const conversationId = conversationIdRef.current;
+    const runKey = `${conversationId}::${running.runId}`;
+    if (resumedRunKeysRef.current.has(runKey)) return;
+    if (activeRunRef.current?.runId === running.runId) return;
+
+    resumedRunKeysRef.current.add(runKey);
+    const assistantId = running.id;
+    const startedAt = running.loadingStartedAt || Date.now();
+    const abortController = new AbortController();
+    activeRunRef.current = { controller: abortController, assistantId, conversationId, runId: running.runId };
+    setStreaming(true);
+    updateAssistant(assistantId, {
+      loadingElapsed: formatElapsed(Math.floor(Math.max(0, Date.now() - startedAt) / 1000)),
+      loadingStartedAt: startedAt,
+    });
+
+    void (async () => {
+      let assistantText = '';
+      let turnFiles = filterVisibleDeliverables(running.files || []);
+      let pptSvgProgress = running.pptSvgProgress;
+      let isPptPreviewShortcut = Boolean(pptSvgProgress);
+      let activeShortcut: AiShortcut | undefined = pptSvgProgress?.mode === 'svg' ? 'ppt_svg' : pptSvgProgress ? 'ppt' : undefined;
+      let latestLoadingStatus = running.loadingStatus || '';
+      let sawDone = false;
+      const elapsedTimerId = window.setInterval(() => {
+        updateAssistant(assistantId, {
+          loadingElapsed: formatElapsed(Math.floor(Math.max(0, Date.now() - startedAt) / 1000)),
+          loadingStartedAt: startedAt,
+        });
+      }, 1000);
+
+      const pushLoadingStatus = (line: string, step?: number) => {
+        latestLoadingStatus = line;
+        updateAssistant(assistantId, {
+          loadingStatus: line,
+          loadingStep: step,
+          loadingStartedAt: startedAt,
+        });
+      };
+
+      const updatePptSvgProgress = (patch: Partial<PptSvgProgress>) => {
+        if (!isPptPreviewShortcut) return;
+        const base = pptSvgProgress || pptProgressForShortcut(activeShortcut);
+        if (!base) return;
+        pptSvgProgress = {
+          ...base,
+          ...patch,
+          slides: patch.slides ? sortedUnique(patch.slides) : base.slides,
+        };
+        updateAssistant(assistantId, { pptSvgProgress });
+      };
+
+      const pptSpecificStatus = (evt: { type: string; data: unknown }): string | undefined => {
+        if (!isPptPreviewShortcut || evt.type !== 'progress' || !evt.data || typeof evt.data !== 'object') return undefined;
+        const payload = evt.data as { phase?: string; action?: string; detail?: string };
+        if (payload.phase !== 'skill_call') return undefined;
+        const action = String(payload.action || '');
+        const detail = String(payload.detail || '');
+        if (action === 'write_ppt_svg_slide') return `正在生成第 ${(pptSvgProgress?.slides.length || 0) + 1} 页`;
+        if (action === 'write_project_file' || action === 'write_project_files') return '正在整理 PPT 结构与备注';
+        if (action === 'render_ppt_from_specs') return '正在批量生成 PPT 页面预览';
+        if (action === 'ppt_master_export' || /export/i.test(detail)) return '正在导出 PPT 文件';
+        return undefined;
+      };
+
+      const applyStreamEvent = (evt: { type: string; data: unknown }) => {
+        if (evt.type === 'model_progress') {
+          const mapped = statusFromStreamEvent(evt);
+          if (mapped?.text) {
+            updateAssistant(assistantId, {
+              modelProgressStatus: mapped.text,
+              hasModelProgress: true,
+              loadingStartedAt: startedAt,
+            });
+          }
+          return;
+        }
+        if (evt.type === 'route' && evt.data && typeof evt.data === 'object') {
+          const payload = evt.data as { shortcut?: AiShortcut; label?: string; note?: string };
+          if (isPptShortcut(payload.shortcut)) {
+            activeShortcut = payload.shortcut;
+            isPptPreviewShortcut = true;
+            const nextProgress = pptSvgProgress || pptProgressForShortcut(activeShortcut);
+            if (nextProgress) {
+              pptSvgProgress = nextProgress;
+              updateAssistant(assistantId, { pptSvgProgress });
+            }
+            pushLoadingStatus(payload.note || `已选择${payload.label || 'PPT 生成模式'}，正在准备数据`);
+          }
+        }
+        const pptStatus = pptSpecificStatus(evt);
+        if (pptStatus) {
+          pushLoadingStatus(pptStatus);
+          return;
+        }
+        const mapped = statusFromStreamEvent(evt);
+        if (mapped?.text) pushLoadingStatus(mapped.text, mapped.step);
+      };
+
+      try {
+        const resp = await attachAiHelperRunStream(conversationId, running.runId!, abortController.signal);
+        if (!resp.ok || !resp.body) return;
+        for await (const evt of readNdjsonStream(resp.body)) {
+          if (abortController.signal.aborted) break;
+          if (evt.type === 'text') {
+            assistantText += String(evt.data ?? '');
+            updateAssistant(assistantId, { text: assistantText, loading: true, loadingStartedAt: startedAt });
+            continue;
+          }
+          applyStreamEvent(evt);
+          if (isPptPreviewShortcut && evt.type === 'skill_result') {
+            const newSlides = extractPptSvgSlides(evt.data);
+            if (newSlides.length) {
+              const slides = sortedUnique([...(pptSvgProgress?.slides || []), ...newSlides]);
+              updatePptSvgProgress({ slides, completed: false });
+              pushLoadingStatus(
+                activeShortcut === 'ppt_svg'
+                  ? `精美版第 ${slides.length} 页已生成，正在继续生成`
+                  : `已生成 ${slides.length} 页预览，正在继续处理`,
+              );
+            }
+            const exported = extractPptxFiles(evt.data)[0];
+            if (exported) {
+              updatePptSvgProgress({ completed: true, exportedPpt: exported });
+              pushLoadingStatus('PPT 已导出，正在整理结果');
+            }
+          }
+          if (evt.type === 'active_ppt_context' && evt.data && typeof evt.data === 'object') {
+            const activePptContext = evt.data as ActivePptContext;
+            activeShortcut = activeShortcut || 'ppt_svg';
+            isPptPreviewShortcut = true;
+            const contextSlides = sortedUnique((activePptContext.slides || []).flatMap((slide) => [slide.assetUrl, slide.svgPath].filter((x): x is string => Boolean(x))));
+            if (contextSlides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...contextSlides]), completed: Boolean(activePptContext.exportedPptx), exportedPpt: activePptContext.exportedPptx });
+            updateAssistant(assistantId, { activePptContext });
+          }
+          if (evt.type === 'files') {
+            const files = Array.isArray(evt.data) ? (evt.data as string[]) : [];
+            turnFiles = filterVisibleDeliverables([...turnFiles, ...files]);
+            const slides = isPptPreviewShortcut ? extractPptSvgSlides(files) : [];
+            if (slides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...slides]) });
+            const exported = isPptPreviewShortcut ? extractPptxFiles(files)[0] : undefined;
+            if (exported) updatePptSvgProgress({ completed: true, exportedPpt: exported });
+            updateAssistant(assistantId, { files: turnFiles });
+          } else if (evt.type === 'done') {
+            sawDone = true;
+            const done = (evt.data || {}) as { files?: string[]; text?: string; trace?: unknown; activePptContext?: ActivePptContext };
+            const activePptContext = extractActivePptContext(done);
+            if (Array.isArray(done.files) && done.files.length) {
+              turnFiles = filterVisibleDeliverables(done.files);
+              const slides = isPptPreviewShortcut ? extractPptSvgSlides(done.files) : [];
+              if (slides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...slides]) });
+              const exported = isPptPreviewShortcut ? extractPptxFiles(done.files)[0] : undefined;
+              if (exported) updatePptSvgProgress({ completed: true, exportedPpt: exported });
+            }
+            if (typeof done.text === 'string' && done.text.trim()) assistantText = done.text;
+            updateAssistant(assistantId, {
+              text: assistantText || running.text,
+              files: turnFiles,
+              activePptContext,
+              loading: false,
+              loadingStatus: undefined,
+              modelProgressStatus: undefined,
+              loadingElapsed: formatElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+              loadingStartedAt: startedAt,
+            });
+          }
+        }
+        if (!sawDone && !abortController.signal.aborted) {
+          updateAssistant(assistantId, {
+            text: assistantText || running.text,
+            files: turnFiles,
+            loading: true,
+            loadingStatus: latestLoadingStatus || running.loadingStatus,
+            modelProgressStatus: undefined,
+            loadingStartedAt: startedAt,
+          });
+        }
+      } catch (err) {
+        if (!(abortController.signal.aborted || (err instanceof DOMException && err.name === 'AbortError'))) {
+          updateAssistant(assistantId, {
+            text: assistantText || running.text,
+            files: turnFiles,
+            loading: true,
+            loadingStatus: latestLoadingStatus || running.loadingStatus,
+            loadingStartedAt: startedAt,
+          });
+        }
+      } finally {
+        window.clearInterval(elapsedTimerId);
+        if (abortController.signal.aborted) {
+          updateAssistant(assistantId, {
+            loading: false,
+            text: assistantText.trim() ? `${assistantText}\n\n已暂停生成。` : '已暂停生成。',
+            files: turnFiles,
+            loadingStatus: undefined,
+            modelProgressStatus: undefined,
+            loadingElapsed: undefined,
+            loadingStep: undefined,
+          });
+        }
+        if (activeRunRef.current?.assistantId === assistantId) activeRunRef.current = null;
+        if (conversationIdRef.current === conversationId && messagesRef.current.length > 0) {
+          persistSessionSnapshot(conversationId, messagesRef.current);
+        }
+        setStreaming(!sawDone && !abortController.signal.aborted);
+      }
+    })();
+  }, [messages, updateAssistant, persistSessionSnapshot]);
 
   const sendMessage = useCallback(
     async (rawMessage: string, options: ShortcutRunOptions = {}) => {
@@ -318,7 +555,7 @@ export function usePxAssistant() {
         runId,
         files: [],
         loading: true,
-        loadingStatus: '等待后端响应…',
+        loadingStatus: undefined,
         loadingElapsed: '0 秒',
         loadingStartedAt: startedAt,
         pptSvgProgress: initialPptSvgProgress,
@@ -335,6 +572,7 @@ export function usePxAssistant() {
       let assistantText = '';
       let turnFiles: string[] = [];
       let sawDone = false;
+      let backgroundContinues = false;
       let pptSvgProgress = initialPptSvgProgress;
       let latestLoadingStatus = assistantMsg.loadingStatus || '';
       let modelWaitingTimerId: number | undefined;
@@ -407,6 +645,17 @@ export function usePxAssistant() {
       };
 
       const applyStreamEvent = (evt: { type: string; data: unknown }) => {
+        if (evt.type === 'model_progress') {
+          const mapped = statusFromStreamEvent(evt);
+          if (mapped?.text) {
+            updateAssistant(assistantId, {
+              modelProgressStatus: mapped.text,
+              hasModelProgress: true,
+              loadingStartedAt: startedAt,
+            });
+          }
+          return;
+        }
         if (evt.type === 'route' && evt.data && typeof evt.data === 'object') {
           const payload = evt.data as { shortcut?: AiShortcut; label?: string; note?: string };
           if (isPptShortcut(payload.shortcut)) {
@@ -441,7 +690,6 @@ export function usePxAssistant() {
           updateAssistant(assistantId, {
             text: assistantText,
             loading: true,
-            loadingStatus: '正在输出',
             loadingStartedAt: startedAt,
           });
           await sleep(12);
@@ -491,10 +739,18 @@ export function usePxAssistant() {
                 );
               }
               const exported = extractPptxFiles(evt.data)[0];
-              if (exported) {
-                updatePptSvgProgress({ completed: true, exportedPpt: exported });
-                pushLoadingStatus('PPT 已导出，正在整理结果', undefined);
-              }
+            if (exported) {
+              updatePptSvgProgress({ completed: true, exportedPpt: exported });
+              pushLoadingStatus('PPT 已导出，正在整理结果', undefined);
+            }
+          }
+            if (evt.type === 'active_ppt_context' && evt.data && typeof evt.data === 'object') {
+              const activePptContext = evt.data as ActivePptContext;
+              activeShortcut = activeShortcut || 'ppt_svg';
+              isPptPreviewShortcut = true;
+              const contextSlides = sortedUnique((activePptContext.slides || []).flatMap((slide) => [slide.assetUrl, slide.svgPath].filter((x): x is string => Boolean(x))));
+              if (contextSlides.length) updatePptSvgProgress({ slides: sortedUnique([...(pptSvgProgress?.slides || []), ...contextSlides]), completed: Boolean(activePptContext.exportedPptx), exportedPpt: activePptContext.exportedPptx });
+              updateAssistant(assistantId, { activePptContext });
             }
             if (evt.type === 'files') {
               const files = Array.isArray(evt.data) ? (evt.data as string[]) : [];
@@ -548,8 +804,22 @@ export function usePxAssistant() {
           return;
         }
 
+        if (!sawDone) {
+          backgroundContinues = true;
+          updateAssistant(assistantId, {
+            text: assistantText,
+            files: turnFiles,
+            loading: true,
+            loadingStatus: latestLoadingStatus || assistantMsg.loadingStatus,
+            modelProgressStatus: undefined,
+            loadingElapsed: formatElapsed(Math.floor((Date.now() - startedAt) / 1000)),
+            loadingStartedAt: startedAt,
+          });
+          return;
+        }
+
         if (!assistantText.trim()) {
-          assistantText = sawDone ? '已完成。' : '连接已结束，但未收到完整结果，请稍后重试。';
+          assistantText = '已完成。';
         }
 
         updateAssistant(assistantId, {
@@ -582,13 +852,13 @@ export function usePxAssistant() {
       } finally {
         clearModelWaitingTimer();
         window.clearInterval(elapsedTimerId);
-        if (activeRunRef.current?.assistantId === assistantId) {
+        if (!backgroundContinues && activeRunRef.current?.assistantId === assistantId) {
           activeRunRef.current = null;
         }
         if (conversationIdRef.current === conversationId && messagesRef.current.length > 0) {
           persistSessionSnapshot(conversationId, messagesRef.current);
         }
-        setStreaming(false);
+        setStreaming(backgroundContinues);
       }
     },
     [streaming, serviceReady, updateAssistant, persistSessionSnapshot],

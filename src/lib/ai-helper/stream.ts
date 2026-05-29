@@ -80,6 +80,23 @@ export async function postAiHelperStream(
   return resp;
 }
 
+export async function attachAiHelperRunStream(
+  conversationId: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<Response> {
+  return fetch('/api/ai-helper/run/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...aiHelperAuthHeaders() },
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      run_id: runId,
+      attach_only: true,
+    }),
+    signal,
+  });
+}
+
 export async function cancelAiHelperRun(conversationId: string, runId: string): Promise<void> {
   if (!conversationId || !runId) return;
   await fetch(`/api/ai-helper/runs/${encodeURIComponent(runId)}/cancel`, {

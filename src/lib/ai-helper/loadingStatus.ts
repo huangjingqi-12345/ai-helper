@@ -102,6 +102,21 @@ function progressStatus(data: unknown): { text: string; step?: number } | null {
   return null;
 }
 
+function modelProgressStatus(data: unknown): { text: string; step?: number } | null {
+  if (!data || typeof data !== 'object') return null;
+  const payload = data as { message?: string; step?: number; chunk_count?: number; content_chars?: number; done?: boolean };
+  const step = typeof payload.step === 'number' ? payload.step : undefined;
+  const message = String(payload.message || '').trim();
+  if (message) return { text: shortenBackendMessage(message, 60), step };
+  if (typeof payload.content_chars === 'number' && payload.content_chars > 0) {
+    return { text: `模型响应中，已生成约 ${payload.content_chars} 字符`, step };
+  }
+  if (typeof payload.chunk_count === 'number' && payload.chunk_count > 0) {
+    return { text: `模型正在生成…已接收 ${payload.chunk_count} 个片段`, step };
+  }
+  return payload.done ? { text: '模型响应已完成', step } : { text: '模型正在输出结构化计划…', step };
+}
+
 export function statusFromStreamEvent(evt: StreamEvent): { text: string; step?: number } | null {
   switch (evt.type) {
     case 'status': {
@@ -114,6 +129,8 @@ export function statusFromStreamEvent(evt: StreamEvent): { text: string; step?: 
     }
     case 'progress':
       return progressStatus(evt.data);
+    case 'model_progress':
+      return modelProgressStatus(evt.data);
     case 'thought': {
       const raw = String(evt.data ?? '').trim();
       const stepMatch = raw.match(/\[step\s+(\d+)\]/i);

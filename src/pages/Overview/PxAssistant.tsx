@@ -21,7 +21,7 @@ import { clsx } from 'clsx';
 import { usePxAssistant } from '@/hooks/usePxAssistant';
 import { renderMarkdownToHtml } from '@/lib/ai-helper/markdown';
 import { fileNameFromUrl, resolveAiHelperAssetUrl } from '@/lib/ai-helper/deliverables';
-import type { PptSvgProgress } from '@/lib/ai-helper/types';
+import type { ChatMessage, PptSvgProgress } from '@/lib/ai-helper/types';
 import { PxAssistantFiles } from './PxAssistantFiles';
 
 interface PxAssistantProps {
@@ -77,7 +77,12 @@ function currentTime(): string {
   return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 
-function PptSvgProgressPreview({ progress }: { progress: PptSvgProgress }): JSX.Element {
+function assistantStatusText(msg: ChatMessage): string | undefined {
+  if (!msg.loading) return undefined;
+  return msg.hasModelProgress ? msg.modelProgressStatus : msg.loadingStatus;
+}
+
+function PptSvgProgressPreview({ progress, loading = false }: { progress: PptSvgProgress; loading?: boolean }): JSX.Element | null {
   const slides = progress.slides;
   const [activeIndex, setActiveIndex] = useState(0);
   const title = progress.title || (progress.mode === 'spec' ? 'PPT 快速版页面预览' : 'PPT 精美版生成进度');
@@ -92,6 +97,7 @@ function PptSvgProgressPreview({ progress }: { progress: PptSvgProgress }): JSX.
 
   const safeIndex = slides.length ? Math.min(activeIndex, slides.length - 1) : 0;
   const activeSlide = slides[safeIndex];
+  if (!loading && !activeSlide) return null;
   const generatedRatio = progress.completed
     ? 100
     : slides.length
@@ -404,7 +410,16 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
             )}
 
             <div className="space-y-3">
-              {messages.map((msg) => (
+              {messages.map((msg) => {
+                const statusText = msg.role === 'assistant' ? assistantStatusText(msg) : undefined;
+                const hasAssistantContent = msg.role === 'assistant' && (
+                  msg.text.trim()
+                  || statusText
+                  || (msg.files?.length || 0) > 0
+                  || (msg.pptSvgProgress?.slides?.length || 0) > 0
+                );
+                if (msg.role === 'assistant' && msg.loading && !hasAssistantContent) return null;
+                return (
                 <div
                   key={msg.id}
                   className={clsx(
@@ -440,12 +455,16 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
                                 <span />
                               </span>
                             </span>
-                            <div className="space-y-0.5">
-                              <p className="text-[12px] leading-snug">{msg.loadingStatus || '等待后端响应…'}</p>
-                              {msg.loadingElapsed && (
-                                <p className="text-[11px] text-slate-300">已等待 {msg.loadingElapsed}</p>
-                              )}
-                            </div>
+                            {Boolean(statusText || msg.loadingElapsed) && (
+                              <div className="space-y-0.5">
+                                {statusText && (
+                                  <p className="text-[12px] leading-snug">{statusText}</p>
+                                )}
+                                {statusText && msg.loadingElapsed && (
+                                  <p className="text-[11px] text-slate-300">已等待 {msg.loadingElapsed}</p>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <>
@@ -455,10 +474,10 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
                                 __html: renderMarkdownToHtml(msg.text || (msg.loading ? '' : '已完成。')),
                               }}
                             />
-                            {msg.loadingStatus && (
+                            {statusText && (
                               <p className="mt-2 inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-slate-200">
                                 <Loader2 className="h-3 w-3 animate-spin" />
-                                <span>{msg.loadingStatus}</span>
+                                <span>{statusText}</span>
                                 {msg.loadingElapsed && <span className="text-slate-300">· 已等待 {msg.loadingElapsed}</span>}
                               </p>
                             )}
@@ -467,12 +486,13 @@ export function PxAssistant({ loading = false }: PxAssistantProps): JSX.Element 
                         <p className="mt-2 text-[11px] text-slate-300">{currentTime()}</p>
                       </div>
                       <OverviewPngPreview files={msg.files} />
-                      {msg.pptSvgProgress && <PptSvgProgressPreview progress={msg.pptSvgProgress} />}
+                      {msg.pptSvgProgress && <PptSvgProgressPreview progress={msg.pptSvgProgress} loading={Boolean(msg.loading)} />}
                       {msg.files && msg.files.length > 0 && <PxAssistantFiles files={msg.files} />}
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

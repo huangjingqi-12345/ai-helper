@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { AIService, AIServiceError, type ChatMessage, type ContentBlock } from './aiService.js';
+import { AIService, AIServiceError, type ChatMessage, type ChatResult, type ChatStreamProgress, type ContentBlock } from './aiService.js';
 import { AI_HELPER_ROOT, createRunDirectory, GENERATED_DIR, toAssetPath } from './paths.js';
 import { prefetchMetrics } from './metrics.js';
 import { MODEL_IO_LOG_PATH, RUNTIME_LOG_PATH, modelIoLog, runtimeLog } from './runtimeLogger.js';
@@ -11,6 +11,7 @@ import { SkillExecutor, type ActionSpecMode, type SkillCall, type SkillResult } 
 import { scheduleBackgroundJob, type BackgroundJob } from './backgroundJobs.js';
 import { renderPptDeckFromSpecs } from './pptSpecRenderer.js';
 import { uploadAiHelperFiles, type AiHelperUploadContext } from './ossStorage.js';
+import { dbAll } from '../db/connection.js';
 
 export { SHORTCUT_PROMPTS, SYSTEM_PROMPT } from './promptTemplates.js';
 
@@ -20,6 +21,7 @@ interface AgentDonePayload {
   skills_used: string[];
   trace: Array<{ step: number | string; call?: SkillCall; result?: SkillResult }>;
   background_jobs?: BackgroundJob[];
+  activePptContext?: unknown;
 }
 
 function eventLine(type: string, data: unknown): string {
@@ -1686,6 +1688,7 @@ type ActivePptSlideContext = {
   title?: string;
   slideType?: string;
   svgPath?: string;
+  assetUrl?: string;
   source?: 'generated' | 'copied' | 'missing';
   deckSpec?: Record<string, unknown>;
 };
@@ -1714,6 +1717,7 @@ function normalizeActivePptContext(value: unknown): ActivePptContext | undefined
       title: typeof slide.title === 'string' ? slide.title.slice(0, 120) : undefined,
       slideType: typeof slide.slideType === 'string' ? slide.slideType.slice(0, 80) : typeof slide.slide_type === 'string' ? slide.slide_type.slice(0, 80) : undefined,
       svgPath: typeof slide.svgPath === 'string' ? slide.svgPath.slice(0, 1000) : typeof slide.svg_path === 'string' ? slide.svg_path.slice(0, 1000) : undefined,
+      assetUrl: typeof slide.assetUrl === 'string' ? slide.assetUrl.slice(0, 1200) : typeof slide.asset_url === 'string' ? slide.asset_url.slice(0, 1200) : undefined,
       source: slide.source === 'generated' || slide.source === 'copied' || slide.source === 'missing' ? slide.source : undefined,
       deckSpec: Object.keys(deckSpec).length ? deckSpec : undefined,
     }];
@@ -1749,6 +1753,200 @@ function latestActivePptContext(req: RunRequest): ActivePptContext | undefined {
     if (history[index].activePptContext) return history[index].activePptContext;
   }
   return undefined;
+}
+
+function pathPart(value: string): string {
+  const normalized = value.replace(/\\/g, '/');
+  try {
+    return /^https?:\/\//i.test(normalized) ? decodeURIComponent(new URL(normalized).pathname) : normalized;
+  } catch {
+    return normalized;
+  }
+}
+
+function pptProjectPathFromAnyFile(value: string): string | undefined {
+  const normalized = pathPart(value).replace(/^\/+/, '');
+  const projectsAt = normalized.indexOf('projects/');
+  if (projectsAt < 0) return undefined;
+  const fromProjects = normalized.slice(projectsAt);
+  const marker = '/svg_output/';
+  const markerAt = fromProjects.indexOf(marker);
+  if (markerAt < 0) return undefined;
+  const project = fromProjects.slice(0, markerAt);
+  return project.startsWith('projects/') ? project : undefined;
+}
+
+function localSvgPathForProjectFile(projectPath: string, file: string): string | undefined {
+  const name = fileName(file);
+  if (!name.toLowerCase().endsWith('.svg')) return undefined;
+  const project = projectPath.replace(/^\/+/, '').replace(/\/+$/, '');
+  if (!project) return undefined;
+  return `/${project}/svg_output/${name}`;
+}
+
+function upsertSlideContext(map: Map<number, ActivePptSlideContext>, slide: ActivePptSlideContext): void {
+  const existing = map.get(slide.slideNo);
+  map.set(slide.slideNo, {
+    ...existing,
+    ...slide,
+    title: slide.title || existing?.title,
+    slideType: slide.slideType || existing?.slideType,
+    svgPath: slide.svgPath || existing?.svgPath,
+    assetUrl: slide.assetUrl || existing?.assetUrl,
+    source: slide.source || existing?.source,
+    deckSpec: slide.deckSpec || existing?.deckSpec,
+  });
+}
+
+function activePptContextFromTrace(trace: AgentDonePayload['trace'], fallback?: ActivePptContext): ActivePptContext | undefined {
+  const projectFromTrace = [...trace].reverse().map((entry) => {
+    const detail = obj(entry.result?.detail);
+    const params = obj(entry.call?.params);
+    return String(
+      entry.result?.project_path
+      || detail.project_path
+      || params.project_path
+      || params.source_project_path
+      || params.sourceProjectPath
+      || '',
+    ).replace(/^\/+/, '');
+  }).find(Boolean);
+  const projectFromSvg = [...trace].reverse()
+    .flatMap((entry) => resultFiles(entry.result))
+    .map(pptProjectPathFromAnyFile)
+    .find((project): project is string => Boolean(project));
+  const projectPath = projectFromTrace || projectFromSvg || fallback?.projectPath;
+  if (!projectPath) return fallback;
+
+  const byNo = new Map<number, ActivePptSlideContext>();
+  for (const slide of fallback?.slides || []) {
+    upsertSlideContext(byNo, slide);
+  }
+
+  for (const localSvg of projectSvgOutputFiles(projectPath)) {
+    const slideNo = slideNoFromPath(localSvg);
+    if (slideNo) upsertSlideContext(byNo, { slideNo, svgPath: localSvg, source: 'generated' });
+  }
+
+  for (const entry of trace) {
+    if (!entry.call || !entry.result) continue;
+    const detail = obj(entry.result?.detail);
+    const files = resultFiles(entry.result);
+    if (entry.call.skill_id === 'ppt-master' && entry.call.action === 'write_ppt_svg_slide' && entry.result.ok !== false) {
+      const slideNo = Number(detail.slide_no || obj(entry.call.params).slide_no || obj(entry.call.params).slideNo);
+      if (Number.isInteger(slideNo) && slideNo > 0) {
+        const localFromDetail = typeof detail.path === 'string' ? detail.path : undefined;
+        const localFromFile = files.map((file) => localSvgPathForProjectFile(projectPath, file)).find(Boolean);
+        const assetUrl = files.find((file) => /^https?:\/\//i.test(file));
+        upsertSlideContext(byNo, {
+          slideNo,
+          title: typeof detail.title === 'string' ? detail.title : typeof obj(entry.call.params).title === 'string' ? String(obj(entry.call.params).title) : undefined,
+          svgPath: localFromDetail || localFromFile,
+          assetUrl,
+          source: 'generated',
+        });
+      }
+    }
+    for (const completed of completedPptSvgSlides(entry.call, entry.result)) {
+      const slideNo = Number(completed.slide_no);
+      if (!Number.isInteger(slideNo) || slideNo <= 0) continue;
+      const localFromDetail = typeof detail.path === 'string' ? detail.path : undefined;
+      const localFromFile = files.map((file) => localSvgPathForProjectFile(projectPath, file)).find(Boolean);
+      const assetUrl = files.find((file) => /^https?:\/\//i.test(file));
+      upsertSlideContext(byNo, {
+        slideNo,
+        title: typeof completed.title === 'string' ? completed.title : undefined,
+        svgPath: localFromDetail || localFromFile || (typeof completed.file === 'string' ? completed.file : undefined),
+        assetUrl,
+        source: 'generated',
+      });
+    }
+  }
+
+  const exportedPptx = [...trace].reverse()
+    .flatMap((entry) => resultFiles(entry.result))
+    .find((file) => /\.pptx$/i.test(fileName(file))) || fallback?.exportedPptx;
+  const slides = [...byNo.values()]
+    .filter((slide) => slide.svgPath || slide.assetUrl)
+    .sort((a, b) => a.slideNo - b.slideNo);
+  if (!slides.length) return fallback;
+  return {
+    projectPath,
+    exportedPptx,
+    slideCount: Math.max(fallback?.slideCount || 0, ...slides.map((slide) => slide.slideNo)),
+    deckSpec: fallback?.deckSpec,
+    slides,
+  };
+}
+
+function isPptStateChangingCall(call?: SkillCall): boolean {
+  return call?.skill_id === 'ppt-master' && [
+    'ppt_master_bootstrap',
+    'ppt_master_clone_for_edit',
+    'render_ppt_from_specs',
+    'write_ppt_svg_slide',
+    'write_project_file',
+    'write_project_files',
+    'ppt_master_export',
+  ].includes(call.action);
+}
+
+type AiHelperFileContextRow = {
+  local_path?: string;
+  asset_url?: string;
+  object_key?: string;
+  run_id?: string;
+  created_at?: string;
+};
+
+function pptProjectPathFromFileRow(row: AiHelperFileContextRow): string | undefined {
+  return pptProjectPathFromAnyFile(row.local_path || '') || pptProjectPathFromAnyFile(row.object_key || '') || pptProjectPathFromAnyFile(row.asset_url || '');
+}
+
+async function latestDraftPptContextFromFileRecords(req: RunRequest, userId?: string, tenantId?: string): Promise<ActivePptContext | undefined> {
+  const conversationId = String(req.conversation_id || '').trim();
+  if (!userId || !tenantId || !conversationId) return undefined;
+  const rows = await dbAll<AiHelperFileContextRow>(`
+    SELECT local_path, asset_url, object_key, run_id, created_at
+    FROM ai_helper_files
+    WHERE user_id = ? AND tenant_id = ? AND conversation_id = ?
+      AND (
+        local_path LIKE '/projects/%/svg_output/%.svg'
+        OR object_key LIKE '%/projects/%/svg_output/%.svg'
+        OR asset_url LIKE '%/projects/%/svg_output/%.svg'
+      )
+    ORDER BY created_at DESC
+    LIMIT 300
+  `, [userId, tenantId, conversationId]);
+  const groups = new Map<string, AiHelperFileContextRow[]>();
+  for (const row of rows) {
+    const project = pptProjectPathFromFileRow(row);
+    if (!project) continue;
+    groups.set(project, [...(groups.get(project) || []), row]);
+  }
+  const [projectPath, projectRows] = [...groups.entries()][0] || [];
+  if (!projectPath || !projectRows?.length) return undefined;
+  const byNo = new Map<number, ActivePptSlideContext>();
+  for (const row of projectRows) {
+    const source = row.local_path || row.asset_url || row.object_key || '';
+    const slideNo = slideNoFromPath(source);
+    if (!slideNo || byNo.has(slideNo)) continue;
+    const svgPath = row.local_path?.startsWith('/projects/') ? row.local_path : localSvgPathForProjectFile(projectPath, source);
+    byNo.set(slideNo, {
+      slideNo,
+      svgPath,
+      assetUrl: row.asset_url,
+      source: 'generated',
+      title: fileName(source).replace(/^\d{1,2}[_-]/, '').replace(/\.svg$/i, ''),
+    });
+  }
+  const slides = [...byNo.values()].sort((a, b) => a.slideNo - b.slideNo);
+  if (!slides.length) return undefined;
+  return {
+    projectPath,
+    slideCount: Math.max(...slides.map((slide) => slide.slideNo)),
+    slides,
+  };
 }
 
 function previousHistoryTurn(req: RunRequest): NormalizedHistoryItem[] {
@@ -1792,6 +1990,7 @@ function historyTurnForPrompt(req: RunRequest, maxTextChars = 1200): Array<Recor
         title: slide.title,
         slide_type: slide.slideType,
         svg_path: slide.svgPath,
+        asset_url: slide.assetUrl,
         source: slide.source,
         deck_spec: slide.deckSpec,
       })),
@@ -1809,6 +2008,7 @@ function activePptContextForPrompt(ctx: ActivePptContext): Record<string, unknow
       title: slide.title,
       slide_type: slide.slideType,
       svg_path: slide.svgPath,
+      asset_url: slide.assetUrl,
       source: slide.source,
       deck_spec: slide.deckSpec,
     })),
@@ -1855,11 +2055,13 @@ function activePptContextFromEditTrace(source: ActivePptContext, trace: AgentDon
     if (!Number.isInteger(slideNo)) continue;
     const previous = byNo.get(slideNo);
     const svgPath = typeof detail.path === 'string' ? detail.path : copiedSlidePathInProject(projectPath, { slideNo, svgPath: previous?.svgPath });
+    const assetUrl = resultFiles(entry.result).find((file) => /^https?:\/\//i.test(file));
     byNo.set(slideNo, {
       slideNo,
       title: typeof detail.title === 'string' ? detail.title : previous?.title,
       slideType: previous?.slideType,
       svgPath,
+      assetUrl: assetUrl || previous?.assetUrl,
       source: svgPath ? 'generated' : 'missing',
       deckSpec: {
         ...(previous?.deckSpec || {}),
@@ -3336,6 +3538,105 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     return eventLine(type, safeData);
   };
 
+  const modelProgressMessage = (progress: ChatStreamProgress, meta: Record<string, unknown>): string => {
+    const donePrefix = progress.done ? '模型响应已完成：' : '';
+    if (progress.action === 'write_ppt_svg_slide') {
+      const page = progress.slideNo ? `第 ${progress.slideNo} 页` : 'PPT 页面';
+      const title = progress.slideTitle ? `「${progress.slideTitle}」` : '';
+      const conclusion = progress.coreConclusion ? `，核心内容：${progress.coreConclusion}` : '';
+      return `${donePrefix}正在绘制${page}${title}${conclusion}`;
+    }
+    if (progress.action === 'render_ppt_from_specs') return `${donePrefix}正在生成 PPT 页面预览方案`;
+    if (progress.action === 'ppt_master_export') return `${donePrefix}正在准备导出可编辑 PPTX`;
+    if (progress.action === 'write_project_files' || progress.action === 'write_project_file') return `${donePrefix}正在整理 PPT 结构、设计规范和讲稿备注`;
+    if (progress.action === 'emit_text') return `${donePrefix}正在生成用户可见摘要`;
+    if (progress.action === 'read_metric_file' || progress.action === 'prefetch_metrics') return `${donePrefix}正在规划补充读取指标数据`;
+    if (progress.responseType === 'final') return `${donePrefix}正在整理最终回复`;
+
+    const batchStart = Number(meta.batch_start);
+    const batchEnd = Number(meta.batch_end);
+    if (Number.isInteger(batchStart) && Number.isInteger(batchEnd) && batchStart > 0 && batchEnd >= batchStart) {
+      return batchStart === batchEnd
+        ? `${donePrefix}正在生成第 ${batchStart} 页内容草稿与页面结构`
+        : `${donePrefix}正在生成第 ${batchStart}-${batchEnd} 页内容草稿与页面结构`;
+    }
+    if (progress.contentChars >= 1000) return `${donePrefix}模型正在输出结构化方案`;
+    if (progress.chunkCount > 0) return `${donePrefix}模型正在分析下一步动作`;
+    return `${donePrefix}模型正在输出结构化计划`;
+  };
+
+  const callModelWithProgress = async function* (
+    modelClient: AIService,
+    callMessages: ChatMessage[],
+    meta: Record<string, unknown>,
+  ): AsyncGenerator<string, ChatResult> {
+    const queue: string[] = [];
+    let wake: (() => void) | undefined;
+    let settled = false;
+    let result: ChatResult | undefined;
+    let error: unknown;
+    const notify = () => {
+      if (wake) {
+        const fn = wake;
+        wake = undefined;
+        fn();
+      }
+    };
+    const push = (line: string) => {
+      queue.push(line);
+      notify();
+    };
+    void modelClient.chatDetailed(callMessages, signal, {
+      onProgress: (progress) => {
+        push(emit('model_progress', {
+          phase: 'model_stream',
+          message: modelProgressMessage(progress, meta),
+          model: modelClient.modelName(),
+          step: meta.step,
+          attempt: meta.attempt,
+          max_attempts: meta.max_attempts,
+          batch_start: meta.batch_start,
+          batch_end: meta.batch_end,
+          chunk_count: progress.chunkCount,
+          content_chars: progress.contentChars,
+          reasoning_chars: progress.reasoningChars,
+          total_chars: progress.totalChars,
+          elapsed_ms: progress.elapsedMs,
+          first_chunk_ms: progress.firstChunkMs,
+          action: progress.action,
+          response_type: progress.responseType,
+          slide_no: progress.slideNo,
+          slide_title: progress.slideTitle,
+          core_conclusion: progress.coreConclusion,
+          done: progress.done === true,
+        }));
+      },
+    }).then((value) => {
+      result = value;
+    }).catch((err) => {
+      error = err;
+    }).finally(() => {
+      settled = true;
+      notify();
+    });
+
+    while (!settled || queue.length) {
+      while (queue.length) yield queue.shift()!;
+      if (!settled) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          if (settled || queue.length) {
+            wake = undefined;
+            resolve();
+          }
+        });
+      }
+    }
+    if (error) throw error;
+    if (!result) throw new AIServiceError('模型流式调用未返回结果');
+    return result;
+  };
+
   runtimeLog('request_start', { mode: 'new-ai-ts', rootDir, runtime_log_path: RUNTIME_LOG_PATH, model_io_log_path: MODEL_IO_LOG_PATH, run_model_io_log_path: path.join(rootDir, 'model_io.md'), classified_intent: classifiedIntent, fallback_intent: fallbackIntent, include_previous_turn: includePreviousTurn, inferred_shortcut: !explicitShortcut && shortcut ? shortcut : undefined, ...requestLog(effectiveReq) });
   yield emit('status', '开始处理请求...');
   const routeNote = !explicitShortcut && shortcut === 'ppt' && effectiveIntent?.task === 'ppt' && effectiveIntent.ppt_mode === 'unspecified'
@@ -3426,9 +3727,20 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
     }
   }
 
-  const activePptContext = latestActivePptContext(effectiveReq);
+  let activePptContext = latestActivePptContext(effectiveReq);
+  if (classifiedPptEdit && !activePptContext) {
+    activePptContext = await latestDraftPptContextFromFileRecords(effectiveReq, uploadContext.userId, uploadContext.tenantId).catch((err) => {
+      runtimeLog('draft_ppt_context_restore_failed', { rootDir, error: modelErrorLog(err), ...requestLog(effectiveReq) });
+      return undefined;
+    });
+    if (activePptContext) {
+      runtimeLog('draft_ppt_context_restored', { rootDir, active_ppt_context: activePptContextForPrompt(activePptContext), ...requestLog(effectiveReq) });
+    }
+  }
+  const isDraftPptEdit = Boolean(activePptContext && !activePptContext.exportedPptx);
   const isPptLocalEdit = classifiedPptEdit && (shortcut === 'ppt' || shortcut === 'ppt_svg') && activePptContext;
-  if (isPptLocalEdit) {
+  if (isPptLocalEdit && activePptContext) {
+    const editActivePptContext = activePptContext;
     const trace: AgentDonePayload['trace'] = [];
     const skillsUsed = new Set<string>(['ppt-master']);
     const editExecutor = new SkillExecutor(rootDir, { allowManualPptSvg: true, signal, publishFiles, tenantId: enforcedTenantId });
@@ -3453,7 +3765,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
           task: isPremiumLocalEdit ? 'premium_edit_existing_ppt_pages' : 'edit_existing_ppt_pages',
           user_request: (effectiveReq.message || effectiveReq.command || '').trim(),
           edit_quality: isPremiumLocalEdit ? 'premium_local_page_redesign' : 'local_page_edit',
-          active_ppt_context: activePptContextForPrompt(activePptContext),
+          active_ppt_context: activePptContextForPrompt(editActivePptContext),
           required_behavior: [
             '先判断 edit_pages 和 copy_pages。',
             '禁止向用户追问或要求补充说明；信息不完整时必须基于上下文自行推断并直接开始修改。',
@@ -3461,7 +3773,12 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
             '只对 edit_pages 调用 write_ppt_svg_slide。',
             '其他页面由 clone 工具复用，不要重画。',
             ...(isPremiumLocalEdit ? ['“精美版”只适用于 edit_pages 的视觉质量，不代表全量重做。'] : []),
-            '最后调用 ppt_master_export。',
+            ...(isDraftPptEdit
+              ? [
+                '当前上一版还只是 SVG 草稿，尚未导出 PPTX；本轮不要强制导出 PPTX。',
+                '完成目标 SVG 页面重绘后即可 final，并返回更新后的 SVG 页面预览；用户满意后再继续生成或导出 PPTX。',
+              ]
+              : ['最后调用 ppt_master_export。']),
           ],
         }, null, 2),
       },
@@ -3484,8 +3801,8 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
           content: JSON.stringify({
             user_request: userEditRequest,
             ppt_context: {
-              slide_count: activePptContext.slideCount,
-              slides: activePptContext.slides.map((slide) => ({
+              slide_count: editActivePptContext.slideCount,
+              slides: editActivePptContext.slides.map((slide) => ({
                 slide_no: slide.slideNo,
                 title: slide.title,
                 slide_type: slide.slideType,
@@ -3496,7 +3813,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       ];
       const prefaceStarted = Date.now();
       runtimeLog('model_start', { step: 'ppt_edit_preface', rootDir, model: ai.modelName(), messages: prefaceMessages, ...requestLog(effectiveReq) });
-      const prefaceResult = await ai.chatDetailed(prefaceMessages, signal);
+      const prefaceResult = yield* callModelWithProgress(ai, prefaceMessages, { step: 'ppt_edit_preface' });
       const prefaceDuration = Date.now() - prefaceStarted;
       runtimeLog('model_end', { step: 'ppt_edit_preface', rootDir, duration_ms: prefaceDuration, output: prefaceResult.text, raw_response: prefaceResult.rawResponse, request: prefaceResult.request, cache_usage: prefaceResult.cacheUsage, ...requestLog(effectiveReq) });
       modelIoLog({
@@ -3517,7 +3834,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
       for (let step = 1; step <= 10; step += 1) {
         const modelStarted = Date.now();
         runtimeLog('model_start', { step: `ppt_edit_${step}`, rootDir, model: ai.modelName(), messages: editMessages, ...requestLog(effectiveReq) });
-        const result = await ai.chatDetailed(editMessages, signal);
+        const result = yield* callModelWithProgress(ai, editMessages, { step: `ppt_edit_${step}` });
         const duration = Date.now() - modelStarted;
         runtimeLog('model_end', { step: `ppt_edit_${step}`, rootDir, duration_ms: duration, output: result.text, raw_response: result.rawResponse, request: result.request, cache_usage: result.cacheUsage, ...requestLog(effectiveReq) });
         modelIoLog({
@@ -3537,13 +3854,18 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
         if (!parsed) throw new Error('PPT 编辑模型未返回合法 JSON');
         const final = asFinal(parsed);
         if (final) {
-          if (!exported) {
+          if (!exported && !isDraftPptEdit) {
             editMessages.push({ role: 'assistant', content: result.text });
             editMessages.push({ role: 'user', content: '尚未导出新的 PPTX。请继续调用 ppt_master_export，导出完成后再 final。' });
             continue;
           }
+          if (isDraftPptEdit && expectedEditPages.length && !expectedEditPages.every((page) => writtenEditPages.has(page))) {
+            editMessages.push({ role: 'assistant', content: result.text });
+            editMessages.push({ role: 'user', content: `尚未完成目标 SVG 页面重绘，缺少第 ${expectedEditPages.filter((page) => !writtenEditPages.has(page)).join(', ')} 页。请继续调用 write_ppt_svg_slide。` });
+            continue;
+          }
           const files = collectFiles(trace, final.deliverable_files);
-          const nextPptContext = activePptContextFromEditTrace(activePptContext, trace);
+          const nextPptContext = activePptContextFromEditTrace(editActivePptContext, trace);
           if (files.length) yield emit('files', files);
           const finalText = sanitizePptEditFinalText(final.answer);
           yield emit('done', { text: finalText, files, skills_used: [...skillsUsed], trace, background_jobs: [], activePptContext: nextPptContext });
@@ -3568,15 +3890,15 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
         }
         if (call.action === 'ppt_master_clone_for_edit') {
           const params = obj(call.params);
-          if (!params.source_project_path && !params.sourceProjectPath) params.source_project_path = activePptContext.projectPath;
+          if (!params.source_project_path && !params.sourceProjectPath) params.source_project_path = editActivePptContext.projectPath;
           const editPages = parseEditPageNumbers(params.edit_pages || params.editPages);
           if (editPages.length && !parseEditPageNumbers(params.copy_pages || params.copyPages).length) {
-            params.copy_pages = Array.from({ length: activePptContext.slideCount }, (_, i) => i + 1).filter((page) => !editPages.includes(page));
+            params.copy_pages = Array.from({ length: editActivePptContext.slideCount }, (_, i) => i + 1).filter((page) => !editPages.includes(page));
           }
           call.params = params;
         }
         if (call.action === 'read_project_file') {
-          call.params = { ...obj(call.params), project_path: clonedProjectPath || activePptContext.projectPath };
+          call.params = { ...obj(call.params), project_path: clonedProjectPath || editActivePptContext.projectPath };
         }
         if (['write_ppt_svg_slide', 'write_project_file', 'write_project_files', 'ppt_master_export'].includes(call.action)) {
           if (!clonedProjectPath) {
@@ -3586,7 +3908,7 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
               content: [
                 'INVALID_PPT_EDIT_ORDER:',
                 '还没有复制上一版 PPT 项目，不能写入页面或导出。',
-                `请先调用 ppt_master_clone_for_edit，source_project_path 必须为 "${activePptContext.projectPath}"，并传入 edit_pages 和 copy_pages。`,
+                `请先调用 ppt_master_clone_for_edit，source_project_path 必须为 "${editActivePptContext.projectPath}"，并传入 edit_pages 和 copy_pages。`,
               ].join('\n'),
             });
             yield emit('progress', { phase: 'retry', message: '局部编辑需要先复制上一版 PPT，正在要求先克隆项目', step, ok: false });
@@ -3609,10 +3931,20 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
         if (call.action === 'ppt_master_export' && expectedEditPages.length && !expectedEditPages.every((page) => writtenEditPages.has(page))) {
           throw new Error(`PPT 编辑页尚未全部写入，缺少第 ${expectedEditPages.filter((page) => !writtenEditPages.has(page)).join(', ')} 页`);
         }
+        if (isDraftPptEdit && call.action === 'ppt_master_export') {
+          editMessages.push({ role: 'assistant', content: result.text });
+          editMessages.push({ role: 'user', content: '当前源 PPT 仍是 SVG 草稿，用户希望先快速编辑预览，不要导出 PPTX。请在完成目标页 write_ppt_svg_slide 后直接 final，并返回更新后的 SVG 预览。' });
+          yield emit('progress', { phase: 'retry', message: '草稿 PPT 先返回 SVG 预览，正在避免过早导出', step, ok: false });
+          continue;
+        }
         yield emit('progress', { phase: 'file_generation', message: `正在执行 PPT 局部修改：${call.action}`, step: Math.min(6, step + 1), skill_id: call.skill_id, action: call.action });
         const skillResult = await editExecutor.execute(call);
         trace.push({ step, call: compactCallForTrace(call, skillResult), result: skillResult });
         yield emit('skill_result', skillResult);
+        if (skillResult.ok !== false && isPptStateChangingCall(call)) {
+          const draftContext = activePptContextFromTrace(trace, editActivePptContext);
+          if (draftContext) yield emit('active_ppt_context', draftContext);
+        }
         const files = resultFiles(skillResult);
         if (files.length) yield emit('files', visibleDeliverables(files));
         if (call.action === 'ppt_master_clone_for_edit') {
@@ -3635,10 +3967,10 @@ export async function* streamAssistant(req: RunRequest, options: StreamAssistant
               : '',
           ].filter(Boolean).join('\n')
           : '';
-        editMessages.push({ role: 'user', content: `SKILL_RESULT:
+editMessages.push({ role: 'user', content: `SKILL_RESULT:
 ${JSON.stringify(skillResult, null, 2)}
 ${failureHint}
-请继续，直到导出 PPTX 后 final。` });
+${isDraftPptEdit ? '请继续，直到完成目标 SVG 页面并 final；当前是草稿编辑，不要导出 PPTX。' : '请继续，直到导出 PPTX 后 final。'}` });
         if (skillResult.ok === false) {
           yield emit('progress', { phase: 'retry', message: 'PPT 局部修改工具执行失败，已把错误返回模型修正', step, ok: false, skill_id: call.skill_id, action: call.action });
           continue;
@@ -3647,16 +3979,16 @@ ${failureHint}
       throw new Error('PPT 局部修改步骤过多，已停止');
     } catch (err) {
       if (isAbortError(err)) throw err;
-      const nextPptContext = activePptContextFromEditTrace(activePptContext, trace);
+      const nextPptContext = activePptContextFromEditTrace(editActivePptContext, trace);
       const draftSvgFiles = nextPptContext
         ? nextPptContext.slides.map((slide) => slide.svgPath).filter((file): file is string => Boolean(file))
         : [];
-      const activeContextForFailure = nextPptContext || activePptContext;
+      const activeContextForFailure = nextPptContext || editActivePptContext;
       const text = pptEditFailureFallbackText(activeContextForFailure, draftSvgFiles.length > 0 && !nextPptContext?.exportedPptx);
       const fallbackFiles = nextPptContext
         ? visibleDeliverables([...(nextPptContext.exportedPptx ? [nextPptContext.exportedPptx] : []), ...draftSvgFiles])
-        : activePptContext.exportedPptx
-          ? visibleDeliverables([activePptContext.exportedPptx])
+        : editActivePptContext.exportedPptx
+          ? visibleDeliverables([editActivePptContext.exportedPptx])
           : collectFiles(trace);
       if (fallbackFiles.length) yield emit('files', fallbackFiles);
       yield emit('text', text);
@@ -3765,7 +4097,13 @@ ${failureHint}
             ...requestLog(effectiveReq),
           });
           try {
-            const result = await pptAi.chatDetailed(messages, signal);
+            const result = yield* callModelWithProgress(pptAi, messages, {
+              step: 'direct_ppt_spec_batch',
+              batch_start: batchStart,
+              batch_end: batchEnd,
+              attempt,
+              max_attempts: maxSpecAttempts,
+            });
             const duration = Date.now() - modelStarted;
             runtimeLog('model_end', {
               step: 'direct_ppt_spec_batch',
@@ -4125,7 +4463,7 @@ ${failureHint}
         const modelStarted = Date.now();
         runtimeLog('model_start', { step, attempt, max_attempts: modelTimeoutRetries, rootDir, model: ai.modelName(), messages, ...requestLog(effectiveReq) });
         try {
-          const result = await ai.chatDetailed(messages, signal);
+          const result = yield* callModelWithProgress(ai, messages, { step, attempt, max_attempts: modelTimeoutRetries });
           raw = result.text;
           const duration = Date.now() - modelStarted;
           runtimeLog('model_end', { step, attempt, max_attempts: modelTimeoutRetries, rootDir, duration_ms: duration, output: raw, raw_response: result.rawResponse, request: result.request, cache_usage: result.cacheUsage, recovered_from_reasoning_content: result.recoveredFromReasoningContent, ...requestLog(effectiveReq) });
@@ -4227,8 +4565,9 @@ ${failureHint}
       }
       if (files.length) yield emit('files', files);
       yield emit('progress', { phase: 'complete', message: '处理完成', step, ok: true });
-      yield emit('done', { text: final.answer, files, skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs });
-      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: final.answer, files, skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs, ...requestLog(effectiveReq) });
+      const activeContext = activePptContextFromTrace(trace);
+      yield emit('done', { text: final.answer, files, skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs, activePptContext: activeContext });
+      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: final.answer, files, skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs, active_ppt_context: activeContext, ...requestLog(effectiveReq) });
       return;
     }
 
@@ -4326,6 +4665,10 @@ ${failureHint}
     trace.push({ step, call: compactCallForTrace(call, result), result });
     if (call.action === 'read_skill_file' && result.ok !== false) injected.add(call.skill_id);
     yield emit('skill_result', result);
+    if (result.ok !== false && isPptStateChangingCall(call)) {
+      const draftContext = activePptContextFromTrace(trace);
+      if (draftContext) yield emit('active_ppt_context', draftContext);
+    }
 
     if (isMonthlyMarkdownWrite(call, result)) {
       const pdfCall = monthlyPdfAutoCall();
@@ -4370,8 +4713,9 @@ ${failureHint}
         yield emit('text', finalAnswer);
       }
       yield emit('progress', { phase: 'complete', message: 'PPT 导出完成', step, ok: true });
-      yield emit('done', { text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs });
-      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs, auto_final_after_export: true, ...requestLog(effectiveReq) });
+      const activeContext = activePptContextFromTrace(trace);
+      yield emit('done', { text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs, activePptContext: activeContext });
+      runtimeLog('request_end', { rootDir, duration_ms: Date.now() - started, text: finalAnswer, files, skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs, active_ppt_context: activeContext, auto_final_after_export: true, ...requestLog(effectiveReq) });
       return;
     }
     messages.push({ role: 'assistant', content: compactAssistantOutputForContext(raw, call, result) });
@@ -4380,7 +4724,7 @@ ${failureHint}
 
   const text = '已达到最大技能调用步数，请收敛请求范围后重试。';
   yield emit('text', text);
-  yield emit('done', { text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs });
+  yield emit('done', { text, files: collectFiles(trace), skills_used: [...skillsUsed], trace, background_jobs: backgroundJobs, activePptContext: activePptContextFromTrace(trace) });
 }
 
 export async function runAssistant(req: RunRequest, options: StreamAssistantOptions = {}): Promise<{ text: string; files: string[]; skills_used: string[] }> {

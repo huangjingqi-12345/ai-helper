@@ -19,6 +19,8 @@ export interface ChatMessage {
   activePptContext?: ActivePptContext;
   loading?: boolean;
   loadingStatus?: string;
+  modelProgressStatus?: string;
+  hasModelProgress?: boolean;
   loadingElapsed?: string;
   loadingStep?: number;
   loadingStartedAt?: number;
@@ -30,6 +32,7 @@ export interface ActivePptSlideContext {
   title?: string;
   slideType?: string;
   svgPath?: string;
+  assetUrl?: string;
   source?: 'generated' | 'copied' | 'missing';
   deckSpec?: Record<string, unknown>;
 }

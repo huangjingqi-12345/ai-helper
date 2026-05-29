@@ -25,6 +25,10 @@ type PersistedChatMessage = {
   text: string;
   runId?: string;
   files?: string[];
+  loading?: boolean;
+  loadingStatus?: string;
+  loadingElapsed?: string;
+  loadingStartedAt?: number;
   pptSvgProgress?: unknown;
   activePptContext?: unknown;
 };
@@ -72,15 +76,23 @@ function sanitizeMessages(value: unknown): PersistedChatMessage[] {
       : undefined;
     const pptSvgProgress = obj.pptSvgProgress && typeof obj.pptSvgProgress === 'object' ? obj.pptSvgProgress : undefined;
     const activePptContext = obj.activePptContext && typeof obj.activePptContext === 'object' ? obj.activePptContext : undefined;
-    return [{
+    const loadingStatus = typeof obj.loadingStatus === 'string' ? obj.loadingStatus.slice(0, 500) : undefined;
+    const loadingElapsed = typeof obj.loadingElapsed === 'string' ? obj.loadingElapsed.slice(0, 80) : undefined;
+    const loadingStartedAt = typeof obj.loadingStartedAt === 'number' && Number.isFinite(obj.loadingStartedAt) ? obj.loadingStartedAt : undefined;
+    const message: PersistedChatMessage = {
       id: String(obj.id || `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`).slice(0, 120),
       role,
       text,
-      runId,
-      files,
-      pptSvgProgress,
-      activePptContext,
-    }];
+    };
+    if (runId) message.runId = runId;
+    if (files) message.files = files;
+    if (obj.loading === true) message.loading = true;
+    if (loadingStatus) message.loadingStatus = loadingStatus;
+    if (loadingElapsed) message.loadingElapsed = loadingElapsed;
+    if (loadingStartedAt) message.loadingStartedAt = loadingStartedAt;
+    if (pptSvgProgress) message.pptSvgProgress = pptSvgProgress;
+    if (activePptContext) message.activePptContext = activePptContext;
+    return [message];
   });
 }
 
@@ -100,6 +112,7 @@ type StreamRun = {
   createdAt: number;
   finishedAt?: number;
   donePayload?: Record<string, unknown>;
+  activePptContext?: unknown;
   error?: unknown;
 };
 
@@ -127,6 +140,136 @@ function parseStreamLine(line: string): { type?: string; data?: unknown } | unde
   }
 }
 
+function normalizeAssetPath(value: string): string {
+  const raw = (value || '').trim().replace(/\\/g, '/');
+  if (!raw) return '';
+  if (raw.startsWith('generated/') || raw.startsWith('projects/')) return `/${raw}`;
+  return raw;
+}
+
+function fileNameFromPath(value: string): string {
+  const pathName = /^https?:\/\//i.test(value) ? new URL(value).pathname : value;
+  return decodeURIComponent(pathName.split('?')[0]?.split('/').pop() || '');
+}
+
+function sortedUniqueAssetPaths(paths: string[]): string[] {
+  return [...new Set(paths.map(normalizeAssetPath).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function isPptSvgSlidePath(value: string): boolean {
+  const lower = normalizeAssetPath(value).toLowerCase();
+  return lower.endsWith('.svg') && lower.includes('/svg_output/');
+}
+
+function isPptxPath(value: string): boolean {
+  return normalizeAssetPath(value).toLowerCase().endsWith('.pptx');
+}
+
+function isVisibleSessionFile(value: string): boolean {
+  const normalized = normalizeAssetPath(value);
+  if (!normalized) return false;
+  if (/^https?:\/\//i.test(normalized)) return true;
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith('/data/') || lower.startsWith('data/')) return false;
+  // /projects 下的 SVG/设计中间产物只用于页面预览和上下文，不作为下载文件展示。
+  if (lower.startsWith('/projects/') || lower.startsWith('projects/')) return false;
+  if (!lower.startsWith('/generated/') && !lower.startsWith('generated/')) return false;
+  const name = fileNameFromPath(normalized).toLowerCase();
+  const ext = name.includes('.') ? name.split('.').pop() || '' : '';
+  if (ext === 'json' || ext === 'csv') return false;
+  if (name.includes('manifest') || name.endsWith('_qa.json') || name.includes('_qa.')) return false;
+  if (name.includes('compat') || name.includes('keynote') || name.endsWith('_svg.pptx')) return false;
+  return ['md', 'pdf', 'html', 'htm', 'png', 'jpg', 'jpeg', 'webp', 'ppt', 'pptx'].includes(ext);
+}
+
+function visibleSessionFiles(files: string[] = []): string[] {
+  return [...new Set(files.map(normalizeAssetPath).filter(isVisibleSessionFile))];
+}
+
+function collectStringFiles(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') {
+    out.push(value);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStringFiles(item, out));
+    return out;
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    for (const key of ['file', 'path', 'pptx', 'pdf', 'html']) collectStringFiles(obj[key], out);
+    collectStringFiles(obj.files, out);
+  }
+  return out;
+}
+
+function activePptContextFiles(value: unknown): string[] {
+  const root = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const slides = Array.isArray(root.slides) ? root.slides : [];
+  const files: string[] = [];
+  if (typeof root.exportedPptx === 'string') files.push(root.exportedPptx);
+  if (typeof root.exported_pptx === 'string') files.push(root.exported_pptx);
+  for (const item of slides) {
+    if (!item || typeof item !== 'object') continue;
+    const slide = item as Record<string, unknown>;
+    for (const key of ['svgPath', 'svg_path', 'assetUrl', 'asset_url']) {
+      if (typeof slide[key] === 'string') files.push(slide[key] as string);
+    }
+  }
+  return files;
+}
+
+function runFilesFromEvents(run: StreamRun): string[] {
+  const files: string[] = [];
+  for (const line of run.events) {
+    const evt = parseStreamLine(line);
+    if (!evt) continue;
+    if (['files', 'skill_result', 'done'].includes(String(evt.type))) collectStringFiles(evt.data, files);
+    if (evt.type === 'active_ppt_context') files.push(...activePptContextFiles(evt.data));
+  }
+  if (run.donePayload) collectStringFiles(run.donePayload, files);
+  return sortedUniqueAssetPaths(files);
+}
+
+function pptProgressFromFiles(files: string[] = [], existing: unknown): unknown {
+  const current = existing && typeof existing === 'object' ? existing as Record<string, unknown> : {};
+  const currentSlides = Array.isArray(current.slides) ? current.slides.filter((item): item is string => typeof item === 'string') : [];
+  const slides = sortedUniqueAssetPaths([...currentSlides, ...files.filter(isPptSvgSlidePath)]);
+  if (!slides.length && !Object.keys(current).length) return undefined;
+  const exportedPpt = files.find(isPptxPath) || (typeof current.exportedPpt === 'string' ? current.exportedPpt : undefined);
+  return {
+    ...current,
+    slides,
+    completed: Boolean(current.completed) || Boolean(exportedPpt),
+    exportedPpt,
+    mode: current.mode || 'spec',
+    title: current.title || 'PPT 快速版页面预览',
+  };
+}
+
+function normalizeSessionAssistantMessage(message: PersistedChatMessage, extraFiles: string[] = []): PersistedChatMessage {
+  const allFiles = sortedUniqueAssetPaths([...(message.files || []), ...extraFiles]);
+  const normalized: PersistedChatMessage = { ...message };
+  const files = visibleSessionFiles(allFiles);
+  const pptSvgProgress = pptProgressFromFiles(allFiles, message.pptSvgProgress);
+  if (files.length) normalized.files = files;
+  else delete normalized.files;
+  if (pptSvgProgress) normalized.pptSvgProgress = pptSvgProgress;
+  else delete normalized.pptSvgProgress;
+  if (!normalized.loading) {
+    delete normalized.loading;
+    delete normalized.loadingStatus;
+    delete normalized.loadingElapsed;
+    delete normalized.loadingStartedAt;
+  } else {
+    if (!normalized.loadingStatus) delete normalized.loadingStatus;
+    if (!normalized.loadingElapsed) delete normalized.loadingElapsed;
+    if (!normalized.loadingStartedAt) delete normalized.loadingStartedAt;
+  }
+  return normalized;
+}
+
 function pushStreamRunEvent(run: StreamRun, line: string): void {
   run.events.push(line);
   if (run.events.length > STREAM_RUN_MAX_EVENTS) run.events.splice(0, run.events.length - STREAM_RUN_MAX_EVENTS);
@@ -135,6 +278,40 @@ function pushStreamRunEvent(run: StreamRun, line: string): void {
   if (evt?.type === 'done' && evt.data && typeof evt.data === 'object') {
     run.donePayload = evt.data as Record<string, unknown>;
   }
+  if (evt?.type === 'active_ppt_context' && evt.data && typeof evt.data === 'object') {
+    run.activePptContext = evt.data;
+    void persistAiHelperRunDraft(run).catch((err) => logger.warn({ err, runId: run.runId }, 'AI helper draft PPT context persistence failed'));
+  }
+}
+
+async function persistAiHelperRunDraft(run: StreamRun): Promise<void> {
+  if (!run.userId || !run.tenantId || !run.activePptContext) return;
+  const row = await dbGet<AiHelperSessionRow>('SELECT * FROM ai_helper_sessions WHERE user_id = ?', [run.userId]);
+  if (!row || row.conversation_id !== run.conversationId) return;
+  const messages = parseStoredMessages(row.messages);
+  const index = messages.findIndex((message) => message.role === 'assistant' && message.runId === run.runId);
+  if (index < 0) return;
+  const current = messages[index];
+  const runFiles = runFilesFromEvents(run);
+  const contextFiles = activePptContextFiles(run.activePptContext);
+  messages[index] = normalizeSessionAssistantMessage({
+    ...current,
+    files: visibleSessionFiles([...(current.files || []), ...runFiles, ...contextFiles]),
+    pptSvgProgress: pptProgressFromFiles([...(current.files || []), ...runFiles, ...contextFiles], current.pptSvgProgress),
+    activePptContext: run.activePptContext,
+    loading: true,
+  }, [...runFiles, ...contextFiles]);
+  const now = nowIso();
+  await dbRun(`
+    INSERT INTO ai_helper_sessions (user_id, tenant_id, conversation_id, messages, created_at, updated_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      tenant_id = excluded.tenant_id,
+      conversation_id = excluded.conversation_id,
+      messages = excluded.messages,
+      updated_at = excluded.updated_at,
+      expires_at = excluded.expires_at
+  `, [run.userId, run.tenantId, run.conversationId, JSON.stringify(sanitizeMessages(messages)), row.created_at || now, now, expiresAtFrom()]);
 }
 
 function finishStreamRun(run: StreamRun, status: StreamRunStatus, error?: unknown): void {
@@ -154,12 +331,20 @@ async function persistAiHelperRunCompletion(run: StreamRun): Promise<void> {
   if (index < 0) return;
   const done = run.donePayload;
   const current = messages[index];
-  messages[index] = {
+  const doneFiles = Array.isArray(done.files) ? done.files.filter((file): file is string => typeof file === 'string') : [];
+  const activePptContext = done.activePptContext && typeof done.activePptContext === 'object' ? done.activePptContext : run.activePptContext || current.activePptContext;
+  const contextFiles = activePptContextFiles(activePptContext);
+  messages[index] = normalizeSessionAssistantMessage({
     ...current,
     text: typeof done.text === 'string' ? done.text : current.text,
-    files: Array.isArray(done.files) ? done.files.filter((file): file is string => typeof file === 'string') : current.files,
-    activePptContext: done.activePptContext && typeof done.activePptContext === 'object' ? done.activePptContext : current.activePptContext,
-  };
+    files: visibleSessionFiles([...(current.files || []), ...doneFiles, ...contextFiles]),
+    pptSvgProgress: pptProgressFromFiles([...(current.files || []), ...doneFiles, ...contextFiles], current.pptSvgProgress),
+    activePptContext,
+    loading: false,
+    loadingStatus: undefined,
+    loadingElapsed: undefined,
+    loadingStartedAt: undefined,
+  }, [...doneFiles, ...contextFiles]);
   const now = nowIso();
   await dbRun(`
     INSERT INTO ai_helper_sessions (user_id, tenant_id, conversation_id, messages, created_at, updated_at, expires_at)
@@ -223,6 +408,13 @@ function startOrGetStreamRun(reqBody: RunRequest, auth: { userId?: string; tenan
   return run;
 }
 
+function attachStreamRun(reqBody: RunRequest): StreamRun | undefined {
+  const conversationId = String(reqBody.conversation_id || '').trim();
+  const runId = String(reqBody.run_id || '').trim();
+  if (!conversationId || !runId) return undefined;
+  return getStreamRun(conversationId, runId);
+}
+
 function getStreamRun(conversationId: string, runId: string): StreamRun | undefined {
   cleanupStreamRuns();
   return streamRuns.get(streamRunKey(conversationId, runId));
@@ -237,9 +429,39 @@ function parseStoredMessages(raw: string): PersistedChatMessage[] {
 }
 
 function sessionPayload(row: AiHelperSessionRow): Record<string, unknown> {
+  const messages = parseStoredMessages(row.messages).map((message) => {
+    if (message.role !== 'assistant') return message;
+    if (!message.runId) return normalizeSessionAssistantMessage(message);
+    const run = getStreamRun(row.conversation_id, message.runId);
+    if (!run) return normalizeSessionAssistantMessage(message);
+    const runFiles = runFilesFromEvents(run);
+    if (run.status === 'running') {
+      const activePptContext = run.activePptContext || message.activePptContext;
+      const contextFiles = activePptContextFiles(activePptContext);
+      return {
+        ...normalizeSessionAssistantMessage({ ...message, activePptContext }, [...runFiles, ...contextFiles]),
+        loading: true,
+      };
+    }
+    if (run.donePayload) {
+      const doneFiles = Array.isArray(run.donePayload.files) ? run.donePayload.files.filter((file): file is string => typeof file === 'string') : [];
+      const activePptContext = run.donePayload.activePptContext && typeof run.donePayload.activePptContext === 'object' ? run.donePayload.activePptContext : run.activePptContext || message.activePptContext;
+      const contextFiles = activePptContextFiles(activePptContext);
+      return {
+        ...normalizeSessionAssistantMessage({ ...message, activePptContext }, [...runFiles, ...doneFiles, ...contextFiles]),
+        text: typeof run.donePayload.text === 'string' ? run.donePayload.text : message.text,
+        activePptContext,
+        loading: false,
+        loadingStatus: undefined,
+        loadingElapsed: undefined,
+        loadingStartedAt: undefined,
+      };
+    }
+    return { ...normalizeSessionAssistantMessage(message, runFiles), loading: false, loadingStatus: undefined, loadingElapsed: undefined, loadingStartedAt: undefined };
+  });
   return {
     conversationId: row.conversation_id,
-    messages: parseStoredMessages(row.messages),
+    messages,
     updatedAt: row.updated_at,
     expiresAt: row.expires_at,
   };
@@ -408,7 +630,16 @@ router.post(['/run/stream', '/command/stream'], async (req: Request, res: Respon
   });
 
   try {
-    run = startOrGetStreamRun(req.body || {}, { userId: req.user?.id, tenantId: req.user?.tenantId, tenantType: req.user?.tenantType });
+    const attachOnly = req.body?.attach_only === true;
+    run = attachOnly
+      ? attachStreamRun(req.body || {})
+      : startOrGetStreamRun(req.body || {}, { userId: req.user?.id, tenantId: req.user?.tenantId, tenantType: req.user?.tenantType });
+    if (attachOnly && !run) {
+      res.write(JSON.stringify({ type: 'done', data: { text: '', files: [] } }) + '\n');
+      return;
+    }
+    if (!run) return;
+    const activeRun = run;
     writeLine = (line: string) => {
       if (res.destroyed || res.writableEnded) return;
       try {
@@ -417,13 +648,13 @@ router.post(['/run/stream', '/command/stream'], async (req: Request, res: Respon
         closeResolve?.();
       }
     };
-    run.listeners.add(writeLine);
-    for (const line of run.events) writeLine(line);
-    if (!run.finishedAt) {
+    activeRun.listeners.add(writeLine);
+    for (const line of activeRun.events) writeLine(line);
+    if (!activeRun.finishedAt) {
       await Promise.race([
         closePromise,
         new Promise<void>((resolve) => {
-          run?.waiters.add(resolve);
+          activeRun.waiters.add(resolve);
         }),
       ]);
     }
